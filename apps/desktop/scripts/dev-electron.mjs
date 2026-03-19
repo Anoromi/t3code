@@ -19,6 +19,7 @@ const watchedDirectories = [
 const forcedShutdownTimeoutMs = 1_500;
 const restartDebounceMs = 120;
 const childTreeGracePeriodMs = 1_200;
+const VALID_DESKTOP_OZONE_PLATFORMS = new Set(["auto", "wayland", "x11"]);
 
 await waitOn({
   resources: [`tcp:${port}`, ...requiredFiles.map((filePath) => `file:${filePath}`)],
@@ -26,6 +27,22 @@ await waitOn({
 
 const childEnv = { ...process.env };
 delete childEnv.ELECTRON_RUN_AS_NODE;
+
+function resolveDesktopOzoneArgs() {
+  if (process.platform !== "linux") {
+    return [];
+  }
+
+  const ozonePlatform = childEnv.T3CODE_DESKTOP_OZONE_PLATFORM?.trim().toLowerCase();
+  if (!ozonePlatform || !VALID_DESKTOP_OZONE_PLATFORMS.has(ozonePlatform)) {
+    return [];
+  }
+
+  return [
+    "--enable-features=UseOzonePlatform",
+    ozonePlatform === "auto" ? "--ozone-platform-hint=auto" : `--ozone-platform=${ozonePlatform}`,
+  ];
+}
 
 let shuttingDown = false;
 let restartTimer = null;
@@ -57,7 +74,7 @@ function startApp() {
 
   const app = spawn(
     resolveElectronPath(),
-    [`--t3code-dev-root=${desktopDir}`, "dist-electron/main.js"],
+    [...resolveDesktopOzoneArgs(), `--t3code-dev-root=${desktopDir}`, "dist-electron/main.js"],
     {
       cwd: desktopDir,
       env: {
