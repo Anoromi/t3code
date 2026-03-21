@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   AppSettingsSchema,
+  DEFAULT_APP_SETTINGS,
   DEFAULT_TIMESTAMP_FORMAT,
   getAppModelOptions,
   getCustomModelOptionsByProvider,
@@ -110,6 +111,12 @@ describe("timestamp format defaults", () => {
   });
 });
 
+describe("app settings defaults", () => {
+  it("defaults codex fast mode to off for new draft threads", () => {
+    expect(DEFAULT_APP_SETTINGS.defaultCodexFastMode).toBe(false);
+  });
+});
+
 describe("provider-specific custom models", () => {
   it("includes provider-specific custom slugs in non-codex model lists", () => {
     const claudeOptions = getAppModelOptions("claudeAgent", ["claude/custom-opus"]);
@@ -212,6 +219,7 @@ describe("AppSettingsSchema", () => {
       codexBinaryPath: "/usr/local/bin/codex",
       codexHomePath: "",
       defaultThreadEnvMode: "local",
+      defaultCodexFastMode: false,
       confirmThreadDelete: false,
       enableAssistantStreaming: false,
       timestampFormat: DEFAULT_TIMESTAMP_FORMAT,

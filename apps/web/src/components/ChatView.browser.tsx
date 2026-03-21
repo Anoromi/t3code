@@ -21,6 +21,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { render } from "vitest-browser-react";
 
 import { useComposerDraftStore } from "../composerDraftStore";
+import { APP_SETTINGS_STORAGE_KEY, DEFAULT_APP_SETTINGS } from "../appSettings";
 import {
   INLINE_TERMINAL_CONTEXT_PLACEHOLDER,
   type TerminalContextDraft,
@@ -171,6 +172,10 @@ function createTerminalContext(input: {
     text: input.text,
     createdAt: NOW_ISO,
   };
+}
+
+function enableDraftCodexFastMode(threadId: ThreadId) {
+  useComposerDraftStore.getState().setProviderModelOptions(threadId, "codex", { fastMode: true });
 }
 
 function createSnapshotForTargetUser(options: {
@@ -573,6 +578,21 @@ async function waitForInteractionModeButton(
       ) as HTMLButtonElement | null,
     `Unable to find ${expectedLabel} interaction mode button.`,
   );
+}
+
+function findDispatchCommand(commandType: string) {
+  return wsRequests.find((request) => {
+    if (request._tag !== ORCHESTRATION_WS_METHODS.dispatchCommand) {
+      return false;
+    }
+    const command = request.command;
+    return (
+      typeof command === "object" &&
+      command !== null &&
+      "type" in command &&
+      command.type === commandType
+    );
+  });
 }
 
 async function waitForImagesToLoad(scope: ParentNode): Promise<void> {
@@ -1227,6 +1247,139 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("toggles fast mode for an exact /fast send without dispatching a turn", async () => {
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/fast");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-fast-send-toggle" as MessageId,
+        targetText: "fast send toggle",
+      }),
+    });
+
+    try {
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const draft = useComposerDraftStore.getState().draftsByThreadId[THREAD_ID];
+          expect(draft?.modelOptions?.codex?.fastMode).toBe(true);
+          expect(draft?.prompt ?? "").toBe("");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      expect(findDispatchCommand("thread.turn.start")).toBeUndefined();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("toggles fast mode when selecting /fast from the slash menu", async () => {
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/fa");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-fast-slash-menu" as MessageId,
+        targetText: "fast slash menu",
+      }),
+    });
+
+    try {
+      const fastItem = page.getByText("/fast");
+      await expect.element(fastItem).toBeInTheDocument();
+      await fastItem.click();
+
+      await vi.waitFor(
+        () => {
+          const draft = useComposerDraftStore.getState().draftsByThreadId[THREAD_ID];
+          expect(draft?.modelOptions?.codex?.fastMode).toBe(true);
+          expect(draft?.prompt ?? "").toBe("");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("prefers prefix slash-command matches so /fa does not surface /default", async () => {
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/fa");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-fast-prefix-filter" as MessageId,
+        targetText: "fast prefix filter",
+      }),
+    });
+
+    try {
+      await expect.element(page.getByText("/fast")).toBeInTheDocument();
+      await expect.element(page.getByText("/default")).not.toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows the fast mode indicator in the traits control when enabled", async () => {
+    enableDraftCodexFastMode(THREAD_ID);
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-fast-indicator" as MessageId,
+        targetText: "fast indicator",
+      }),
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("Fast");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("includes codex fast mode in the dispatched turn payload when enabled", async () => {
+    enableDraftCodexFastMode(THREAD_ID);
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "send with fast mode");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-fast-dispatch" as MessageId,
+        targetText: "fast dispatch",
+      }),
+    });
+
+    try {
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const request = findDispatchCommand("thread.turn.start");
+          expect(request).toBeTruthy();
+          const command = request?.command as { modelOptions?: { codex?: { fastMode?: boolean } } };
+          expect(command.modelOptions?.codex?.fastMode).toBe(true);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("keeps the new thread selected after clicking the new-thread button", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -1303,7 +1456,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
     try {
       const newThreadButton = page.getByTestId("new-thread-button");
       await expect.element(newThreadButton).toBeInTheDocument();
-
       await newThreadButton.click();
 
       const newThreadPath = await waitForURL(
@@ -1318,10 +1470,54 @@ describe("ChatView timeline estimator parity (full app)", () => {
         provider: "codex",
         modelOptions: {
           codex: {
+            reasoningEffort: "medium",
             fastMode: true,
           },
         },
       });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("seeds codex fast mode on brand-new draft threads from app settings", async () => {
+    localStorage.setItem(
+      APP_SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        ...DEFAULT_APP_SETTINGS,
+        defaultCodexFastMode: true,
+      }),
+    );
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-default-fast-thread" as MessageId,
+        targetText: "default fast thread",
+      }),
+    });
+
+    try {
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+      await newThreadButton.click();
+
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+
+      await vi.waitFor(
+        () => {
+          expect(
+            useComposerDraftStore.getState().draftsByThreadId[newThreadId]?.modelOptions?.codex
+              ?.fastMode,
+          ).toBe(true);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }
@@ -1349,7 +1545,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
     try {
       const newThreadButton = page.getByTestId("new-thread-button");
       await expect.element(newThreadButton).toBeInTheDocument();
-
       await newThreadButton.click();
 
       const newThreadPath = await waitForURL(
@@ -1387,7 +1582,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
     try {
       const newThreadButton = page.getByTestId("new-thread-button");
       await expect.element(newThreadButton).toBeInTheDocument();
-
       await newThreadButton.click();
 
       const newThreadPath = await waitForURL(
@@ -1413,6 +1607,13 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
       },
     });
+    localStorage.setItem(
+      APP_SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        ...DEFAULT_APP_SETTINGS,
+        defaultCodexFastMode: true,
+      }),
+    );
 
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -1425,7 +1626,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
     try {
       const newThreadButton = page.getByTestId("new-thread-button");
       await expect.element(newThreadButton).toBeInTheDocument();
-
       await newThreadButton.click();
 
       const threadPath = await waitForURL(
@@ -1451,7 +1651,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
           fastMode: true,
         },
       });
-
       await newThreadButton.click();
 
       await waitForURL(
@@ -1467,6 +1666,75 @@ describe("ChatView timeline estimator parity (full app)", () => {
             fastMode: true,
           },
         },
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not overwrite codex fast mode when reusing an existing draft thread", async () => {
+    const existingDraftThreadId = "11111111-1111-1111-1111-111111111111" as ThreadId;
+    localStorage.setItem(
+      APP_SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        ...DEFAULT_APP_SETTINGS,
+        defaultCodexFastMode: true,
+      }),
+    );
+    useComposerDraftStore.setState({
+      draftsByThreadId: {
+        [existingDraftThreadId]: {
+          prompt: "keep existing draft",
+          images: [],
+          nonPersistedImageIds: [],
+          persistedAttachments: [],
+          terminalContexts: [],
+          provider: null,
+          model: null,
+          modelOptions: null,
+          runtimeMode: null,
+          interactionMode: null,
+        },
+      },
+      draftThreadsByThreadId: {
+        [existingDraftThreadId]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: existingDraftThreadId,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-reuse-fast-thread" as MessageId,
+        targetText: "reuse fast thread",
+      }),
+    });
+
+    try {
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+      await newThreadButton.click();
+
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${existingDraftThreadId}`,
+        "Route should have reused the existing draft thread.",
+      );
+      expect(
+        useComposerDraftStore.getState().draftsByThreadId[existingDraftThreadId],
+      ).toMatchObject({
+        prompt: "keep existing draft",
+        modelOptions: null,
       });
     } finally {
       await mounted.cleanup();

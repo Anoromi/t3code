@@ -543,25 +543,59 @@ function SettingsRouteView() {
                 </p>
               </div>
 
-              <div className="flex items-center justify-between rounded-lg border border-border bg-background px-3 py-2">
+              <div className="space-y-3">
                 <div>
-                  <p className="text-sm font-medium text-foreground">Default to New worktree</p>
-                  <p className="text-xs text-muted-foreground">
-                    New threads start in New worktree mode instead of Local.
+                  <h3 className="text-xs font-medium tracking-wide text-muted-foreground/80 uppercase">
+                    Defaults
+                  </h3>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Applied when creating a brand-new draft thread.
                   </p>
                 </div>
-                <Switch
-                  checked={settings.defaultThreadEnvMode === "worktree"}
-                  onCheckedChange={(checked) =>
-                    updateSettings({
-                      defaultThreadEnvMode: checked ? "worktree" : "local",
-                    })
-                  }
-                  aria-label="Default new threads to New worktree mode"
-                />
+
+                <div className="overflow-hidden rounded-lg border border-border bg-background">
+                  <div className="flex items-center justify-between gap-3 px-3 py-2">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">New worktree</p>
+                      <p className="text-xs text-muted-foreground">
+                        Start new threads in New worktree mode instead of Local.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={settings.defaultThreadEnvMode === "worktree"}
+                      onCheckedChange={(checked) =>
+                        updateSettings({
+                          defaultThreadEnvMode: checked ? "worktree" : "local",
+                        })
+                      }
+                      aria-label="Default new threads to New worktree mode"
+                    />
+                  </div>
+
+                  <div className="border-t border-border/70" />
+
+                  <div className="flex items-center justify-between gap-3 px-3 py-2">
+                    <div>
+                      <p className="text-sm font-medium text-foreground">Auto fast mode</p>
+                      <p className="text-xs text-muted-foreground">
+                        Start new draft threads with Codex fast mode enabled.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={settings.defaultCodexFastMode}
+                      onCheckedChange={(checked) =>
+                        updateSettings({
+                          defaultCodexFastMode: checked,
+                        })
+                      }
+                      aria-label="Default new draft threads to Codex fast mode"
+                    />
+                  </div>
+                </div>
               </div>
 
-              {settings.defaultThreadEnvMode !== defaults.defaultThreadEnvMode ? (
+              {settings.defaultThreadEnvMode !== defaults.defaultThreadEnvMode ||
+              settings.defaultCodexFastMode !== defaults.defaultCodexFastMode ? (
                 <div className="mt-3 flex justify-end">
                   <Button
                     size="xs"
@@ -569,6 +603,7 @@ function SettingsRouteView() {
                     onClick={() =>
                       updateSettings({
                         defaultThreadEnvMode: defaults.defaultThreadEnvMode,
+                        defaultCodexFastMode: defaults.defaultCodexFastMode,
                       })
                     }
                   >

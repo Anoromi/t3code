@@ -35,6 +35,7 @@ export function useHandleNewThread() {
         branch?: string | null;
         worktreePath?: string | null;
         envMode?: DraftThreadEnvMode;
+        codexFastMode?: boolean;
       },
     ): Promise<void> => {
       const {
@@ -102,12 +103,28 @@ export function useHandleNewThread() {
           envMode: options?.envMode ?? "local",
           runtimeMode: DEFAULT_RUNTIME_MODE,
         });
+        const seededProvider = stickyModel ? inferProviderForModel(stickyModel) : null;
+        const seededStickyModelOptions =
+          Object.keys(stickyModelOptions).length > 0 ? stickyModelOptions : null;
+        const seededModelOptions =
+          options?.codexFastMode === true && seededProvider !== "claudeAgent"
+            ? {
+                ...seededStickyModelOptions,
+                codex: {
+                  ...seededStickyModelOptions?.codex,
+                  fastMode: true,
+                },
+              }
+            : seededStickyModelOptions;
+
+        if (seededProvider) {
+          setProvider(threadId, seededProvider);
+        }
         if (stickyModel) {
-          setProvider(threadId, inferProviderForModel(stickyModel));
           setModel(threadId, stickyModel);
         }
-        if (Object.keys(stickyModelOptions).length > 0) {
-          setModelOptions(threadId, stickyModelOptions);
+        if (seededModelOptions) {
+          setModelOptions(threadId, seededModelOptions);
         }
 
         await navigate({
