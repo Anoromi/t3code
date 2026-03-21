@@ -60,6 +60,18 @@ describe("detectComposerTrigger", () => {
     });
   });
 
+  it("detects /fast while typing", () => {
+    const text = "/fa";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "fa",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
   it("detects @path trigger in the middle of existing text", () => {
     // User typed @ between "inspect " and "in this sentence"
     const text = "Please inspect @in this sentence";
@@ -108,6 +120,16 @@ describe("replaceTextRange", () => {
       text: "hello ",
       cursor: 6,
     });
+  });
+});
+
+describe("parseStandaloneComposerSlashCommand", () => {
+  it("parses /fast as a standalone slash command", () => {
+    expect(parseStandaloneComposerSlashCommand("/fast")).toBe("fast");
+  });
+
+  it("does not parse /fast with trailing text as a standalone slash command", () => {
+    expect(parseStandaloneComposerSlashCommand("/fast please")).toBeNull();
   });
 });
 

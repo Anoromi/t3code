@@ -607,6 +607,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
+  const setComposerDraftProviderModelOptions = useComposerDraftStore(
+    (store) => store.setProviderModelOptions,
+  );
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
   const setComposerDraftInteractionMode = useComposerDraftStore(
     (store) => store.setInteractionMode,
@@ -1018,6 +1021,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }),
     [composerModelOptions, prompt, selectedModel, selectedProvider, selectedProviderModels],
   );
+  const selectedCodexModelOptions = composerModelOptions?.codex;
+  const selectedCodexFastModeEnabled = selectedCodexModelOptions?.fastMode === true;
   const selectedPromptEffort = composerProviderState.promptEffort;
   const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
   const selectedModelSelection = useMemo<ModelSelection>(
@@ -1477,13 +1482,24 @@ export default function ChatView({ threadId }: ChatViewProps) {
           label: "/default",
           description: "Switch this thread back to normal chat mode",
         },
+        ...(selectedProvider === "codex"
+          ? [
+              {
+                id: "slash:fast",
+                type: "slash-command",
+                command: "fast",
+                label: "/fast",
+                description: "Toggle Codex fast mode for this thread",
+              } as const,
+            ]
+          : []),
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
       const query = composerTrigger.query.trim().toLowerCase();
       if (!query) {
         return [...slashCommandItems];
       }
       return slashCommandItems.filter(
-        (item) => item.command.includes(query) || item.label.slice(1).includes(query),
+        (item) => item.command.startsWith(query) || item.label.slice(1).startsWith(query),
       );
     }
 
@@ -1503,7 +1519,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         label: name,
         description: `${providerLabel} · ${slug}`,
       }));
-  }, [composerTrigger, searchableModelOptions, workspaceEntries]);
+  }, [composerTrigger, searchableModelOptions, selectedProvider, workspaceEntries]);
   const composerMenuOpen = Boolean(composerTrigger);
   const activeComposerMenuItem = useMemo(
     () =>
@@ -2883,7 +2899,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (standaloneSlashCommand) {
-      handleInteractionModeChange(standaloneSlashCommand);
+      if (standaloneSlashCommand === "fast") {
+        if (selectedProvider !== "codex") {
+          return;
+        }
+        toggleCodexFastMode();
+      } else {
+        handleInteractionModeChange(standaloneSlashCommand);
+      }
       promptRef.current = "";
       clearComposerDraftContent(activeThread.id);
       setComposerHighlightedItemId(null);
@@ -3577,6 +3600,32 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [scheduleComposerFocus, setPrompt],
   );
+  const onCodexFastModeChange = useCallback(
+    (enabled: boolean) => {
+      setComposerDraftProviderModelOptions(
+        threadId,
+        "codex",
+        {
+          ...selectedCodexModelOptions,
+          fastMode: enabled,
+        },
+        { persistSticky: true },
+      );
+      scheduleComposerFocus();
+    },
+    [
+      scheduleComposerFocus,
+      selectedCodexModelOptions,
+      setComposerDraftProviderModelOptions,
+      threadId,
+    ],
+  );
+  const toggleCodexFastMode = useCallback(() => {
+    if (selectedProvider !== "codex") {
+      return;
+    }
+    onCodexFastModeChange(!selectedCodexFastModeEnabled);
+  }, [onCodexFastModeChange, selectedCodexFastModeEnabled, selectedProvider]);
   const providerTraitsMenuContent = renderProviderTraitsMenuContent({
     provider: selectedProvider,
     threadId,
@@ -3726,7 +3775,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
           }
           return;
         }
-        void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
+        if (item.command === "fast") {
+          if (selectedProvider !== "codex") {
+            return;
+          }
+          toggleCodexFastMode();
+        } else {
+          void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
+        }
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
         });
@@ -3748,6 +3804,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       handleInteractionModeChange,
       onProviderModelSelect,
       resolveActiveComposerTrigger,
+      selectedProvider,
+      toggleCodexFastMode,
     ],
   );
   const onComposerMenuItemHighlighted = useCallback((itemId: string | null) => {

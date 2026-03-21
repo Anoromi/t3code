@@ -469,6 +469,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
         ? ["Assistant output"]
         : []),
+      ...(settings.defaultCodexFastMode !== DEFAULT_UNIFIED_SETTINGS.defaultCodexFastMode
+        ? ["Codex fast mode"]
+        : []),
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
         : []),
@@ -486,6 +489,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       isGitWritingModelDirty,
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
+      settings.defaultCodexFastMode,
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
@@ -901,6 +905,32 @@ export function GeneralSettingsPanel() {
                 updateSettings({ enableAssistantStreaming: Boolean(checked) })
               }
               aria-label="Stream assistant messages"
+            />
+          }
+        />
+
+        <SettingsRow
+          title="Codex fast mode"
+          description="Start brand-new draft threads with Codex fast mode enabled."
+          resetAction={
+            settings.defaultCodexFastMode !== DEFAULT_UNIFIED_SETTINGS.defaultCodexFastMode ? (
+              <SettingResetButton
+                label="codex fast mode"
+                onClick={() =>
+                  updateSettings({
+                    defaultCodexFastMode: DEFAULT_UNIFIED_SETTINGS.defaultCodexFastMode,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.defaultCodexFastMode}
+              onCheckedChange={(checked) =>
+                updateSettings({ defaultCodexFastMode: Boolean(checked) })
+              }
+              aria-label="Default new draft threads to Codex fast mode"
             />
           }
         />

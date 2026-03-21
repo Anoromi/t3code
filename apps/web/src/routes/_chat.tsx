@@ -50,6 +50,7 @@ function ChatRouteGlobalShortcuts() {
           envMode: resolveSidebarNewThreadEnvMode({
             defaultEnvMode: appSettings.defaultThreadEnvMode,
           }),
+          codexFastMode: appSettings.defaultCodexFastMode,
         });
         return;
       }
@@ -62,6 +63,7 @@ function ChatRouteGlobalShortcuts() {
           worktreePath: activeThread?.worktreePath ?? activeDraftThread?.worktreePath ?? null,
           envMode:
             activeDraftThread?.envMode ?? (activeThread?.worktreePath ? "worktree" : "local"),
+          codexFastMode: appSettings.defaultCodexFastMode,
         });
         return;
       }
@@ -80,6 +82,7 @@ function ChatRouteGlobalShortcuts() {
     defaultProjectId,
     selectedThreadIdsSize,
     terminalOpen,
+    appSettings.defaultCodexFastMode,
     appSettings.defaultThreadEnvMode,
   ]);
 

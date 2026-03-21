@@ -906,6 +906,7 @@ export default function Sidebar() {
         });
         await handleNewThread(projectId, {
           envMode: appSettings.defaultThreadEnvMode,
+          codexFastMode: appSettings.defaultCodexFastMode,
         }).catch(() => undefined);
       } catch (error) {
         const description =
@@ -930,6 +931,7 @@ export default function Sidebar() {
       isAddingProject,
       projects,
       shouldBrowseForProjectImmediately,
+      appSettings.defaultCodexFastMode,
       appSettings.defaultThreadEnvMode,
     ],
   );
