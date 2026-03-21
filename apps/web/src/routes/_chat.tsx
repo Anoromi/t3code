@@ -74,6 +74,7 @@ function ChatRouteGlobalShortcuts(props: {
             defaultEnvMode: appSettings.defaultThreadEnvMode,
           }),
           codexFastMode: appSettings.defaultCodexFastMode,
+          codexReasoningEffort: appSettings.defaultCodexReasoningEffort,
         });
         return;
       }
@@ -87,6 +88,7 @@ function ChatRouteGlobalShortcuts(props: {
           envMode:
             activeDraftThread?.envMode ?? (activeThread?.worktreePath ? "worktree" : "local"),
           codexFastMode: appSettings.defaultCodexFastMode,
+          codexReasoningEffort: appSettings.defaultCodexReasoningEffort,
         });
         return;
       }
@@ -107,6 +109,7 @@ function ChatRouteGlobalShortcuts(props: {
     selectedThreadIdsSize,
     terminalOpen,
     appSettings.defaultCodexFastMode,
+    appSettings.defaultCodexReasoningEffort,
     appSettings.defaultThreadEnvMode,
     props,
   ]);

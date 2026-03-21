@@ -1,8 +1,12 @@
+import { type CodexReasoningEffort } from "@t3tools/contracts";
 import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
 export type ComposerTriggerKind = "path" | "slash-command" | "slash-model";
-export type ComposerSlashCommand = "model" | "plan" | "default" | "fast";
+export type ComposerSlashCommand = "model" | "plan" | "default" | "fast" | "reasoning";
+export type ComposerStandaloneSlashCommand =
+  | Exclude<ComposerSlashCommand, "model" | "reasoning">
+  | { kind: "reasoning"; effort: CodexReasoningEffort };
 
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;
@@ -11,7 +15,42 @@ export interface ComposerTrigger {
   rangeEnd: number;
 }
 
-const SLASH_COMMANDS: readonly ComposerSlashCommand[] = ["model", "plan", "default", "fast"];
+const SLASH_COMMANDS: readonly ComposerSlashCommand[] = [
+  "model",
+  "plan",
+  "default",
+  "fast",
+  "reasoning",
+];
+const REASONING_COMMAND_ALIASES = ["reasoning", "r"] as const;
+
+export function normalizeReasoningCommandAlias(command: string): "reasoning" | null {
+  const normalized = command.trim().toLowerCase();
+  return REASONING_COMMAND_ALIASES.includes(
+    normalized as (typeof REASONING_COMMAND_ALIASES)[number],
+  )
+    ? "reasoning"
+    : null;
+}
+
+export function normalizeReasoningValue(value: string): CodexReasoningEffort | null {
+  switch (value.trim().toLowerCase()) {
+    case "xh":
+    case "xhigh":
+      return "xhigh";
+    case "h":
+    case "high":
+      return "high";
+    case "m":
+    case "medium":
+      return "medium";
+    case "l":
+    case "low":
+      return "low";
+    default:
+      return null;
+  }
+}
 const isInlineTokenSegment = (
   segment: { type: "text"; text: string } | { type: "mention" } | { type: "terminal-context" },
 ): boolean => segment.type !== "text";
@@ -201,7 +240,10 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
           rangeEnd: cursor,
         };
       }
-      if (SLASH_COMMANDS.some((command) => command.startsWith(commandQuery.toLowerCase()))) {
+      if (
+        SLASH_COMMANDS.some((command) => command.startsWith(commandQuery.toLowerCase())) ||
+        normalizeReasoningCommandAlias(commandQuery) !== null
+      ) {
         return {
           kind: "slash-command",
           query: commandQuery,
@@ -217,6 +259,18 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
       return {
         kind: "slash-model",
         query: (modelMatch[1] ?? "").trim(),
+        rangeStart: lineStart,
+        rangeEnd: cursor,
+      };
+    }
+
+    const reasoningMatch = /^\/(reasoning|r)(?:\s+(.*))?$/i.exec(linePrefix);
+    if (reasoningMatch) {
+      const command = reasoningMatch[1]?.toLowerCase() ?? "reasoning";
+      const valueQuery = reasoningMatch[2] ?? "";
+      return {
+        kind: "slash-command",
+        query: `${command}${linePrefix.endsWith(" ") ? ` ${valueQuery}` : valueQuery ? ` ${valueQuery}` : ""}`,
         rangeStart: lineStart,
         rangeEnd: cursor,
       };
@@ -239,15 +293,21 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
 
 export function parseStandaloneComposerSlashCommand(
   text: string,
-): Exclude<ComposerSlashCommand, "model"> | null {
+): ComposerStandaloneSlashCommand | null {
   const match = /^\/(plan|default|fast)\s*$/i.exec(text.trim());
-  if (!match) {
+  if (match) {
+    const command = match[1]?.toLowerCase();
+    if (command === "plan") return "plan";
+    if (command === "fast") return "fast";
+    return "default";
+  }
+
+  const reasoningMatch = /^\/reasoning\s+(\S+)\s*$/i.exec(text.trim());
+  if (!reasoningMatch) {
     return null;
   }
-  const command = match[1]?.toLowerCase();
-  if (command === "plan") return "plan";
-  if (command === "fast") return "fast";
-  return "default";
+  const effort = normalizeReasoningValue(reasoningMatch[1] ?? "");
+  return effort ? { kind: "reasoning", effort } : null;
 }
 
 export function replaceTextRange(

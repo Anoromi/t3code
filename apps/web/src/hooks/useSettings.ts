@@ -13,6 +13,7 @@ import { useCallback, useMemo } from "react";
 import {
   ServerSettings,
   ServerSettingsPatch,
+  CODEX_REASONING_EFFORT_OPTIONS,
   ModelSelection,
   ThreadEnvMode,
 } from "@t3tools/contracts";
@@ -204,6 +205,16 @@ export function buildLegacyClientSettingsMigrationPatch(
 
   if (Predicate.isBoolean(legacySettings.defaultCodexFastMode)) {
     patch.defaultCodexFastMode = legacySettings.defaultCodexFastMode;
+  }
+
+  if (
+    typeof legacySettings.defaultCodexReasoningEffort === "string" &&
+    CODEX_REASONING_EFFORT_OPTIONS.includes(
+      legacySettings.defaultCodexReasoningEffort as (typeof CODEX_REASONING_EFFORT_OPTIONS)[number],
+    )
+  ) {
+    patch.defaultCodexReasoningEffort =
+      legacySettings.defaultCodexReasoningEffort as ClientSettings["defaultCodexReasoningEffort"];
   }
 
   if (Predicate.isBoolean(legacySettings.diffWordWrap)) {

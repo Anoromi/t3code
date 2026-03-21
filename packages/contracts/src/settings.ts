@@ -5,6 +5,7 @@ import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas";
 import {
   ClaudeModelOptions,
   CodexModelOptions,
+  CODEX_REASONING_EFFORT_OPTIONS,
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
 } from "./model";
 import { ModelSelection } from "./orchestration";
@@ -27,6 +28,9 @@ export const ClientSettingsSchema = Schema.Struct({
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(() => true)),
   defaultCodexFastMode: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
+  defaultCodexReasoningEffort: Schema.Literals(CODEX_REASONING_EFFORT_OPTIONS).pipe(
+    Schema.withDecodingDefault(() => "high"),
+  ),
   diffWordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(() => false)),
   sidebarProjectSortOrder: SidebarProjectSortOrder.pipe(
     Schema.withDecodingDefault(() => DEFAULT_SIDEBAR_PROJECT_SORT_ORDER),

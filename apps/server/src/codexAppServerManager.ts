@@ -18,7 +18,7 @@ import {
   RuntimeMode,
   ProviderInteractionMode,
 } from "@t3tools/contracts";
-import { normalizeModelSlug } from "@t3tools/shared/model";
+import { getDefaultReasoningEffort, normalizeModelSlug } from "@t3tools/shared/model";
 import { Effect, ServiceMap } from "effect";
 
 import {
@@ -353,7 +353,7 @@ function buildCodexCollaborationMode(input: {
     mode: input.interactionMode,
     settings: {
       model,
-      reasoning_effort: input.effort ?? "medium",
+      reasoning_effort: input.effort ?? getDefaultReasoningEffort("codex") ?? "high",
       developer_instructions:
         input.interactionMode === "plan"
           ? CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
