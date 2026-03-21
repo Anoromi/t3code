@@ -63,6 +63,14 @@ export interface PendingUserInput {
   questions: ReadonlyArray<UserInputQuestion>;
 }
 
+export interface RecoverablePendingUserInput {
+  requestId: ApprovalRequestId;
+  createdAt: string;
+  failedAt: string;
+  questions: ReadonlyArray<UserInputQuestion>;
+  failureDetail: string;
+}
+
 export interface ActivePlanState {
   createdAt: string;
   turnId: TurnId | null;
@@ -175,7 +183,8 @@ function isStalePendingRequestFailureDetail(detail: string | undefined): boolean
     normalized.includes("stale pending user-input request") ||
     normalized.includes("unknown pending approval request") ||
     normalized.includes("unknown pending permission request") ||
-    normalized.includes("unknown pending user-input request")
+    normalized.includes("unknown pending user-input request") ||
+    normalized.includes("unknown pending user input request")
   );
 }
 
@@ -331,6 +340,83 @@ export function derivePendingUserInputs(
   return [...openByRequestId.values()].toSorted((left, right) =>
     left.createdAt.localeCompare(right.createdAt),
   );
+}
+
+export function deriveRecoverableUserInputPrompt(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  messages: ReadonlyArray<ChatMessage>,
+  session: SessionActivityState | null,
+): RecoverablePendingUserInput | null {
+  if (session?.orchestrationStatus === "running") {
+    return null;
+  }
+
+  const openByRequestId = new Map<ApprovalRequestId, PendingUserInput>();
+  const ordered = [...activities].toSorted(compareActivitiesByOrder);
+  let latestRecoverable: RecoverablePendingUserInput | null = null;
+
+  for (const activity of ordered) {
+    const payload =
+      activity.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : null;
+    const requestId =
+      payload && typeof payload.requestId === "string"
+        ? ApprovalRequestId.makeUnsafe(payload.requestId)
+        : null;
+    const detail = payload && typeof payload.detail === "string" ? payload.detail : undefined;
+
+    if (activity.kind === "user-input.requested" && requestId) {
+      const questions = parseUserInputQuestions(payload);
+      if (!questions) {
+        continue;
+      }
+      openByRequestId.set(requestId, {
+        requestId,
+        createdAt: activity.createdAt,
+        questions,
+      });
+      continue;
+    }
+
+    if (activity.kind === "user-input.resolved" && requestId) {
+      openByRequestId.delete(requestId);
+      continue;
+    }
+
+    if (
+      activity.kind === "provider.user-input.respond.failed" &&
+      requestId &&
+      detail &&
+      isStalePendingRequestFailureDetail(detail)
+    ) {
+      const pending = openByRequestId.get(requestId);
+      if (!pending) {
+        continue;
+      }
+      latestRecoverable = {
+        requestId,
+        createdAt: pending.createdAt,
+        failedAt: activity.createdAt,
+        questions: pending.questions,
+        failureDetail: detail,
+      };
+      openByRequestId.delete(requestId);
+    }
+  }
+
+  if (!latestRecoverable) {
+    return null;
+  }
+
+  const supersededByLaterUserMessage = messages.some(
+    (message) => message.role === "user" && message.createdAt > latestRecoverable.failedAt,
+  );
+  if (supersededByLaterUserMessage) {
+    return null;
+  }
+
+  return latestRecoverable;
 }
 
 export function deriveActivePlanState(

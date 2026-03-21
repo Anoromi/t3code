@@ -96,7 +96,18 @@ function createThreadControlHarness() {
   return { manager, context, requireSession, sendRequest, updateSession };
 }
 
-function createPendingUserInputHarness() {
+function createPendingUserInputHarness(
+  overrides?: Partial<{
+    pendingUserInputs: Map<
+      ApprovalRequestId,
+      {
+        requestId: ApprovalRequestId;
+        jsonRpcId: number;
+        threadId: ReturnType<typeof asThreadId>;
+      }
+    >;
+  }>,
+) {
   const manager = new CodexAppServerManager();
   const context = {
     session: {
@@ -109,16 +120,18 @@ function createPendingUserInputHarness() {
       createdAt: "2026-02-10T00:00:00.000Z",
       updatedAt: "2026-02-10T00:00:00.000Z",
     },
-    pendingUserInputs: new Map([
-      [
-        ApprovalRequestId.makeUnsafe("req-user-input-1"),
-        {
-          requestId: ApprovalRequestId.makeUnsafe("req-user-input-1"),
-          jsonRpcId: 42,
-          threadId: asThreadId("thread_1"),
-        },
-      ],
-    ]),
+    pendingUserInputs:
+      overrides?.pendingUserInputs ??
+      new Map([
+        [
+          ApprovalRequestId.makeUnsafe("req-user-input-1"),
+          {
+            requestId: ApprovalRequestId.makeUnsafe("req-user-input-1"),
+            jsonRpcId: 42,
+            threadId: asThreadId("thread_1"),
+          },
+        ],
+      ]),
     collabReceiverTurns: new Map(),
   };
 
@@ -806,6 +819,22 @@ describe("respondToUserInput", () => {
         },
       }),
     );
+  });
+
+  it("throws the canonical stale-request error when the pending user input is missing", async () => {
+    const { manager } = createPendingUserInputHarness({
+      pendingUserInputs: new Map(),
+    });
+
+    await expect(
+      manager.respondToUserInput(
+        asThreadId("thread_1"),
+        ApprovalRequestId.makeUnsafe("req-user-input-missing"),
+        {
+          scope: "All request methods",
+        },
+      ),
+    ).rejects.toThrow("Unknown pending user-input request: req-user-input-missing");
   });
 
   it("tracks file-read approval requests with the correct method", () => {

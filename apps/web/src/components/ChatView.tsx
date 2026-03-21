@@ -43,6 +43,7 @@ import {
 import {
   deriveCompletionDividerBeforeEntryId,
   derivePendingApprovals,
+  deriveRecoverableUserInputPrompt,
   derivePendingUserInputs,
   derivePhase,
   deriveTimelineEntries,
@@ -58,6 +59,7 @@ import {
 } from "../session-logic";
 import { isScrollContainerNearBottom } from "../chat-scroll";
 import {
+  buildRecoveredUserInputTurnPrompt,
   buildPendingUserInputAnswers,
   derivePendingUserInputProgress,
   setPendingUserInputCustomAnswer,
@@ -1053,7 +1055,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
     () => derivePendingUserInputs(threadActivities),
     [threadActivities],
   );
-  const activePendingUserInput = pendingUserInputs[0] ?? null;
+  const recoverableUserInputPrompt = useMemo(
+    () =>
+      deriveRecoverableUserInputPrompt(
+        threadActivities,
+        activeThread?.messages ?? [],
+        activeThread?.session ?? null,
+      ),
+    [activeThread?.messages, activeThread?.session, threadActivities],
+  );
+  const activePendingUserInput = pendingUserInputs[0] ?? recoverableUserInputPrompt;
+  const activePendingUserInputMode: "live" | "recovery" | null = pendingUserInputs[0]
+    ? "live"
+    : recoverableUserInputPrompt
+      ? "recovery"
+      : null;
   const activePendingDraftAnswers = useMemo(
     () =>
       activePendingUserInput
@@ -1110,7 +1126,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [activeLatestTurn?.turnId, threadActivities],
   );
   const showPlanFollowUpPrompt =
-    pendingUserInputs.length === 0 &&
+    activePendingUserInput === null &&
     interactionMode === "plan" &&
     latestTurnSettled &&
     hasActionableProposedPlan(activeProposedPlan);
@@ -1139,7 +1155,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const isComposerApprovalState = activePendingApproval !== null;
   const hasComposerHeader =
     isComposerApprovalState ||
-    pendingUserInputs.length > 0 ||
+    activePendingUserInput !== null ||
     (showPlanFollowUpPrompt && activeProposedPlan !== null);
   const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
   const composerFooterActionLayoutKey = useMemo(() => {
@@ -1168,6 +1184,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
     requestId: string | null;
     questionId: string | null;
   } | null>(null);
+  const autoRestartedRecoverableUserInputRequestIdsRef = useRef<Set<ApprovalRequestId>>(new Set());
   useEffect(() => {
     const nextCustomAnswer = activePendingProgress?.customAnswer;
     if (typeof nextCustomAnswer !== "string") {
@@ -1205,6 +1222,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activePendingUserInput?.requestId,
     activePendingProgress?.activeQuestion?.id,
   ]);
+  useEffect(() => {
+    const actionableRequestIds = new Set<ApprovalRequestId>(
+      pendingUserInputs.map((entry) => entry.requestId),
+    );
+    if (recoverableUserInputPrompt) {
+      actionableRequestIds.add(recoverableUserInputPrompt.requestId);
+    }
+    setRespondingUserInputRequestIds((existing) => {
+      const next = existing.filter((id) => actionableRequestIds.has(id));
+      return next.length === existing.length ? existing : next;
+    });
+  }, [pendingUserInputs, recoverableUserInputPrompt]);
   useEffect(() => {
     attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
   }, [attachmentPreviewHandoffByMessageId]);
@@ -2712,7 +2741,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const addComposerImages = (files: File[]) => {
     if (!activeThreadId || files.length === 0) return;
 
-    if (pendingUserInputs.length > 0) {
+    if (activePendingUserInput) {
       toastManager.add({
         type: "error",
         title: "Attach images after answering plan questions.",
@@ -3206,15 +3235,155 @@ export default function ChatView({ threadId }: ChatViewProps) {
           createdAt: new Date().toISOString(),
         })
         .catch((err: unknown) => {
+          setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
           setStoreThreadError(
             activeThreadId,
             err instanceof Error ? err.message : "Failed to submit user input.",
           );
         });
-      setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
     },
     [activeThreadId, setStoreThreadError],
   );
+
+  const onRestartFromStaleUserInputPrompt = useCallback(
+    async (prompt: NonNullable<typeof activePendingUserInput>, answers: Record<string, string>) => {
+      const api = readNativeApi();
+      if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
+
+      const messageText = buildRecoveredUserInputTurnPrompt({
+        questions: prompt.questions,
+        answers,
+      });
+      const threadIdForSend = activeThread.id;
+      const messageIdForSend = newMessageId();
+      const messageCreatedAt = new Date().toISOString();
+      const outgoingMessageText = formatOutgoingPrompt({
+        provider: selectedProvider,
+        effort: selectedPromptEffort,
+        text: messageText,
+      });
+
+      setRespondingUserInputRequestIds((existing) =>
+        existing.includes(prompt.requestId) ? existing : [...existing, prompt.requestId],
+      );
+      sendInFlightRef.current = true;
+      beginSendPhase("sending-turn");
+      setThreadError(threadIdForSend, null);
+      setOptimisticUserMessages((existing) => [
+        ...existing,
+        {
+          id: messageIdForSend,
+          role: "user",
+          text: outgoingMessageText,
+          createdAt: messageCreatedAt,
+          streaming: false,
+        },
+      ]);
+      shouldAutoScrollRef.current = true;
+      forceStickToBottom();
+
+      try {
+        await persistThreadSettingsForNextTurn({
+          threadId: threadIdForSend,
+          createdAt: messageCreatedAt,
+          ...(selectedModel ? { model: selectedModel } : {}),
+          runtimeMode,
+          interactionMode,
+        });
+
+        await api.orchestration.dispatchCommand({
+          type: "thread.turn.start",
+          commandId: newCommandId(),
+          threadId: threadIdForSend,
+          message: {
+            messageId: messageIdForSend,
+            role: "user",
+            text: outgoingMessageText,
+            attachments: [],
+          },
+          provider: selectedProvider,
+          model: selectedModel || undefined,
+          ...(selectedModelOptionsForDispatch
+            ? { modelOptions: selectedModelOptionsForDispatch }
+            : {}),
+          ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
+          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
+          runtimeMode,
+          interactionMode,
+          createdAt: messageCreatedAt,
+        });
+      } catch (err) {
+        setOptimisticUserMessages((existing) =>
+          existing.filter((message) => message.id !== messageIdForSend),
+        );
+        setThreadError(
+          threadIdForSend,
+          err instanceof Error ? err.message : "Failed to restart from recovered prompt.",
+        );
+        resetSendPhase();
+      } finally {
+        sendInFlightRef.current = false;
+        setRespondingUserInputRequestIds((existing) =>
+          existing.filter((id) => id !== prompt.requestId),
+        );
+      }
+    },
+    [
+      activeThread,
+      beginSendPhase,
+      forceStickToBottom,
+      interactionMode,
+      isConnecting,
+      isSendBusy,
+      persistThreadSettingsForNextTurn,
+      providerOptionsForDispatch,
+      resetSendPhase,
+      runtimeMode,
+      selectedModel,
+      selectedModelOptionsForDispatch,
+      selectedPromptEffort,
+      selectedProvider,
+      setThreadError,
+      settings.enableAssistantStreaming,
+    ],
+  );
+
+  useLayoutEffect(() => {
+    if (!recoverableUserInputPrompt) {
+      return;
+    }
+
+    const requestId = recoverableUserInputPrompt.requestId;
+    if (autoRestartedRecoverableUserInputRequestIdsRef.current.has(requestId)) {
+      return;
+    }
+
+    const normalizedDetail = recoverableUserInputPrompt.failureDetail.toLowerCase();
+    const isStaleFailure =
+      normalizedDetail.includes("stale pending user-input request") ||
+      normalizedDetail.includes("unknown pending user-input request") ||
+      normalizedDetail.includes("unknown pending user input request");
+    if (!isStaleFailure) {
+      return;
+    }
+
+    const draftAnswers =
+      pendingUserInputAnswersByRequestId[requestId] ?? EMPTY_PENDING_USER_INPUT_ANSWERS;
+    const resolvedAnswers = buildPendingUserInputAnswers(
+      recoverableUserInputPrompt.questions,
+      draftAnswers,
+    );
+    if (!resolvedAnswers) {
+      return;
+    }
+
+    autoRestartedRecoverableUserInputRequestIdsRef.current.add(requestId);
+    void onRestartFromStaleUserInputPrompt(recoverableUserInputPrompt, resolvedAnswers);
+  }, [
+    onRestartFromStaleUserInputPrompt,
+    pendingUserInputAnswersByRequestId,
+    recoverableUserInputPrompt,
+  ]);
 
   const setActivePendingUserInputQuestionIndex = useCallback(
     (nextQuestionIndex: number) => {
@@ -3287,7 +3456,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
     if (activePendingProgress.isLastQuestion) {
       if (activePendingResolvedAnswers) {
-        void onRespondToUserInput(activePendingUserInput.requestId, activePendingResolvedAnswers);
+        if (activePendingUserInputMode === "recovery") {
+          void onRestartFromStaleUserInputPrompt(
+            activePendingUserInput,
+            activePendingResolvedAnswers,
+          );
+        } else {
+          void onRespondToUserInput(activePendingUserInput.requestId, activePendingResolvedAnswers);
+        }
       }
       return;
     }
@@ -3296,6 +3472,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activePendingProgress,
     activePendingResolvedAnswers,
     activePendingUserInput,
+    activePendingUserInputMode,
+    onRestartFromStaleUserInputPrompt,
     onRespondToUserInput,
     setActivePendingUserInputQuestionIndex,
   ]);
@@ -4113,11 +4291,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
                         pendingCount={pendingApprovals.length}
                       />
                     </div>
-                  ) : pendingUserInputs.length > 0 ? (
+                  ) : activePendingUserInput ? (
                     <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
                       <ComposerPendingUserInputPanel
-                        pendingUserInputs={pendingUserInputs}
-                        respondingRequestIds={respondingRequestIds}
+                        prompt={activePendingUserInput}
+                        mode={activePendingUserInputMode ?? "live"}
+                        respondingRequestIds={respondingUserInputRequestIds}
                         answers={activePendingDraftAnswers}
                         questionIndex={activePendingQuestionIndex}
                         onSelectOption={onSelectActivePendingUserInputOption}
@@ -4153,7 +4332,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     )}
 
                     {!isComposerApprovalState &&
-                      pendingUserInputs.length === 0 &&
+                      activePendingUserInput === null &&
                       composerImages.length > 0 && (
                         <div className="mb-3 flex flex-wrap gap-2">
                           {composerImages.map((image) => (
@@ -4232,7 +4411,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                       }
                       cursor={composerCursor}
                       terminalContexts={
-                        !isComposerApprovalState && pendingUserInputs.length === 0
+                        !isComposerApprovalState && activePendingUserInput === null
                           ? composerTerminalContexts
                           : []
                       }
@@ -4437,6 +4616,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                                   canAdvance: activePendingProgress.canAdvance,
                                   isResponding: activePendingIsResponding,
                                   isComplete: Boolean(activePendingResolvedAnswers),
+                                  isRecoveryMode: activePendingUserInputMode === "recovery",
                                 }
                               : null
                           }

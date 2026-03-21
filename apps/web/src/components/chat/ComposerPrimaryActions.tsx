@@ -10,6 +10,7 @@ interface PendingActionState {
   canAdvance: boolean;
   isResponding: boolean;
   isComplete: boolean;
+  isRecoveryMode: boolean;
 }
 
 interface ComposerPrimaryActionsProps {
@@ -31,14 +32,21 @@ const formatPendingPrimaryActionLabel = (input: {
   compact: boolean;
   isLastQuestion: boolean;
   isResponding: boolean;
+  isRecoveryMode: boolean;
 }) => {
   if (input.isResponding) {
     return "Submitting...";
   }
   if (input.compact) {
-    return input.isLastQuestion ? "Submit" : "Next";
+    if (input.isLastQuestion) {
+      return input.isRecoveryMode ? "Restart" : "Submit";
+    }
+    return "Next";
   }
-  return input.isLastQuestion ? "Submit answers" : "Next question";
+  if (input.isLastQuestion) {
+    return input.isRecoveryMode ? "Restart from this prompt" : "Submit answers";
+  }
+  return "Next question";
 };
 
 export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
@@ -95,6 +103,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             compact,
             isLastQuestion: pendingAction.isLastQuestion,
             isResponding: pendingAction.isResponding,
+            isRecoveryMode: pendingAction.isRecoveryMode,
           })}
         </Button>
       </div>
