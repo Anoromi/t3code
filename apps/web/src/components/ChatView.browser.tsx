@@ -1479,7 +1479,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await mounted.cleanup();
     }
   });
-
   it("seeds codex fast mode on brand-new draft threads from app settings", async () => {
     localStorage.setItem(
       APP_SETTINGS_STORAGE_KEY,
@@ -1671,7 +1670,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await mounted.cleanup();
     }
   });
-
   it("does not overwrite codex fast mode when reusing an existing draft thread", async () => {
     const existingDraftThreadId = "11111111-1111-1111-1111-111111111111" as ThreadId;
     localStorage.setItem(

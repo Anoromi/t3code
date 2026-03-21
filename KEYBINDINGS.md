@@ -24,6 +24,7 @@ See the full schema for more details: [`packages/contracts/src/keybindings.ts`](
   { "key": "mod+n", "command": "terminal.new", "when": "terminalFocus" },
   { "key": "mod+w", "command": "terminal.close", "when": "terminalFocus" },
   { "key": "mod+n", "command": "chat.new", "when": "!terminalFocus" },
+  { "key": "mod+e", "command": "navigation.commandMenu", "when": "!terminalFocus" },
   { "key": "mod+shift+o", "command": "chat.new", "when": "!terminalFocus" },
   { "key": "mod+shift+n", "command": "chat.newLocal", "when": "!terminalFocus" },
   { "key": "mod+o", "command": "editor.openFavorite" }
@@ -51,6 +52,7 @@ Invalid rules are ignored. Invalid config files are ignored. Warnings are logged
 - `terminal.new`: create new terminal (in focused terminal context by default)
 - `terminal.close`: close/kill the focused terminal (in focused terminal context by default)
 - `chat.new`: create a new chat thread preserving the active thread's branch/worktree state
+- `navigation.commandMenu`: open the global thread/project navigation command menu
 - `chat.newLocal`: create a new chat thread for the active project in a new environment (local/worktree determined by app settings (default `local`))
 - `editor.openFavorite`: open current project/worktree in the last-used editor
 - `script.{id}.run`: run a project script by id (for example `script.test.run`)
