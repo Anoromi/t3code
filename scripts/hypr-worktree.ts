@@ -5,6 +5,14 @@ import { homedir } from "node:os";
 import * as Path from "node:path";
 import { execFileSync } from "node:child_process";
 
+import {
+  createAssignmentKey,
+  normalizePath,
+  resolveGitCommonDirForWorktree,
+  resolveWorktreeFromCwd,
+  type ResolvedWorktree,
+} from "./lib/worktree.ts";
+
 export const DEFAULT_WORKSPACE_START = 11;
 
 export interface WorkspaceAssignment {
@@ -17,13 +25,6 @@ export interface WorkspaceRegistry {
   readonly version: 1;
   readonly workspaceStart: number;
   readonly assignments: Record<string, WorkspaceAssignment>;
-}
-
-export interface ResolvedWorktree {
-  readonly cwd: string;
-  readonly repoCommonDir: string;
-  readonly worktreeRoot: string;
-  readonly key: string;
 }
 
 export interface CliResult {
@@ -57,13 +58,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function normalizePath(value: string): string {
-  return Path.resolve(value);
-}
-
-export function createAssignmentKey(repoCommonDir: string, worktreeRoot: string): string {
-  return `${normalizePath(repoCommonDir)}::${normalizePath(worktreeRoot)}`;
-}
+export {
+  createAssignmentKey,
+  resolveGitCommonDirForWorktree,
+  resolveWorktreeFromCwd,
+  type ResolvedWorktree,
+};
 
 export function createEmptyRegistry(
   workspaceStart: number = DEFAULT_WORKSPACE_START,
@@ -295,30 +295,6 @@ function runTextCommand(command: string, args: ReadonlyArray<string>, cwd?: stri
       },
     );
   }
-}
-
-export function resolveWorktreeFromCwd(cwd: string): ResolvedWorktree {
-  const worktreeRoot = normalizePath(runTextCommand("git", ["rev-parse", "--show-toplevel"], cwd));
-  const repoCommonDir = normalizePath(
-    runTextCommand("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], cwd),
-  );
-
-  return {
-    cwd: normalizePath(cwd),
-    repoCommonDir,
-    worktreeRoot,
-    key: createAssignmentKey(repoCommonDir, worktreeRoot),
-  };
-}
-
-export function resolveGitCommonDirForWorktree(worktreeRoot: string): string {
-  return normalizePath(
-    runTextCommand(
-      "git",
-      ["rev-parse", "--path-format=absolute", "--git-common-dir"],
-      worktreeRoot,
-    ),
-  );
 }
 
 export function listOccupiedWorkspaces(): ReadonlySet<number> {
