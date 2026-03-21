@@ -37,7 +37,7 @@ import { Predicate, Schema, Struct } from "effect";
 import { DeepMutable } from "effect/Types";
 import { deepMerge } from "@t3tools/shared/Struct";
 
-const CLIENT_SETTINGS_STORAGE_KEY = "t3code:client-settings:v1";
+export const CLIENT_SETTINGS_STORAGE_KEY = "t3code:client-settings:v1";
 const OLD_SETTINGS_KEY = "t3code:app-settings:v1";
 
 // ── Key sets for routing patches ─────────────────────────────────────
@@ -204,6 +204,10 @@ export function buildLegacyClientSettingsMigrationPatch(
 
   if (Predicate.isBoolean(legacySettings.confirmThreadDelete)) {
     patch.confirmThreadDelete = legacySettings.confirmThreadDelete;
+  }
+
+  if (Predicate.isBoolean(legacySettings.defaultCodexFastMode)) {
+    patch.defaultCodexFastMode = legacySettings.defaultCodexFastMode;
   }
 
   if (Predicate.isBoolean(legacySettings.diffWordWrap)) {

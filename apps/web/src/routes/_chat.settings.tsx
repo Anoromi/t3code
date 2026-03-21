@@ -370,6 +370,9 @@ function SettingsRouteView() {
     ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
       ? ["Assistant output"]
       : []),
+    ...(settings.defaultCodexFastMode !== DEFAULT_UNIFIED_SETTINGS.defaultCodexFastMode
+      ? ["Codex fast mode"]
+      : []),
     ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
       ? ["New thread mode"]
       : []),
@@ -737,6 +740,35 @@ function SettingsRouteView() {
                       })
                     }
                     aria-label="Stream assistant messages"
+                  />
+                }
+              />
+
+              <SettingsRow
+                title="Codex fast mode"
+                description="Start brand-new draft threads with Codex fast mode enabled."
+                resetAction={
+                  settings.defaultCodexFastMode !==
+                  DEFAULT_UNIFIED_SETTINGS.defaultCodexFastMode ? (
+                    <SettingResetButton
+                      label="codex fast mode"
+                      onClick={() =>
+                        updateSettings({
+                          defaultCodexFastMode: DEFAULT_UNIFIED_SETTINGS.defaultCodexFastMode,
+                        })
+                      }
+                    />
+                  ) : null
+                }
+                control={
+                  <Switch
+                    checked={settings.defaultCodexFastMode}
+                    onCheckedChange={(checked) =>
+                      updateSettings({
+                        defaultCodexFastMode: Boolean(checked),
+                      })
+                    }
+                    aria-label="Default new draft threads to Codex fast mode"
                   />
                 }
               />

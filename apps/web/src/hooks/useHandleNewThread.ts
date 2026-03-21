@@ -32,6 +32,7 @@ export function useHandleNewThread() {
         branch?: string | null;
         worktreePath?: string | null;
         envMode?: DraftThreadEnvMode;
+        codexFastMode?: boolean;
       },
     ): Promise<void> => {
       const {
@@ -39,6 +40,7 @@ export function useHandleNewThread() {
         getDraftThread,
         getDraftThreadByProjectId,
         applyStickyState,
+        setProviderModelOptions,
         setDraftThreadContext,
         setProjectDraftThreadId,
       } = useComposerDraftStore.getState();
@@ -98,6 +100,13 @@ export function useHandleNewThread() {
           runtimeMode: DEFAULT_RUNTIME_MODE,
         });
         applyStickyState(threadId);
+        const seededDraft = useComposerDraftStore.getState().draftsByThreadId[threadId];
+        if (options?.codexFastMode === true && seededDraft?.activeProvider !== "claudeAgent") {
+          setProviderModelOptions(threadId, "codex", {
+            ...seededDraft?.modelSelectionByProvider.codex?.options,
+            fastMode: true,
+          });
+        }
 
         await navigate({
           to: "/$threadId",
