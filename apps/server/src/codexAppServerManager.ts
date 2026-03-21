@@ -945,7 +945,7 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     const context = this.requireSession(threadId);
     const pendingRequest = context.pendingUserInputs.get(requestId);
     if (!pendingRequest) {
-      throw new Error(`Unknown pending user input request: ${requestId}`);
+      throw new Error(`Unknown pending user-input request: ${requestId}`);
     }
 
     context.pendingUserInputs.delete(requestId);

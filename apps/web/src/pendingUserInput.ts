@@ -69,6 +69,25 @@ export function buildPendingUserInputAnswers(
   return answers;
 }
 
+export function buildRecoveredUserInputTurnPrompt(input: {
+  questions: ReadonlyArray<UserInputQuestion>;
+  answers: Record<string, string>;
+}): string {
+  const sections = input.questions.map((question) => {
+    const answer = input.answers[question.id]?.trim() ?? "";
+    return `- ${question.header}: ${question.question}\n  Answer: ${answer}`;
+  });
+
+  return [
+    "The app restarted while you were waiting for answers to these. No need to reprompt the user.",
+    "",
+    "Previous questions and my answers:",
+    ...sections,
+    "",
+    "Please continue from these answers. Do not ask the same questions again unless something is still ambiguous.",
+  ].join("\n");
+}
+
 export function countAnsweredPendingUserInputQuestions(
   questions: ReadonlyArray<UserInputQuestion>,
   draftAnswers: Record<string, PendingUserInputDraftAnswer>,

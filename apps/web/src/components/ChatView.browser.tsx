@@ -2,6 +2,7 @@
 import "../index.css";
 
 import {
+  EventId,
   ORCHESTRATION_WS_METHODS,
   type MessageId,
   type OrchestrationReadModel,
@@ -183,6 +184,7 @@ function createSnapshotForTargetUser(options: {
   targetText: string;
   targetAttachmentCount?: number;
   sessionStatus?: OrchestrationSessionStatus;
+  activities?: OrchestrationReadModel["threads"][number]["activities"];
 }): OrchestrationReadModel {
   const messages: Array<OrchestrationReadModel["threads"][number]["messages"][number]> = [];
 
@@ -247,7 +249,7 @@ function createSnapshotForTargetUser(options: {
         updatedAt: NOW_ISO,
         deletedAt: null,
         messages,
-        activities: [],
+        activities: options.activities ?? [],
         proposedPlans: [],
         checkpoints: [],
         session: {
@@ -262,6 +264,25 @@ function createSnapshotForTargetUser(options: {
       },
     ],
     updatedAt: NOW_ISO,
+  };
+}
+
+function makeThreadActivity(input: {
+  id: string;
+  kind: string;
+  createdAt: string;
+  summary: string;
+  tone: OrchestrationReadModel["threads"][number]["activities"][number]["tone"];
+  payload: Record<string, unknown>;
+}): OrchestrationReadModel["threads"][number]["activities"][number] {
+  return {
+    id: EventId.makeUnsafe(input.id),
+    kind: input.kind,
+    createdAt: input.createdAt,
+    summary: input.summary,
+    tone: input.tone,
+    payload: input.payload,
+    turnId: null,
   };
 }
 
@@ -1372,6 +1393,193 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(request).toBeTruthy();
           const command = request?.command as { modelOptions?: { codex?: { fastMode?: boolean } } };
           expect(command.modelOptions?.codex?.fastMode).toBe(true);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("renders stale pending user input as a recovered prompt", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-recovered-render" as MessageId,
+        targetText: "recovered render",
+        activities: [
+          makeThreadActivity({
+            id: "activity-user-input-requested-recovery",
+            createdAt: isoAt(10_000),
+            kind: "user-input.requested",
+            summary: "User input requested",
+            tone: "info",
+            payload: {
+              requestId: "req-recovery-render",
+              questions: [
+                {
+                  id: "sandbox_mode",
+                  header: "Sandbox",
+                  question: "Which mode should be used?",
+                  options: [
+                    {
+                      label: "workspace-write",
+                      description: "Allow workspace writes only",
+                    },
+                  ],
+                },
+              ],
+            },
+          }),
+          makeThreadActivity({
+            id: "activity-user-input-failed-recovery",
+            createdAt: isoAt(10_001),
+            kind: "provider.user-input.respond.failed",
+            summary: "Provider user input response failed",
+            tone: "error",
+            payload: {
+              requestId: "req-recovery-render",
+              detail:
+                "Stale pending user-input request: req-recovery-render. Provider callback state does not survive app restarts or recovered sessions. Restart the turn to continue.",
+            },
+          }),
+        ],
+      }),
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("Recovered Prompt");
+          expect(document.body.textContent).toContain(
+            "The app was restarted before this answer could be delivered. Submit these answers as a new turn.",
+          );
+          expect(document.body.textContent).toContain("Restart from this prompt");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("submits a stale recovered prompt as a new turn instead of responding to the dead callback", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-recovered-submit" as MessageId,
+        targetText: "recovered submit",
+        activities: [
+          makeThreadActivity({
+            id: "activity-user-input-requested-submit",
+            createdAt: isoAt(10_000),
+            kind: "user-input.requested",
+            summary: "User input requested",
+            tone: "info",
+            payload: {
+              requestId: "req-recovery-submit",
+              questions: [
+                {
+                  id: "sandbox_mode",
+                  header: "Sandbox",
+                  question: "Which mode should be used?",
+                  options: [
+                    {
+                      label: "workspace-write",
+                      description: "Allow workspace writes only",
+                    },
+                  ],
+                },
+              ],
+            },
+          }),
+          makeThreadActivity({
+            id: "activity-user-input-failed-submit",
+            createdAt: isoAt(10_001),
+            kind: "provider.user-input.respond.failed",
+            summary: "Provider user input response failed",
+            tone: "error",
+            payload: {
+              requestId: "req-recovery-submit",
+              detail: "Unknown pending user-input request: req-recovery-submit",
+            },
+          }),
+        ],
+      }),
+    });
+
+    try {
+      await page.getByRole("button", { name: "workspace-write" }).click();
+
+      await vi.waitFor(
+        () => {
+          const request = findDispatchCommand("thread.turn.start");
+          expect(request).toBeTruthy();
+          const command = request?.command as {
+            message?: { text?: string };
+          };
+          expect(command.message?.text).toContain(
+            "The app restarted while you were waiting for answers to these. No need to reprompt the user.",
+          );
+          expect(command.message?.text).toContain("Sandbox: Which mode should be used?");
+          expect(command.message?.text).toContain("Answer: workspace-write");
+          expect(findDispatchCommand("thread.user-input.respond")).toBeUndefined();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps live pending prompts on the user-input response path", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-live-submit" as MessageId,
+        targetText: "live submit",
+        activities: [
+          makeThreadActivity({
+            id: "activity-user-input-requested-live",
+            createdAt: isoAt(10_000),
+            kind: "user-input.requested",
+            summary: "User input requested",
+            tone: "info",
+            payload: {
+              requestId: "req-live-submit",
+              questions: [
+                {
+                  id: "sandbox_mode",
+                  header: "Sandbox",
+                  question: "Which mode should be used?",
+                  options: [
+                    {
+                      label: "workspace-write",
+                      description: "Allow workspace writes only",
+                    },
+                  ],
+                },
+              ],
+            },
+          }),
+        ],
+      }),
+    });
+
+    try {
+      await page.getByRole("button", { name: "workspace-write" }).click();
+
+      await vi.waitFor(
+        () => {
+          const request = findDispatchCommand("thread.user-input.respond");
+          expect(request).toBeTruthy();
+          const command = request?.command as {
+            requestId?: string;
+            answers?: Record<string, string>;
+          };
+          expect(command.requestId).toBe("req-live-submit");
+          expect(command.answers?.sandbox_mode).toBe("workspace-write");
+          expect(findDispatchCommand("thread.turn.start")).toBeUndefined();
         },
         { timeout: 8_000, interval: 16 },
       );

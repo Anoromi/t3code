@@ -13,6 +13,7 @@ import {
   PROVIDER_OPTIONS,
   derivePendingApprovals,
   derivePendingUserInputs,
+  deriveRecoverableUserInputPrompt,
   deriveTimelineEntries,
   deriveWorkLogEntries,
   findLatestProposedPlan,
@@ -21,6 +22,7 @@ import {
   hasToolActivityForTurn,
   isLatestTurnSettled,
 } from "./session-logic";
+import type { ChatMessage, ThreadSession } from "./types";
 
 function makeActivity(overrides: {
   id?: string;
@@ -42,6 +44,33 @@ function makeActivity(overrides: {
     payload,
     turnId: overrides.turnId ? TurnId.makeUnsafe(overrides.turnId) : null,
     ...(overrides.sequence !== undefined ? { sequence: overrides.sequence } : {}),
+  };
+}
+
+function makeChatMessage(overrides: {
+  id?: string;
+  role?: ChatMessage["role"];
+  text?: string;
+  createdAt?: string;
+}): ChatMessage {
+  const createdAt = overrides.createdAt ?? "2026-02-23T00:00:00.000Z";
+  return {
+    id: MessageId.makeUnsafe(overrides.id ?? crypto.randomUUID()),
+    role: overrides.role ?? "user",
+    text: overrides.text ?? "message",
+    createdAt,
+    streaming: false,
+  };
+}
+
+function makeThreadSession(overrides?: Partial<ThreadSession>): ThreadSession {
+  return {
+    provider: "codex",
+    status: "ready",
+    createdAt: "2026-02-23T00:00:00.000Z",
+    updatedAt: "2026-02-23T00:00:00.000Z",
+    orchestrationStatus: "ready",
+    ...overrides,
   };
 }
 
@@ -299,6 +328,378 @@ describe("derivePendingUserInputs", () => {
     ];
 
     expect(derivePendingUserInputs(activities)).toEqual([]);
+  });
+
+  it("clears stale pending user-input prompts for legacy non-hyphenated provider errors", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "user-input-open-legacy-stale",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: {
+          requestId: "req-user-input-legacy-1",
+          questions: [
+            {
+              id: "sandbox_mode",
+              header: "Sandbox",
+              question: "Which mode should be used?",
+              options: [
+                {
+                  label: "workspace-write",
+                  description: "Allow workspace writes only",
+                },
+              ],
+            },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "user-input-failed-legacy-stale",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "provider.user-input.respond.failed",
+        summary: "Provider user input response failed",
+        tone: "error",
+        payload: {
+          requestId: "req-user-input-legacy-1",
+          detail: "Unknown pending user input request: req-user-input-legacy-1",
+        },
+      }),
+    ];
+
+    expect(derivePendingUserInputs(activities)).toEqual([]);
+  });
+});
+
+describe("deriveRecoverableUserInputPrompt", () => {
+  it("returns null when no stale failure exists", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "user-input-open-live",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: {
+          requestId: "req-user-input-live-1",
+          questions: [
+            {
+              id: "sandbox_mode",
+              header: "Sandbox",
+              question: "Which mode should be used?",
+              options: [
+                {
+                  label: "workspace-write",
+                  description: "Allow workspace writes only",
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    ];
+
+    expect(deriveRecoverableUserInputPrompt(activities, [], makeThreadSession())).toBeNull();
+  });
+
+  it("derives a recoverable prompt from a stale failed user-input request", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "user-input-open-stale-recoverable",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: {
+          requestId: "req-user-input-recoverable-1",
+          questions: [
+            {
+              id: "sandbox_mode",
+              header: "Sandbox",
+              question: "Which mode should be used?",
+              options: [
+                {
+                  label: "workspace-write",
+                  description: "Allow workspace writes only",
+                },
+              ],
+            },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "user-input-failed-stale-recoverable",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "provider.user-input.respond.failed",
+        summary: "Provider user input response failed",
+        tone: "error",
+        payload: {
+          requestId: "req-user-input-recoverable-1",
+          detail:
+            "Stale pending user-input request: req-user-input-recoverable-1. Provider callback state does not survive app restarts or recovered sessions. Restart the turn to continue.",
+        },
+      }),
+    ];
+
+    expect(deriveRecoverableUserInputPrompt(activities, [], makeThreadSession())).toMatchObject({
+      requestId: "req-user-input-recoverable-1",
+      createdAt: "2026-02-23T00:00:01.000Z",
+      failedAt: "2026-02-23T00:00:02.000Z",
+      failureDetail: expect.stringContaining("Stale pending user-input request"),
+    });
+  });
+
+  it("accepts both unknown-pending detail variants", () => {
+    const hyphenated = deriveRecoverableUserInputPrompt(
+      [
+        makeActivity({
+          id: "open-hyphenated",
+          createdAt: "2026-02-23T00:00:01.000Z",
+          kind: "user-input.requested",
+          summary: "User input requested",
+          tone: "info",
+          payload: {
+            requestId: "req-user-input-hyphenated",
+            questions: [
+              {
+                id: "sandbox_mode",
+                header: "Sandbox",
+                question: "Which mode should be used?",
+                options: [
+                  {
+                    label: "workspace-write",
+                    description: "Allow workspace writes only",
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+        makeActivity({
+          id: "failed-hyphenated",
+          createdAt: "2026-02-23T00:00:02.000Z",
+          kind: "provider.user-input.respond.failed",
+          summary: "Provider user input response failed",
+          tone: "error",
+          payload: {
+            requestId: "req-user-input-hyphenated",
+            detail: "Unknown pending user-input request: req-user-input-hyphenated",
+          },
+        }),
+      ],
+      [],
+      makeThreadSession(),
+    );
+
+    const plain = deriveRecoverableUserInputPrompt(
+      [
+        makeActivity({
+          id: "open-plain",
+          createdAt: "2026-02-23T00:00:03.000Z",
+          kind: "user-input.requested",
+          summary: "User input requested",
+          tone: "info",
+          payload: {
+            requestId: "req-user-input-plain",
+            questions: [
+              {
+                id: "sandbox_mode",
+                header: "Sandbox",
+                question: "Which mode should be used?",
+                options: [
+                  {
+                    label: "workspace-write",
+                    description: "Allow workspace writes only",
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+        makeActivity({
+          id: "failed-plain",
+          createdAt: "2026-02-23T00:00:04.000Z",
+          kind: "provider.user-input.respond.failed",
+          summary: "Provider user input response failed",
+          tone: "error",
+          payload: {
+            requestId: "req-user-input-plain",
+            detail: "Unknown pending user input request: req-user-input-plain",
+          },
+        }),
+      ],
+      [],
+      makeThreadSession(),
+    );
+
+    expect(hyphenated?.requestId).toBe("req-user-input-hyphenated");
+    expect(plain?.requestId).toBe("req-user-input-plain");
+  });
+
+  it("prefers the newest recoverable stale prompt", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "open-old",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: {
+          requestId: "req-old",
+          questions: [
+            {
+              id: "one",
+              header: "First",
+              question: "Old question?",
+              options: [{ label: "yes", description: "Use the old answer" }],
+            },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "failed-old",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "provider.user-input.respond.failed",
+        summary: "Provider user input response failed",
+        tone: "error",
+        payload: {
+          requestId: "req-old",
+          detail: "Unknown pending user-input request: req-old",
+        },
+      }),
+      makeActivity({
+        id: "open-new",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: {
+          requestId: "req-new",
+          questions: [
+            {
+              id: "two",
+              header: "Second",
+              question: "New question?",
+              options: [{ label: "yes", description: "Use the new answer" }],
+            },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "failed-new",
+        createdAt: "2026-02-23T00:00:04.000Z",
+        kind: "provider.user-input.respond.failed",
+        summary: "Provider user input response failed",
+        tone: "error",
+        payload: {
+          requestId: "req-new",
+          detail: "Unknown pending user-input request: req-new",
+        },
+      }),
+    ];
+
+    expect(deriveRecoverableUserInputPrompt(activities, [], makeThreadSession())?.requestId).toBe(
+      "req-new",
+    );
+  });
+
+  it("suppresses recoverable prompts after a later user message", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "open-suppressed",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: {
+          requestId: "req-suppressed",
+          questions: [
+            {
+              id: "sandbox_mode",
+              header: "Sandbox",
+              question: "Which mode should be used?",
+              options: [
+                {
+                  label: "workspace-write",
+                  description: "Allow workspace writes only",
+                },
+              ],
+            },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "failed-suppressed",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "provider.user-input.respond.failed",
+        summary: "Provider user input response failed",
+        tone: "error",
+        payload: {
+          requestId: "req-suppressed",
+          detail: "Unknown pending user-input request: req-suppressed",
+        },
+      }),
+    ];
+
+    const laterMessages = [
+      makeChatMessage({
+        id: "msg-later",
+        createdAt: "2026-02-23T00:00:03.000Z",
+        text: "Recovered turn",
+      }),
+    ];
+
+    expect(
+      deriveRecoverableUserInputPrompt(activities, laterMessages, makeThreadSession()),
+    ).toBeNull();
+  });
+
+  it("does not classify stale prompts while the thread is actively running", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "open-running",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: {
+          requestId: "req-running",
+          questions: [
+            {
+              id: "sandbox_mode",
+              header: "Sandbox",
+              question: "Which mode should be used?",
+              options: [
+                {
+                  label: "workspace-write",
+                  description: "Allow workspace writes only",
+                },
+              ],
+            },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "failed-running",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "provider.user-input.respond.failed",
+        summary: "Provider user input response failed",
+        tone: "error",
+        payload: {
+          requestId: "req-running",
+          detail: "Unknown pending user-input request: req-running",
+        },
+      }),
+    ];
+
+    expect(
+      deriveRecoverableUserInputPrompt(
+        activities,
+        [],
+        makeThreadSession({ status: "running", orchestrationStatus: "running" }),
+      ),
+    ).toBeNull();
   });
 });
 
