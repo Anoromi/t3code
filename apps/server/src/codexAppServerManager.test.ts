@@ -523,7 +523,7 @@ describe("sendTurn", () => {
         mode: "plan",
         settings: {
           model: "gpt-5.3-codex",
-          reasoning_effort: "medium",
+          reasoning_effort: "high",
           developer_instructions: CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
         },
       },
@@ -553,8 +553,40 @@ describe("sendTurn", () => {
         mode: "default",
         settings: {
           model: "gpt-5.3-codex",
-          reasoning_effort: "medium",
+          reasoning_effort: "high",
           developer_instructions: CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+        },
+      },
+    });
+  });
+
+  it("preserves an explicit collaboration reasoning effort override", async () => {
+    const { manager, context, sendRequest } = createSendTurnHarness();
+
+    await manager.sendTurn({
+      threadId: asThreadId("thread_1"),
+      input: "Plan this carefully",
+      interactionMode: "plan",
+      effort: "low",
+    });
+
+    expect(sendRequest).toHaveBeenCalledWith(context, "turn/start", {
+      threadId: "thread_1",
+      input: [
+        {
+          type: "text",
+          text: "Plan this carefully",
+          text_elements: [],
+        },
+      ],
+      model: "gpt-5.3-codex",
+      effort: "low",
+      collaborationMode: {
+        mode: "plan",
+        settings: {
+          model: "gpt-5.3-codex",
+          reasoning_effort: "low",
+          developer_instructions: CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
         },
       },
     });
@@ -584,7 +616,7 @@ describe("sendTurn", () => {
         mode: "plan",
         settings: {
           model: "gpt-5.2-codex",
-          reasoning_effort: "medium",
+          reasoning_effort: "high",
           developer_instructions: CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
         },
       },

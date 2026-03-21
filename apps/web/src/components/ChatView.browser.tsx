@@ -1521,6 +1521,61 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("sets reasoning effort for an exact /reasoning send without dispatching a turn", async () => {
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/reasoning medium");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-reasoning-send-toggle" as MessageId,
+        targetText: "reasoning send toggle",
+      }),
+    });
+
+    try {
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const draft = useComposerDraftStore.getState().draftsByThreadId[THREAD_ID];
+          const codexSelection = draft?.modelSelectionByProvider.codex;
+          expect(
+            codexSelection?.provider === "codex"
+              ? codexSelection.options?.reasoningEffort
+              : undefined,
+          ).toBe("medium");
+          expect(draft?.prompt ?? "").toBe("");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      expect(findDispatchCommand("thread.turn.start")).toBeUndefined();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows /reasoning as a slash-command suggestion for /r", async () => {
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/r");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-reasoning-short-suggestion" as MessageId,
+        targetText: "reasoning short suggestion",
+      }),
+    });
+
+    try {
+      await expect.element(page.getByText("/reasoning")).toBeInTheDocument();
+      await expect.element(page.getByText("/reasoning xhigh")).not.toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("toggles fast mode when selecting /fast from the slash menu", async () => {
     useComposerDraftStore.getState().setPrompt(THREAD_ID, "/fa");
 
@@ -1541,6 +1596,40 @@ describe("ChatView timeline estimator parity (full app)", () => {
         () => {
           const draft = useComposerDraftStore.getState().draftsByThreadId[THREAD_ID];
           expect(draft?.modelSelectionByProvider.codex?.options?.fastMode).toBe(true);
+          expect(draft?.prompt ?? "").toBe("");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows reasoning suggestions for /reasoning and applies the selected effort", async () => {
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/reasoning ");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-reasoning-slash-menu" as MessageId,
+        targetText: "reasoning slash menu",
+      }),
+    });
+
+    try {
+      const reasoningItem = page.getByText("/reasoning xhigh");
+      await expect.element(reasoningItem).toBeInTheDocument();
+      await reasoningItem.click();
+
+      await vi.waitFor(
+        () => {
+          const draft = useComposerDraftStore.getState().draftsByThreadId[THREAD_ID];
+          const codexSelection = draft?.modelSelectionByProvider.codex;
+          expect(
+            codexSelection?.provider === "codex"
+              ? codexSelection.options?.reasoningEffort
+              : undefined,
+          ).toBe("xhigh");
           expect(draft?.prompt ?? "").toBe("");
         },
         { timeout: 8_000, interval: 16 },
@@ -1615,6 +1704,46 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(request).toBeTruthy();
           const command = request?.command as { modelOptions?: { codex?: { fastMode?: boolean } } };
           expect(command.modelOptions?.codex?.fastMode).toBe(true);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("includes codex reasoning effort in the dispatched turn payload when enabled", async () => {
+    useComposerDraftStore.getState().setProviderModelOptions(
+      THREAD_ID,
+      "codex",
+      {
+        reasoningEffort: "xhigh",
+      },
+      { persistSticky: false },
+    );
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "send with reasoning");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-reasoning-dispatch" as MessageId,
+        targetText: "reasoning dispatch",
+      }),
+    });
+
+    try {
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const request = findDispatchCommand("thread.turn.start");
+          expect(request).toBeTruthy();
+          const command = request?.command as {
+            modelOptions?: { codex?: { reasoningEffort?: string } };
+          };
+          expect(command.modelOptions?.codex?.reasoningEffort).toBe("xhigh");
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -1922,6 +2051,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       JSON.stringify({
         ...DEFAULT_CLIENT_SETTINGS,
         defaultCodexFastMode: true,
+        defaultCodexReasoningEffort: "xhigh",
       }),
     );
 
@@ -2007,6 +2137,53 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         activeProvider: "claudeAgent",
       });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("seeds codex reasoning effort on brand-new draft threads from app settings", async () => {
+    localStorage.setItem(
+      CLIENT_SETTINGS_STORAGE_KEY,
+      JSON.stringify({
+        ...DEFAULT_CLIENT_SETTINGS,
+        defaultCodexReasoningEffort: "xhigh",
+      }),
+    );
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-default-reasoning-thread" as MessageId,
+        targetText: "default reasoning thread",
+      }),
+    });
+
+    try {
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+      await newThreadButton.click();
+
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID.",
+      );
+      const newThreadId = newThreadPath.slice(1) as ThreadId;
+
+      await vi.waitFor(
+        () => {
+          const codexSelection =
+            useComposerDraftStore.getState().draftsByThreadId[newThreadId]?.modelSelectionByProvider
+              .codex;
+          expect(
+            codexSelection?.provider === "codex"
+              ? codexSelection.options?.reasoningEffort
+              : undefined,
+          ).toBe("xhigh");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }
@@ -2126,13 +2303,14 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await mounted.cleanup();
     }
   });
-  it("does not overwrite codex fast mode when reusing an existing draft thread", async () => {
+  it("does not overwrite codex settings when reusing an existing draft thread", async () => {
     const existingDraftThreadId = "11111111-1111-1111-1111-111111111111" as ThreadId;
     localStorage.setItem(
       CLIENT_SETTINGS_STORAGE_KEY,
       JSON.stringify({
         ...DEFAULT_CLIENT_SETTINGS,
         defaultCodexFastMode: true,
+        defaultCodexReasoningEffort: "xhigh",
       }),
     );
     useComposerDraftStore.setState({
@@ -2143,8 +2321,16 @@ describe("ChatView timeline estimator parity (full app)", () => {
           nonPersistedImageIds: [],
           persistedAttachments: [],
           terminalContexts: [],
-          modelSelectionByProvider: {},
-          activeProvider: null,
+          modelSelectionByProvider: {
+            codex: {
+              provider: "codex",
+              model: "gpt-5.4",
+              options: {
+                reasoningEffort: "medium",
+              },
+            },
+          },
+          activeProvider: "codex",
           runtimeMode: null,
           interactionMode: null,
         },
@@ -2187,8 +2373,16 @@ describe("ChatView timeline estimator parity (full app)", () => {
         useComposerDraftStore.getState().draftsByThreadId[existingDraftThreadId],
       ).toMatchObject({
         prompt: "keep existing draft",
-        modelSelectionByProvider: {},
-        activeProvider: null,
+        modelSelectionByProvider: {
+          codex: {
+            provider: "codex",
+            model: "gpt-5.4",
+            options: {
+              reasoningEffort: "medium",
+            },
+          },
+        },
+        activeProvider: "codex",
       });
     } finally {
       await mounted.cleanup();

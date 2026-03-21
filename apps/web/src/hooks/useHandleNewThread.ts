@@ -1,4 +1,9 @@
-import { DEFAULT_RUNTIME_MODE, type ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_RUNTIME_MODE,
+  type CodexReasoningEffort,
+  type ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import { useCallback } from "react";
 import {
@@ -33,6 +38,7 @@ export function useHandleNewThread() {
         worktreePath?: string | null;
         envMode?: DraftThreadEnvMode;
         codexFastMode?: boolean;
+        codexReasoningEffort?: CodexReasoningEffort;
       },
     ): Promise<void> => {
       const {
@@ -101,10 +107,16 @@ export function useHandleNewThread() {
         });
         applyStickyState(threadId);
         const seededDraft = useComposerDraftStore.getState().draftsByThreadId[threadId];
-        if (options?.codexFastMode === true && seededDraft?.activeProvider !== "claudeAgent") {
+        if (
+          seededDraft?.activeProvider !== "claudeAgent" &&
+          (options?.codexFastMode === true || options?.codexReasoningEffort !== undefined)
+        ) {
           setProviderModelOptions(threadId, "codex", {
             ...seededDraft?.modelSelectionByProvider.codex?.options,
-            fastMode: true,
+            ...(options?.codexFastMode === true ? { fastMode: true } : {}),
+            ...(options?.codexReasoningEffort !== undefined
+              ? { reasoningEffort: options.codexReasoningEffort }
+              : {}),
           });
         }
 

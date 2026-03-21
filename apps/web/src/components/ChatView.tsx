@@ -2,6 +2,7 @@ import {
   type ApprovalRequestId,
   DEFAULT_MODEL_BY_PROVIDER,
   type ClaudeCodeEffort,
+  type CodexReasoningEffort,
   type MessageId,
   type ModelSelection,
   type ProjectScript,
@@ -22,7 +23,11 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
 } from "@t3tools/contracts";
-import { applyClaudePromptEffortPrefix, normalizeModelSlug } from "@t3tools/shared/model";
+import {
+  applyClaudePromptEffortPrefix,
+  normalizeCodexModelOptions,
+  normalizeModelSlug,
+} from "@t3tools/shared/model";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
@@ -210,6 +215,24 @@ function formatOutgoingPrompt(params: {
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
+const REASONING_LABEL_BY_OPTION: Record<CodexReasoningEffort, string> = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra High",
+};
+const REASONING_SHORT_ALIAS_BY_OPTION: Record<CodexReasoningEffort, string> = {
+  low: "l",
+  medium: "m",
+  high: "h",
+  xhigh: "xh",
+};
+const reasoningOptions = [
+  "xhigh",
+  "high",
+  "medium",
+  "low",
+] as const satisfies readonly CodexReasoningEffort[];
 
 const extendReplacementRangeForTrailingSpace = (
   text: string,
@@ -238,6 +261,24 @@ const terminalContextIdListsEqual = (
   ids: ReadonlyArray<string>,
 ): boolean =>
   contexts.length === ids.length && contexts.every((context, index) => context.id === ids[index]);
+
+function parseReasoningSlashCommandQuery(query: string): {
+  command: "reasoning";
+  valueQuery: string;
+} | null {
+  const trimmed = query.trim().toLowerCase();
+  if (!trimmed) {
+    return null;
+  }
+  const match = /^reasoning(?:\s+(.*))?$/.exec(query.trimStart());
+  if (!match) {
+    return null;
+  }
+  return {
+    command: "reasoning",
+    valueQuery: (match[1] ?? "").trim().toLowerCase(),
+  };
+}
 
 interface ChatViewProps {
   threadId: ThreadId;
@@ -1097,6 +1138,31 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
 
     if (composerTrigger.kind === "slash-command") {
+      const reasoningQuery =
+        selectedProvider === "codex"
+          ? parseReasoningSlashCommandQuery(composerTrigger.query)
+          : null;
+      if (reasoningQuery) {
+        return reasoningOptions
+          .filter((effort) => {
+            if (!reasoningQuery.valueQuery) {
+              return true;
+            }
+            const shortAlias = REASONING_SHORT_ALIAS_BY_OPTION[effort];
+            return (
+              effort.startsWith(reasoningQuery.valueQuery) ||
+              shortAlias === reasoningQuery.valueQuery
+            );
+          })
+          .map((effort) => ({
+            id: `reasoning:${effort}`,
+            type: "reasoning",
+            effort,
+            label: `/reasoning ${effort}`,
+            description: `${REASONING_LABEL_BY_OPTION[effort]} · alias: /r ${REASONING_SHORT_ALIAS_BY_OPTION[effort]}`,
+          }));
+      }
+
       const slashCommandItems = [
         {
           id: "slash:model",
@@ -1127,6 +1193,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 command: "fast",
                 label: "/fast",
                 description: "Toggle Codex fast mode for this thread",
+              } as const,
+              {
+                id: "slash:reasoning",
+                type: "slash-command",
+                command: "reasoning",
+                label: "/reasoning",
+                description: "Set Codex reasoning effort for this thread",
               } as const,
             ]
           : []),
@@ -2457,7 +2530,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (standaloneSlashCommand) {
-      if (standaloneSlashCommand === "fast") {
+      if (typeof standaloneSlashCommand === "object") {
+        if (selectedProvider !== "codex") {
+          return;
+        }
+        applyReasoningEffort(standaloneSlashCommand.effort);
+      } else if (standaloneSlashCommand === "fast") {
         if (selectedProvider !== "codex") {
           return;
         }
@@ -2834,6 +2912,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       const messageCreatedAt = new Date().toISOString();
       const outgoingMessageText = formatOutgoingPrompt({
         provider: selectedProvider,
+        model: selectedModel,
+        models: selectedProviderModels,
         effort: selectedPromptEffort,
         text: messageText,
       });
@@ -2876,13 +2956,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
             text: outgoingMessageText,
             attachments: [],
           },
-          provider: selectedProvider,
-          model: selectedModel || undefined,
-          ...(selectedModelOptionsForDispatch
-            ? { modelOptions: selectedModelOptionsForDispatch }
-            : {}),
-          ...(providerOptionsForDispatch ? { providerOptions: providerOptionsForDispatch } : {}),
-          assistantDeliveryMode: settings.enableAssistantStreaming ? "streaming" : "buffered",
+          modelSelection: selectedModelSelection,
           runtimeMode,
           interactionMode,
           createdAt: messageCreatedAt,
@@ -2911,15 +2985,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
       isConnecting,
       isSendBusy,
       persistThreadSettingsForNextTurn,
-      providerOptionsForDispatch,
       resetSendPhase,
       runtimeMode,
       selectedModel,
-      selectedModelOptionsForDispatch,
+      selectedModelSelection,
       selectedPromptEffort,
       selectedProvider,
+      selectedProviderModels,
       setThreadError,
-      settings.enableAssistantStreaming,
     ],
   );
 
@@ -3355,6 +3428,26 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [scheduleComposerFocus, setPrompt],
   );
+  const applyReasoningEffort = useCallback(
+    (effort: CodexReasoningEffort) => {
+      setComposerDraftProviderModelOptions(
+        threadId,
+        "codex",
+        normalizeCodexModelOptions({
+          ...selectedCodexModelOptions,
+          reasoningEffort: effort,
+        }),
+        { persistSticky: true },
+      );
+      scheduleComposerFocus();
+    },
+    [
+      scheduleComposerFocus,
+      selectedCodexModelOptions,
+      setComposerDraftProviderModelOptions,
+      threadId,
+    ],
+  );
   const onCodexFastModeChange = useCallback(
     (enabled: boolean) => {
       setComposerDraftProviderModelOptions(
@@ -3530,6 +3623,27 @@ export default function ChatView({ threadId }: ChatViewProps) {
           }
           return;
         }
+        if (item.command === "reasoning") {
+          if (selectedProvider !== "codex") {
+            return;
+          }
+          const replacement = "/reasoning ";
+          const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+            snapshot.value,
+            trigger.rangeEnd,
+            replacement,
+          );
+          const applied = applyPromptReplacement(
+            trigger.rangeStart,
+            replacementRangeEnd,
+            replacement,
+            { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+          );
+          if (applied) {
+            setComposerHighlightedItemId(null);
+          }
+          return;
+        }
         if (item.command === "fast") {
           if (selectedProvider !== "codex") {
             return;
@@ -3538,6 +3652,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
         } else {
           void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
         }
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+        });
+        if (applied) {
+          setComposerHighlightedItemId(null);
+        }
+        return;
+      }
+      if (item.type === "reasoning") {
+        if (selectedProvider !== "codex") {
+          return;
+        }
+        applyReasoningEffort(item.effort);
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
         });
@@ -3555,6 +3682,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
     },
     [
+      applyReasoningEffort,
       applyPromptReplacement,
       handleInteractionModeChange,
       onProviderModelSelect,

@@ -6,6 +6,8 @@ import {
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   isCollapsedCursorAdjacentToInlineToken,
+  normalizeReasoningCommandAlias,
+  normalizeReasoningValue,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "./composer-logic";
@@ -72,6 +74,42 @@ describe("detectComposerTrigger", () => {
     });
   });
 
+  it("detects /re while typing", () => {
+    const text = "/re";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "re",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("detects /r while typing", () => {
+    const text = "/r";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "r",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("keeps the reasoning trigger open after a trailing space", () => {
+    const text = "/reasoning ";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "reasoning ",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
   it("detects @path trigger in the middle of existing text", () => {
     // User typed @ between "inspect " and "in this sentence"
     const text = "Please inspect @in this sentence";
@@ -130,6 +168,57 @@ describe("parseStandaloneComposerSlashCommand", () => {
 
   it("does not parse /fast with trailing text as a standalone slash command", () => {
     expect(parseStandaloneComposerSlashCommand("/fast please")).toBeNull();
+  });
+
+  it("parses /reasoning high as a standalone slash command", () => {
+    expect(parseStandaloneComposerSlashCommand("/reasoning high")).toEqual({
+      kind: "reasoning",
+      effort: "high",
+    });
+  });
+
+  it("parses /reasoning xhigh as a standalone slash command", () => {
+    expect(parseStandaloneComposerSlashCommand("/reasoning xhigh")).toEqual({
+      kind: "reasoning",
+      effort: "xhigh",
+    });
+  });
+
+  it("does not parse /reasoning without a value", () => {
+    expect(parseStandaloneComposerSlashCommand("/reasoning")).toBeNull();
+  });
+
+  it("does not parse /reasoning please", () => {
+    expect(parseStandaloneComposerSlashCommand("/reasoning please")).toBeNull();
+  });
+
+  it("does not parse /reasoning high now", () => {
+    expect(parseStandaloneComposerSlashCommand("/reasoning high now")).toBeNull();
+  });
+
+  it("does not parse invalid reasoning abbreviations", () => {
+    expect(parseStandaloneComposerSlashCommand("/r hh")).toBeNull();
+  });
+
+  it("does not parse /r h as a standalone slash command", () => {
+    expect(parseStandaloneComposerSlashCommand("/r h")).toBeNull();
+  });
+
+  it("does not parse /r xh as a standalone slash command", () => {
+    expect(parseStandaloneComposerSlashCommand("/r xh")).toBeNull();
+  });
+});
+
+describe("reasoning helpers", () => {
+  it("normalizes the /r alias to reasoning", () => {
+    expect(normalizeReasoningCommandAlias("r")).toBe("reasoning");
+  });
+
+  it("normalizes reasoning abbreviations", () => {
+    expect(normalizeReasoningValue("xh")).toBe("xhigh");
+    expect(normalizeReasoningValue("h")).toBe("high");
+    expect(normalizeReasoningValue("m")).toBe("medium");
+    expect(normalizeReasoningValue("l")).toBe("low");
   });
 });
 

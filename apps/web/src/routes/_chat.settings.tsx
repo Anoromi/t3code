@@ -1,5 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { type CodexReasoningEffort, type ProviderKind } from "@t3tools/contracts";
+import { normalizeModelSlug } from "@t3tools/shared/model";
 import {
   ChevronDownIcon,
   InfoIcon,
@@ -13,11 +15,9 @@ import {
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import {
   PROVIDER_DISPLAY_NAMES,
-  type ProviderKind,
   type ServerProvider,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import { normalizeModelSlug } from "@t3tools/shared/model";
 import { useSettings, useUpdateSettings } from "../hooks/useSettings";
 import {
   getCustomModelOptionsByProvider,
@@ -74,6 +74,12 @@ const TIMESTAMP_FORMAT_LABELS = {
   "12-hour": "12-hour",
   "24-hour": "24-hour",
 } as const;
+const REASONING_EFFORT_LABELS: Record<CodexReasoningEffort, string> = {
+  xhigh: "Extra High",
+  high: "High",
+  medium: "Medium",
+  low: "Low",
+};
 
 const EMPTY_SERVER_PROVIDERS: ReadonlyArray<ServerProvider> = [];
 
@@ -369,6 +375,10 @@ function SettingsRouteView() {
       : []),
     ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
       ? ["Assistant output"]
+      : []),
+    ...(settings.defaultCodexReasoningEffort !==
+    DEFAULT_UNIFIED_SETTINGS.defaultCodexReasoningEffort
+      ? ["Default reasoning"]
       : []),
     ...(settings.defaultCodexFastMode !== DEFAULT_UNIFIED_SETTINGS.defaultCodexFastMode
       ? ["Codex fast mode"]
@@ -741,6 +751,63 @@ function SettingsRouteView() {
                     }
                     aria-label="Stream assistant messages"
                   />
+                }
+              />
+
+              <SettingsRow
+                title="Default reasoning"
+                description="Start brand-new draft threads with this Codex reasoning level."
+                resetAction={
+                  settings.defaultCodexReasoningEffort !==
+                  DEFAULT_UNIFIED_SETTINGS.defaultCodexReasoningEffort ? (
+                    <SettingResetButton
+                      label="default reasoning"
+                      onClick={() =>
+                        updateSettings({
+                          defaultCodexReasoningEffort:
+                            DEFAULT_UNIFIED_SETTINGS.defaultCodexReasoningEffort,
+                        })
+                      }
+                    />
+                  ) : null
+                }
+                control={
+                  <Select
+                    value={settings.defaultCodexReasoningEffort}
+                    onValueChange={(value) => {
+                      if (
+                        value !== "xhigh" &&
+                        value !== "high" &&
+                        value !== "medium" &&
+                        value !== "low"
+                      ) {
+                        return;
+                      }
+                      updateSettings({
+                        defaultCodexReasoningEffort: value,
+                      });
+                    }}
+                  >
+                    <SelectTrigger className="w-full sm:w-40" aria-label="Default reasoning">
+                      <SelectValue>
+                        {REASONING_EFFORT_LABELS[settings.defaultCodexReasoningEffort]}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectPopup align="end" alignItemWithTrigger={false}>
+                      <SelectItem hideIndicator value="xhigh">
+                        {REASONING_EFFORT_LABELS.xhigh}
+                      </SelectItem>
+                      <SelectItem hideIndicator value="high">
+                        {REASONING_EFFORT_LABELS.high}
+                      </SelectItem>
+                      <SelectItem hideIndicator value="medium">
+                        {REASONING_EFFORT_LABELS.medium}
+                      </SelectItem>
+                      <SelectItem hideIndicator value="low">
+                        {REASONING_EFFORT_LABELS.low}
+                      </SelectItem>
+                    </SelectPopup>
+                  </Select>
                 }
               />
 
