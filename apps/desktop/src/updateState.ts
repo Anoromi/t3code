@@ -34,7 +34,11 @@ export function getAutoUpdateDisabledReason(args: {
   platform: NodeJS.Platform;
   appImage?: string | undefined;
   disabledByEnv: boolean;
+  packageChannel?: string | undefined;
 }): string | null {
+  if (args.packageChannel === "nix") {
+    return "Updates for this build are managed through Nix.";
+  }
   if (args.isDevelopment || !args.isPackaged) {
     return "Automatic updates are only available in packaged production builds.";
   }

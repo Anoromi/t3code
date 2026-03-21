@@ -378,6 +378,29 @@ function resolveBackendEntry(): string {
   return Path.join(resolveAppRoot(), "apps/server/dist/index.mjs");
 }
 
+function resolveBackendExecutable(): {
+  command: string;
+  env: NodeJS.ProcessEnv;
+} {
+  const configuredNodeExecutable = process.env.T3CODE_NODE_EXECUTABLE?.trim();
+  if (configuredNodeExecutable) {
+    return {
+      command: configuredNodeExecutable,
+      env: backendEnv(),
+    };
+  }
+
+  return {
+    command: process.execPath,
+    env: {
+      ...backendEnv(),
+      // In Electron main, process.execPath points to the Electron binary.
+      // Run the child in Node mode so this backend process does not become a GUI app instance.
+      ELECTRON_RUN_AS_NODE: "1",
+    },
+  };
+}
+
 function resolveBackendCwd(): string {
   if (!app.isPackaged) {
     return resolveAppRoot();
@@ -520,6 +543,7 @@ function handleCheckForUpdatesMenuClick(): void {
     platform: process.platform,
     appImage: process.env.APPIMAGE,
     disabledByEnv: process.env.T3CODE_DISABLE_AUTO_UPDATE === "1",
+    packageChannel: process.env.T3CODE_DESKTOP_PACKAGE_CHANNEL,
   });
   if (disabledReason) {
     console.info("[desktop-updater] Manual update check requested, but updates are disabled.");
@@ -739,6 +763,7 @@ function shouldEnableAutoUpdates(): boolean {
       platform: process.platform,
       appImage: process.env.APPIMAGE,
       disabledByEnv: process.env.T3CODE_DISABLE_AUTO_UPDATE === "1",
+      packageChannel: process.env.T3CODE_DESKTOP_PACKAGE_CHANNEL,
     }) === null
   );
 }
@@ -953,14 +978,10 @@ function startBackend(): void {
   }
 
   const captureBackendLogs = app.isPackaged && backendLogSink !== null;
-  const child = ChildProcess.spawn(process.execPath, [backendEntry], {
+  const backendExecutable = resolveBackendExecutable();
+  const child = ChildProcess.spawn(backendExecutable.command, [backendEntry], {
     cwd: resolveBackendCwd(),
-    // In Electron main, process.execPath points to the Electron binary.
-    // Run the child in Node mode so this backend process does not become a GUI app instance.
-    env: {
-      ...backendEnv(),
-      ELECTRON_RUN_AS_NODE: "1",
-    },
+    env: backendExecutable.env,
     stdio: captureBackendLogs ? ["ignore", "pipe", "pipe"] : "inherit",
   });
   backendProcess = child;
