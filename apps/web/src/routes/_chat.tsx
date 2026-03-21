@@ -21,6 +21,7 @@ import { useServerKeybindings } from "~/rpc/serverState";
 const THREAD_SIDEBAR_WIDTH_STORAGE_KEY = "chat_thread_sidebar_width";
 const THREAD_SIDEBAR_MIN_WIDTH = 13 * 16;
 const THREAD_MAIN_CONTENT_MIN_WIDTH = 40 * 16;
+const GLOBAL_KEYDOWN_EVENT_OPTIONS = { capture: true } as const;
 
 function ChatRouteGlobalShortcuts(props: {
   navigationCommandMenuOpen: boolean;
@@ -91,9 +92,10 @@ function ChatRouteGlobalShortcuts(props: {
       }
     };
 
-    window.addEventListener("keydown", onWindowKeyDown);
+    // Capture phase keeps global shortcuts available while the embedded terminal has focus.
+    window.addEventListener("keydown", onWindowKeyDown, GLOBAL_KEYDOWN_EVENT_OPTIONS);
     return () => {
-      window.removeEventListener("keydown", onWindowKeyDown);
+      window.removeEventListener("keydown", onWindowKeyDown, GLOBAL_KEYDOWN_EVENT_OPTIONS);
     };
   }, [
     activeDraftThread,
