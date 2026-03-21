@@ -18,6 +18,7 @@ import { resolveSidebarNewThreadEnvMode } from "~/components/Sidebar.logic";
 import { useAppSettings } from "~/appSettings";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
+const GLOBAL_KEYDOWN_EVENT_OPTIONS = { capture: true } as const;
 
 function ChatRouteGlobalShortcuts(props: {
   navigationCommandMenuOpen: boolean;
@@ -86,9 +87,10 @@ function ChatRouteGlobalShortcuts(props: {
       });
     };
 
-    window.addEventListener("keydown", onWindowKeyDown);
+    // Capture phase keeps global shortcuts available while the embedded terminal has focus.
+    window.addEventListener("keydown", onWindowKeyDown, GLOBAL_KEYDOWN_EVENT_OPTIONS);
     return () => {
-      window.removeEventListener("keydown", onWindowKeyDown);
+      window.removeEventListener("keydown", onWindowKeyDown, GLOBAL_KEYDOWN_EVENT_OPTIONS);
     };
   }, [
     activeDraftThread,
