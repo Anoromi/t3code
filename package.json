@@ -31,6 +31,7 @@
     "dev:desktop": "node scripts/dev-runner.ts dev:desktop",
     "dev:desktop:wayland": "T3CODE_DESKTOP_OZONE_PLATFORM=wayland bun dev:desktop",
     "dev:desktop:x11": "T3CODE_DESKTOP_OZONE_PLATFORM=x11 bun dev:desktop",
+    "ghostty:open": "node scripts/ghostty-worktree.ts",
     "hypr:spawn": "node scripts/hypr-worktree.ts spawn",
     "hypr:where": "node scripts/hypr-worktree.ts where",
     "hypr:goto": "node scripts/hypr-worktree.ts goto",
