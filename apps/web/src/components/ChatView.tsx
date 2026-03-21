@@ -186,6 +186,7 @@ const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
+const GLOBAL_KEYDOWN_EVENT_OPTIONS = { capture: true } as const;
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const EMPTY_AVAILABLE_EDITORS: EditorId[] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
@@ -2080,8 +2081,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
       navigateExpandedImage(1);
     };
 
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, GLOBAL_KEYDOWN_EVENT_OPTIONS);
+    return () => window.removeEventListener("keydown", onKeyDown, GLOBAL_KEYDOWN_EVENT_OPTIONS);
   }, [closeExpandedImage, expandedImage, navigateExpandedImage]);
 
   const activeWorktreePath = activeThread?.worktreePath;
@@ -2217,8 +2218,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       event.stopPropagation();
       void runProjectScript(script);
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    // Capture phase keeps app shortcuts working when xterm consumes focused key events on Linux.
+    window.addEventListener("keydown", handler, GLOBAL_KEYDOWN_EVENT_OPTIONS);
+    return () => window.removeEventListener("keydown", handler, GLOBAL_KEYDOWN_EVENT_OPTIONS);
   }, [
     activeProject,
     terminalState.terminalOpen,
