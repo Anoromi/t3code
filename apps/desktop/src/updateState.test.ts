@@ -71,6 +71,7 @@ describe("getAutoUpdateDisabledReason", () => {
         platform: "darwin",
         appImage: undefined,
         disabledByEnv: false,
+        packageChannel: undefined,
       }),
     ).toContain("packaged production builds");
   });
@@ -83,8 +84,22 @@ describe("getAutoUpdateDisabledReason", () => {
         platform: "darwin",
         appImage: undefined,
         disabledByEnv: true,
+        packageChannel: undefined,
       }),
     ).toContain("T3CODE_DISABLE_AUTO_UPDATE");
+  });
+
+  it("reports nix-managed builds as disabled through nix", () => {
+    expect(
+      getAutoUpdateDisabledReason({
+        isDevelopment: false,
+        isPackaged: false,
+        platform: "linux",
+        appImage: undefined,
+        disabledByEnv: false,
+        packageChannel: "nix",
+      }),
+    ).toContain("managed through Nix");
   });
 
   it("reports linux non-AppImage builds as disabled", () => {
@@ -95,6 +110,7 @@ describe("getAutoUpdateDisabledReason", () => {
         platform: "linux",
         appImage: undefined,
         disabledByEnv: false,
+        packageChannel: undefined,
       }),
     ).toContain("AppImage");
   });

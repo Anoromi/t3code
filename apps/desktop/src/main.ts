@@ -422,6 +422,29 @@ function resolveBackendEntry(): string {
   return Path.join(resolveAppRoot(), "apps/server/dist/bin.mjs");
 }
 
+function resolveBackendExecutable(): {
+  command: string;
+  env: NodeJS.ProcessEnv;
+} {
+  const configuredNodeExecutable = process.env.T3CODE_NODE_EXECUTABLE?.trim();
+  if (configuredNodeExecutable) {
+    return {
+      command: configuredNodeExecutable,
+      env: backendChildEnv(),
+    };
+  }
+
+  return {
+    command: process.execPath,
+    env: {
+      ...backendChildEnv(),
+      // In Electron main, process.execPath points to the Electron binary.
+      // Run the child in Node mode so this backend process does not become a GUI app instance.
+      ELECTRON_RUN_AS_NODE: "1",
+    },
+  };
+}
+
 function resolveBackendCwd(): string {
   if (!app.isPackaged) {
     return resolveAppRoot();
@@ -564,6 +587,7 @@ function handleCheckForUpdatesMenuClick(): void {
     platform: process.platform,
     appImage: process.env.APPIMAGE,
     disabledByEnv: process.env.T3CODE_DISABLE_AUTO_UPDATE === "1",
+    packageChannel: process.env.T3CODE_DESKTOP_PACKAGE_CHANNEL,
   });
   if (disabledReason) {
     console.info("[desktop-updater] Manual update check requested, but updates are disabled.");
@@ -787,6 +811,7 @@ function shouldEnableAutoUpdates(): boolean {
       platform: process.platform,
       appImage: process.env.APPIMAGE,
       disabledByEnv: process.env.T3CODE_DISABLE_AUTO_UPDATE === "1",
+      packageChannel: process.env.T3CODE_DESKTOP_PACKAGE_CHANNEL,
     }) === null
   );
 }
@@ -1016,18 +1041,18 @@ function startBackend(): void {
   }
 
   const captureBackendLogs = app.isPackaged && backendLogSink !== null;
-  const child = ChildProcess.spawn(process.execPath, [backendEntry, "--bootstrap-fd", "3"], {
-    cwd: resolveBackendCwd(),
-    // In Electron main, process.execPath points to the Electron binary.
-    // Run the child in Node mode so this backend process does not become a GUI app instance.
-    env: {
-      ...backendChildEnv(),
-      ELECTRON_RUN_AS_NODE: "1",
+  const backendExecutable = resolveBackendExecutable();
+  const child = ChildProcess.spawn(
+    backendExecutable.command,
+    [backendEntry, "--bootstrap-fd", "3"],
+    {
+      cwd: resolveBackendCwd(),
+      env: backendExecutable.env,
+      stdio: captureBackendLogs
+        ? ["ignore", "pipe", "pipe", "pipe"]
+        : ["ignore", "inherit", "inherit", "pipe"],
     },
-    stdio: captureBackendLogs
-      ? ["ignore", "pipe", "pipe", "pipe"]
-      : ["ignore", "inherit", "inherit", "pipe"],
-  });
+  );
   const bootstrapStream = child.stdio[3];
   if (bootstrapStream && "write" in bootstrapStream) {
     bootstrapStream.write(
