@@ -63,6 +63,7 @@ Use btca whenever a task depends on understanding a repo, docs site, or configur
 more accurately than a generic model can.
 
 Use it whenever the user says "use btca", or when you need info that should come from the listed resources.
+Do not use it to understand this repository only other resources should be inspected using btca
 
 ## Tools
 
