@@ -1979,7 +1979,7 @@ export default function Sidebar() {
             >
               <T3Wordmark />
               <span className="truncate text-sm font-medium tracking-tight text-muted-foreground">
-                Code
+                Cork
               </span>
               <span className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-muted-foreground/60">
                 {APP_STAGE_LABEL}
