@@ -24,7 +24,7 @@ import {
   MAX_CUSTOM_MODEL_LENGTH,
   resolveAppModelSelectionState,
 } from "../modelSelection";
-import { APP_VERSION } from "../branding";
+import { APP_BASE_NAME, APP_VERSION } from "../branding";
 import { Button } from "../components/ui/button";
 import { Collapsible, CollapsibleContent } from "../components/ui/collapsible";
 import { Input } from "../components/ui/input";
@@ -144,7 +144,8 @@ function getProviderSummary(provider: ServerProvider | undefined): {
     return {
       headline: "Disabled",
       detail:
-        provider.message ?? "This provider is installed but disabled for new sessions in T3 Code.",
+        provider.message ??
+        `This provider is installed but disabled for new sessions in ${APP_BASE_NAME}.`,
     };
   }
   if (!provider.installed) {
@@ -621,7 +622,7 @@ function SettingsRouteView() {
             <SettingsSection title="General">
               <SettingsRow
                 title="Theme"
-                description="Choose how T3 Code looks across the app."
+                description={`Choose how ${APP_BASE_NAME} looks across the app.`}
                 resetAction={
                   theme !== "system" ? (
                     <SettingResetButton label="theme" onClick={() => setTheme("system")} />
