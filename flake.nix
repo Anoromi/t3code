@@ -29,12 +29,13 @@
           pkgs = mkPkgs system;
           cleanSrc = mkSrc system;
           bunConfig = import ./nix/bun.nix;
-          preparedSource = pkgs.callPackage ./nix/lib/node-modules.nix {
+          nodeModules = pkgs.callPackage ./nix/lib/node-modules.nix {
             src = cleanSrc;
             inherit bunConfig;
           };
           desktop = pkgs.callPackage ./nix/packages/desktop.nix {
-            src = preparedSource;
+            src = cleanSrc;
+            inherit nodeModules;
           };
         in
         {

@@ -52,7 +52,16 @@ pkgs.stdenv.mkDerivation {
   installPhase = ''
     runHook preInstall
     mkdir -p "$out"
-    cp -a ./. "$out/"
+
+    cp -a node_modules "$out/node_modules"
+
+    for workspace_dir in apps/server packages/shared scripts; do
+      if [ -d "$workspace_dir/node_modules" ]; then
+        mkdir -p "$out/$workspace_dir"
+        cp -a "$workspace_dir/node_modules" "$out/$workspace_dir/node_modules"
+      fi
+    done
+
     runHook postInstall
   '';
 }

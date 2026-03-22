@@ -1,4 +1,4 @@
-{ lib, pkgs, src }:
+{ lib, pkgs, src, nodeModules }:
 
 let
   serverPackageJson = builtins.fromJSON (builtins.readFile ../../apps/server/package.json);
@@ -70,8 +70,25 @@ pkgs.stdenv.mkDerivation (finalAttrs: {
     runHook preBuild
     export HOME="$TMPDIR/home"
     mkdir -p "$HOME"
+    cp -a ${nodeModules}/node_modules ./node_modules
+
+    for workspace_dir in apps/server packages/shared scripts; do
+      if [ -d ${nodeModules}/"$workspace_dir"/node_modules ]; then
+        mkdir -p "$workspace_dir"
+        cp -a ${nodeModules}/"$workspace_dir"/node_modules "$workspace_dir/node_modules"
+      fi
+    done
+
+    chmod -R u+w ./node_modules
+    for workspace_dir in apps/server packages/shared scripts; do
+      if [ -d "$workspace_dir/node_modules" ]; then
+        chmod -R u+w "$workspace_dir/node_modules"
+      fi
+    done
+
     patchShebangs node_modules
     npm rebuild node-pty --build-from-source
+    bun run --cwd apps/web build
     bun run build:desktop
     runHook postBuild
   '';
