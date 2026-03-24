@@ -114,6 +114,10 @@ const CliEnvConfig = Config.all({
   port: Config.port("T3CODE_PORT").pipe(Config.option, Config.map(Option.getOrUndefined)),
   host: Config.string("T3CODE_HOST").pipe(Config.option, Config.map(Option.getOrUndefined)),
   t3Home: Config.string("T3CODE_HOME").pipe(Config.option, Config.map(Option.getOrUndefined)),
+  stateDir: Config.string("T3CODE_STATE_DIR").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   devUrl: Config.url("VITE_DEV_SERVER_URL").pipe(Config.option, Config.map(Option.getOrUndefined)),
   noBrowser: Config.boolean("T3CODE_NO_BROWSER").pipe(
     Config.option,
@@ -217,7 +221,6 @@ const ServerConfigLive = (input: CliInput) =>
           ),
         ),
       );
-      const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
       const noBrowser = resolveBooleanFlag(
         input.noBrowser,
         Option.getOrElse(
@@ -237,6 +240,7 @@ const ServerConfigLive = (input: CliInput) =>
           Option.fromUndefinedOr(bootstrap.authToken),
         ),
       );
+      const derivedPaths = yield* deriveServerPaths(baseDir, devUrl, env.stateDir);
       const autoBootstrapProjectFromCwd = resolveBooleanFlag(
         input.autoBootstrapProjectFromCwd,
         Option.getOrElse(

@@ -50,9 +50,12 @@ export interface ServerConfigShape extends ServerDerivedPaths {
 export const deriveServerPaths = Effect.fn(function* (
   baseDir: ServerConfigShape["baseDir"],
   devUrl: ServerConfigShape["devUrl"],
+  stateDirOverride?: string,
 ): Effect.fn.Return<ServerDerivedPaths, never, Path.Path> {
-  const { join } = yield* Path.Path;
-  const stateDir = join(baseDir, devUrl !== undefined ? "dev" : "userdata");
+  const { join, resolve } = yield* Path.Path;
+  const stateDir = stateDirOverride
+    ? resolve(stateDirOverride)
+    : join(baseDir, devUrl !== undefined ? "dev" : "userdata");
   const dbPath = join(stateDir, "state.sqlite");
   const attachmentsDir = join(stateDir, "attachments");
   const logsDir = join(stateDir, "logs");

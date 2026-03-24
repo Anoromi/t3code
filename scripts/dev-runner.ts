@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
+import { execFileSync } from "node:child_process";
+import { readdir, mkdir, access, copyFile } from "node:fs/promises";
 import { homedir } from "node:os";
+import { basename, resolve } from "node:path";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -127,6 +130,199 @@ interface CreateDevRunnerEnvInput {
   readonly host: string | undefined;
   readonly port: number | undefined;
   readonly devUrl: URL | undefined;
+  readonly cwd?: string | undefined;
+  readonly gitWorktreeListPorcelain?: string | undefined;
+}
+
+interface GitWorktreeEntry {
+  readonly path: string;
+  readonly branch: string | null;
+}
+
+function hashToHex8(value: string): string {
+  return (Hash.string(value) >>> 0).toString(16).padStart(8, "0");
+}
+
+export function parseGitWorktreeListPorcelain(text: string): ReadonlyArray<GitWorktreeEntry> {
+  const entries: GitWorktreeEntry[] = [];
+  let currentPath: string | null = null;
+  let currentBranch: string | null = null;
+
+  const flush = () => {
+    if (!currentPath) {
+      return;
+    }
+    entries.push({
+      path: currentPath,
+      branch: currentBranch,
+    });
+    currentPath = null;
+    currentBranch = null;
+  };
+
+  for (const line of text.split(/\r?\n/)) {
+    if (line.length === 0) {
+      flush();
+      continue;
+    }
+    if (line.startsWith("worktree ")) {
+      flush();
+      currentPath = line.slice("worktree ".length).trim();
+      continue;
+    }
+    if (line.startsWith("branch ")) {
+      currentBranch = line.slice("branch ".length).trim() || null;
+    }
+  }
+  flush();
+
+  return entries;
+}
+
+function loadGitWorktreeListPorcelain(cwd: string): string | null {
+  try {
+    return execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd,
+      encoding: "utf8",
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function copyDirectoryTree(sourceDir: string, targetDir: string): Promise<void> {
+  await mkdir(targetDir, { recursive: true });
+  const entries = await readdir(sourceDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.name === "logs") {
+      continue;
+    }
+    const sourcePath = `${sourceDir}/${entry.name}`;
+    const targetPath = `${targetDir}/${entry.name}`;
+    if (entry.isDirectory()) {
+      await copyDirectoryTree(sourcePath, targetPath);
+      continue;
+    }
+    if (entry.isFile()) {
+      await mkdir(targetDir, { recursive: true });
+      await copyFile(sourcePath, targetPath);
+    }
+  }
+}
+
+export function resolveWorktreeStatePaths(input: {
+  readonly baseDir: string;
+  readonly currentWorktreeRoot: string;
+  readonly gitWorktreeListPorcelain: string | undefined;
+}): {
+  readonly isMainWorktree: boolean;
+  readonly stateDir: string;
+  readonly mainStateDir: string;
+} {
+  const fallbackMainStateDir = resolve(input.baseDir, "dev");
+  const parsedEntries = input.gitWorktreeListPorcelain
+    ? parseGitWorktreeListPorcelain(input.gitWorktreeListPorcelain)
+    : [];
+  const mainEntry =
+    parsedEntries.find((entry) => entry.branch === "refs/heads/main") ?? parsedEntries[0] ?? null;
+  const repoName = mainEntry ? basename(resolve(mainEntry.path)) || "repo" : "repo";
+  const currentWorktreeRoot = resolve(input.currentWorktreeRoot);
+  const isMainWorktree = mainEntry ? resolve(mainEntry.path) === currentWorktreeRoot : true;
+
+  if (isMainWorktree) {
+    return {
+      isMainWorktree: true,
+      stateDir: fallbackMainStateDir,
+      mainStateDir: fallbackMainStateDir,
+    };
+  }
+
+  const worktreeBaseName = basename(currentWorktreeRoot) || "worktree";
+  return {
+    isMainWorktree: false,
+    stateDir: resolve(
+      input.baseDir,
+      "dev-worktrees",
+      repoName,
+      `${worktreeBaseName}-${hashToHex8(currentWorktreeRoot)}`,
+    ),
+    mainStateDir: fallbackMainStateDir,
+  };
+}
+
+function ensureWorktreeStateDir(input: {
+  readonly stateDir: string;
+  readonly mainStateDir: string;
+  readonly isMainWorktree: boolean;
+}): Effect.Effect<void, DevRunnerError> {
+  return Effect.gen(function* () {
+    if (input.isMainWorktree) {
+      return;
+    }
+
+    const alreadyExists = yield* Effect.tryPromise({
+      try: () => pathExists(input.stateDir),
+      catch: (cause) =>
+        new DevRunnerError({
+          message: `Failed to inspect worktree state dir '${input.stateDir}'.`,
+          cause,
+        }),
+    });
+    if (alreadyExists) {
+      return;
+    }
+
+    const mainStateExists = yield* Effect.tryPromise({
+      try: () => pathExists(input.mainStateDir),
+      catch: (cause) =>
+        new DevRunnerError({
+          message: `Failed to inspect main worktree state dir '${input.mainStateDir}'.`,
+          cause,
+        }),
+    });
+
+    yield* Effect.tryPromise({
+      try: async () => {
+        try {
+          await mkdir(input.stateDir, { recursive: true });
+          if (mainStateExists) {
+            await copyDirectoryTree(input.mainStateDir, input.stateDir);
+          }
+          return;
+        } catch (seedError) {
+          try {
+            await mkdir(input.stateDir, { recursive: true });
+            console.warn(
+              `[dev-runner] failed to seed worktree state from '${input.mainStateDir}', using empty state dir '${input.stateDir}'`,
+              seedError,
+            );
+            return;
+          } catch (fallbackError) {
+            throw new DevRunnerError({
+              message: `Failed to prepare empty worktree state dir '${input.stateDir}'.`,
+              cause: fallbackError,
+            });
+          }
+        }
+      },
+      catch: (cause) =>
+        cause instanceof DevRunnerError
+          ? cause
+          : new DevRunnerError({
+              message: `Failed to seed worktree state dir '${input.stateDir}'.`,
+              cause,
+            }),
+    });
+  });
 }
 
 export function createDevRunnerEnv({
@@ -142,12 +338,22 @@ export function createDevRunnerEnv({
   host,
   port,
   devUrl,
-}: CreateDevRunnerEnvInput): Effect.Effect<NodeJS.ProcessEnv, never, Path.Path> {
+  cwd,
+  gitWorktreeListPorcelain,
+}: CreateDevRunnerEnvInput): Effect.Effect<NodeJS.ProcessEnv, DevRunnerError, Path.Path> {
   return Effect.gen(function* () {
     const serverPort = port ?? BASE_SERVER_PORT + serverOffset;
     const webPort = BASE_WEB_PORT + webOffset;
     const resolvedBaseDir = yield* resolveBaseDir(t3Home);
     const isDesktopMode = mode === "dev:desktop";
+    const currentWorktreeRoot = resolve(cwd ?? process.cwd());
+    const worktreeStatePaths = resolveWorktreeStatePaths({
+      baseDir: resolvedBaseDir,
+      currentWorktreeRoot,
+      gitWorktreeListPorcelain:
+        gitWorktreeListPorcelain ?? loadGitWorktreeListPorcelain(currentWorktreeRoot) ?? undefined,
+    });
+    yield* ensureWorktreeStateDir(worktreeStatePaths);
 
     const output: NodeJS.ProcessEnv = {
       ...baseEnv,
@@ -155,6 +361,7 @@ export function createDevRunnerEnv({
       ELECTRON_RENDERER_PORT: String(webPort),
       VITE_DEV_SERVER_URL: devUrl?.toString() ?? `http://localhost:${webPort}`,
       T3CODE_HOME: resolvedBaseDir,
+      T3CODE_STATE_DIR: worktreeStatePaths.stateDir,
     };
 
     if (!isDesktopMode) {
@@ -451,7 +658,7 @@ export function runDevRunnerWithInput(input: DevRunnerCliInput) {
         : "";
 
     yield* Effect.logInfo(
-      `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.T3CODE_PORT)} webPort=${String(env.PORT)} baseDir=${String(env.T3CODE_HOME)}`,
+      `[dev-runner] mode=${input.mode} source=${source}${selectionSuffix} serverPort=${String(env.T3CODE_PORT)} webPort=${String(env.PORT)} baseDir=${String(env.T3CODE_HOME)} stateDir=${String(env.T3CODE_STATE_DIR)}`,
     );
 
     if (input.dryRun) {
