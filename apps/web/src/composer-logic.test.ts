@@ -170,6 +170,10 @@ describe("parseStandaloneComposerSlashCommand", () => {
     expect(parseStandaloneComposerSlashCommand("/fast please")).toBeNull();
   });
 
+  it("parses /fork as a standalone slash command", () => {
+    expect(parseStandaloneComposerSlashCommand("/fork")).toBe("fork");
+  });
+
   it("parses /reasoning high as a standalone slash command", () => {
     expect(parseStandaloneComposerSlashCommand("/reasoning high")).toEqual({
       kind: "reasoning",
@@ -357,5 +361,9 @@ describe("parseStandaloneComposerSlashCommand", () => {
 
   it("ignores slash commands with extra message text", () => {
     expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
+  });
+
+  it("ignores /fork with extra message text", () => {
+    expect(parseStandaloneComposerSlashCommand("/fork later")).toBeNull();
   });
 });

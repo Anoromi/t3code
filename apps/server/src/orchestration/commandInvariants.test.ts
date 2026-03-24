@@ -5,6 +5,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   ProjectId,
   ThreadId,
+  TurnId,
   type OrchestrationCommand,
   type OrchestrationReadModel,
 } from "@t3tools/contracts";
@@ -12,10 +13,13 @@ import { Effect } from "effect";
 
 import {
   findThreadById,
+  latestTurnIsForkSettled,
   listThreadsByProjectId,
   requireNonNegativeInteger,
   requireThread,
   requireThreadAbsent,
+  requireThreadHasForkableHistory,
+  requireThreadSettledForFork,
 } from "./commandInvariants.ts";
 
 const now = new Date().toISOString();
@@ -64,6 +68,7 @@ const readModel: OrchestrationReadModel = {
       runtimeMode: "full-access",
       branch: null,
       worktreePath: null,
+      forkOrigin: null,
       createdAt: now,
       updatedAt: now,
       archivedAt: null,
@@ -87,6 +92,7 @@ const readModel: OrchestrationReadModel = {
       runtimeMode: "full-access",
       branch: null,
       worktreePath: null,
+      forkOrigin: null,
       createdAt: now,
       updatedAt: now,
       archivedAt: null,
@@ -216,5 +222,93 @@ describe("commandInvariants", () => {
         }),
       ),
     ).rejects.toThrow("greater than or equal to 0");
+  });
+
+  it("requires persisted history before forking", async () => {
+    await expect(
+      Effect.runPromise(
+        requireThreadHasForkableHistory({
+          command: {
+            type: "thread.fork",
+            commandId: CommandId.makeUnsafe("cmd-fork-no-history"),
+            threadId: ThreadId.makeUnsafe("thread-fork"),
+            sourceThreadId: ThreadId.makeUnsafe("thread-1"),
+            createdAt: now,
+          },
+          thread: readModel.threads[0]!,
+        }),
+      ),
+    ).rejects.toThrow("has no persisted history to fork");
+  });
+
+  it("treats completed latest turns as settled for forking", () => {
+    expect(
+      latestTurnIsForkSettled({
+        turnId: TurnId.makeUnsafe("turn-1"),
+        state: "completed",
+        requestedAt: now,
+        startedAt: now,
+        completedAt: now,
+        assistantMessageId: null,
+      }),
+    ).toBe(true);
+    expect(
+      latestTurnIsForkSettled({
+        turnId: TurnId.makeUnsafe("turn-2"),
+        state: "running",
+        requestedAt: now,
+        startedAt: now,
+        completedAt: null,
+        assistantMessageId: null,
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects forking while a thread is still running", async () => {
+    await expect(
+      Effect.runPromise(
+        requireThreadSettledForFork({
+          command: {
+            type: "thread.fork",
+            commandId: CommandId.makeUnsafe("cmd-fork-running"),
+            threadId: ThreadId.makeUnsafe("thread-fork"),
+            sourceThreadId: ThreadId.makeUnsafe("thread-running"),
+            createdAt: now,
+          },
+          thread: {
+            ...readModel.threads[0]!,
+            messages: [
+              {
+                id: MessageId.makeUnsafe("msg-running"),
+                role: "user",
+                text: "hello",
+                attachments: [],
+                turnId: null,
+                streaming: false,
+                createdAt: now,
+                updatedAt: now,
+              },
+            ],
+            latestTurn: {
+              turnId: TurnId.makeUnsafe("turn-running"),
+              state: "running",
+              requestedAt: now,
+              startedAt: now,
+              completedAt: null,
+              assistantMessageId: null,
+            },
+            session: {
+              threadId: ThreadId.makeUnsafe("thread-running"),
+              status: "running",
+              providerName: "codex",
+              runtimeMode: "full-access",
+              activeTurnId: TurnId.makeUnsafe("turn-running"),
+              lastError: null,
+              updatedAt: now,
+            },
+          },
+        }),
+      ),
+    ).rejects.toThrow("is still processing and cannot be forked yet");
   });
 });

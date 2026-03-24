@@ -1,4 +1,10 @@
-import { ProjectId, type ModelSelection, type ThreadId, type TurnId } from "@t3tools/contracts";
+import {
+  ProjectId,
+  type ModelSelection,
+  type OrchestrationLatestTurn,
+  type ThreadId,
+  type TurnId,
+} from "@t3tools/contracts";
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadSession } from "../types";
 import { randomUUID } from "~/lib/utils";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
@@ -39,6 +45,7 @@ export function buildLocalDraftThread(
     latestTurn: null,
     branch: draftThread.branch,
     worktreePath: draftThread.worktreePath,
+    forkOrigin: null,
     turnDiffSummaries: [],
     activities: [],
     proposedPlans: [],
@@ -111,6 +118,62 @@ export function collectUserMessageBlobPreviewUrls(message: ChatMessage): string[
 export interface PullRequestDialogState {
   initialReference: string | null;
   key: number;
+}
+
+type ForkableThread = Pick<
+  Thread,
+  "messages" | "activities" | "proposedPlans" | "turnDiffSummaries" | "latestTurn" | "session"
+>;
+
+export function hasForkableThreadHistory(thread: ForkableThread | null): boolean {
+  if (thread === null) {
+    return false;
+  }
+  return (
+    thread.messages.length > 0 ||
+    thread.activities.length > 0 ||
+    thread.proposedPlans.length > 0 ||
+    thread.turnDiffSummaries.length > 0 ||
+    thread.latestTurn !== null
+  );
+}
+
+export function latestTurnIsForkSettled(latestTurn: OrchestrationLatestTurn | null): boolean {
+  if (latestTurn === null) {
+    return true;
+  }
+  if (latestTurn.state === "running") {
+    return false;
+  }
+  if (latestTurn.startedAt !== null && latestTurn.completedAt === null) {
+    return false;
+  }
+  return true;
+}
+
+export function isThreadForkReady(options: {
+  thread: ForkableThread | null;
+  isServerThread: boolean;
+  phase: SessionPhase | null;
+  isSendBusy: boolean;
+  isConnecting: boolean;
+  isRevertingCheckpoint: boolean;
+}): boolean {
+  if (!options.isServerThread || !hasForkableThreadHistory(options.thread)) {
+    return false;
+  }
+  if (
+    options.phase === "running" ||
+    options.isSendBusy ||
+    options.isConnecting ||
+    options.isRevertingCheckpoint
+  ) {
+    return false;
+  }
+  if (!latestTurnIsForkSettled(options.thread?.latestTurn ?? null)) {
+    return false;
+  }
+  return options.thread?.session?.orchestrationStatus !== "running";
 }
 
 export function readFileAsDataUrl(file: File): Promise<string> {

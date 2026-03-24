@@ -1,4 +1,10 @@
-import { ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
+import {
+  MessageId,
+  ProjectId,
+  ThreadId,
+  TurnId,
+  type OrchestrationLatestTurn,
+} from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useStore } from "../store";
 
@@ -7,8 +13,10 @@ import {
   buildExpiredTerminalContextToastCopy,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  hasForkableThreadHistory,
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
+  isThreadForkReady,
   waitForStartedServerThread,
 } from "./ChatView.logic";
 
@@ -453,5 +461,123 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         threadError: null,
       }),
     ).toBe(true);
+  });
+});
+
+describe("fork readiness", () => {
+  const settledLatestTurn: OrchestrationLatestTurn = {
+    turnId: TurnId.makeUnsafe("turn-1"),
+    state: "completed",
+    requestedAt: "2026-03-17T12:52:29.000Z",
+    startedAt: "2026-03-17T12:52:30.000Z",
+    completedAt: "2026-03-17T12:52:31.000Z",
+    assistantMessageId: null,
+  };
+
+  it("counts reply-only server history as forkable even without checkpoints", () => {
+    expect(
+      hasForkableThreadHistory({
+        messages: [
+          {
+            id: MessageId.makeUnsafe("msg-user-1"),
+            role: "user",
+            text: "testing",
+            streaming: false,
+            createdAt: "2026-03-17T12:52:29.000Z",
+          },
+          {
+            id: MessageId.makeUnsafe("msg-assistant-1"),
+            role: "assistant",
+            text: "Received. I'm ready in /tmp/repo.",
+            streaming: false,
+            createdAt: "2026-03-17T12:52:30.000Z",
+          },
+        ],
+        activities: [],
+        proposedPlans: [],
+        turnDiffSummaries: [],
+        latestTurn: null,
+        session: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("treats settled history without checkpoints as fork-ready", () => {
+    expect(
+      isThreadForkReady({
+        thread: {
+          messages: [
+            {
+              id: MessageId.makeUnsafe("msg-user-1"),
+              role: "user",
+              text: "testing",
+              streaming: false,
+              createdAt: "2026-03-17T12:52:29.000Z",
+            },
+            {
+              id: MessageId.makeUnsafe("msg-assistant-1"),
+              role: "assistant",
+              text: "Received. I'm ready in /tmp/repo.",
+              streaming: false,
+              createdAt: "2026-03-17T12:52:30.000Z",
+            },
+          ],
+          activities: [],
+          proposedPlans: [],
+          turnDiffSummaries: [],
+          latestTurn: settledLatestTurn,
+          session: {
+            provider: "codex",
+            status: "ready",
+            createdAt: "2026-03-17T12:52:29.000Z",
+            updatedAt: "2026-03-17T12:52:31.000Z",
+            orchestrationStatus: "ready",
+          },
+        },
+        isServerThread: true,
+        phase: "ready",
+        isSendBusy: false,
+        isConnecting: false,
+        isRevertingCheckpoint: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("blocks forking while a latest turn is still in flight", () => {
+    expect(
+      isThreadForkReady({
+        thread: {
+          messages: [
+            {
+              id: MessageId.makeUnsafe("msg-user-1"),
+              role: "user",
+              text: "testing",
+              streaming: false,
+              createdAt: "2026-03-17T12:52:29.000Z",
+            },
+          ],
+          activities: [],
+          proposedPlans: [],
+          turnDiffSummaries: [],
+          latestTurn: {
+            ...settledLatestTurn,
+            state: "running",
+            completedAt: null,
+          },
+          session: {
+            provider: "codex",
+            status: "running",
+            createdAt: "2026-03-17T12:52:29.000Z",
+            updatedAt: "2026-03-17T12:52:31.000Z",
+            orchestrationStatus: "running",
+          },
+        },
+        isServerThread: true,
+        phase: "running",
+        isSendBusy: false,
+        isConnecting: false,
+        isRevertingCheckpoint: false,
+      }),
+    ).toBe(false);
   });
 });

@@ -8,7 +8,11 @@
  */
 import {
   IsoDateTime,
+<<<<<<< HEAD
   ModelSelection,
+=======
+  NonNegativeInt,
+>>>>>>> 861afa05 (Add settled-state thread forking)
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
@@ -29,6 +33,10 @@ export const ProjectionThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
+  forkSourceThreadId: Schema.NullOr(ThreadId),
+  forkSourceTurnId: Schema.NullOr(TurnId),
+  forkSourceCheckpointTurnCount: Schema.NullOr(NonNegativeInt),
+  forkedAt: Schema.NullOr(IsoDateTime),
   latestTurnId: Schema.NullOr(TurnId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

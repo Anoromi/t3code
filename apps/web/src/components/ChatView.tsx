@@ -187,6 +187,8 @@ import {
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
+  hasForkableThreadHistory,
+  isThreadForkReady,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
   type LocalDispatchSnapshot,
@@ -1079,6 +1081,24 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const selectedModelForPicker = selectedModel;
   const phase = derivePhase(activeThread?.session ?? null);
+  const isSendBusy = sendPhase !== "idle";
+  const isPreparingWorktree = sendPhase === "preparing-worktree";
+  const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const hasActiveThreadForkableHistory = hasForkableThreadHistory(activeThread ?? null);
+  const threadForkReady = isThreadForkReady({
+    thread: activeThread ?? null,
+    isServerThread,
+    phase,
+    isSendBusy,
+    isConnecting,
+    isRevertingCheckpoint,
+  });
+  const nowIso = new Date(nowTick).toISOString();
+  const activeWorkStartedAt = deriveActiveWorkStartedAt(
+    activeLatestTurn,
+    activeThread?.session ?? null,
+    sendStartedAt,
+  );
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(
     () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
@@ -1578,6 +1598,17 @@ export default function ChatView({ threadId }: ChatViewProps) {
           label: "/default",
           description: "Switch this thread back to normal chat mode",
         },
+        ...(threadForkReady
+          ? [
+              {
+                id: "slash:fork",
+                type: "slash-command",
+                command: "fork",
+                label: "/fork",
+                description: "Fork this thread from its current settled state",
+              } as const,
+            ]
+          : []),
         ...(selectedProvider === "codex"
           ? [
               {
@@ -1622,7 +1653,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
         label: name,
         description: `${providerLabel} · ${slug}`,
       }));
-  }, [composerTrigger, searchableModelOptions, selectedProvider, workspaceEntries]);
+  }, [
+    composerTrigger,
+    searchableModelOptions,
+    selectedProvider,
+    threadForkReady,
+    workspaceEntries,
+  ]);
   const composerMenuOpen = Boolean(composerTrigger);
   const activeComposerMenuItem = useMemo(
     () =>
@@ -3008,6 +3045,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
           return;
         }
         applyReasoningEffort(standaloneSlashCommand.effort);
+      } else if (standaloneSlashCommand === "fork") {
+        await onForkThread();
       } else if (standaloneSlashCommand === "fast") {
         if (selectedProvider !== "codex") {
           return;
@@ -3016,11 +3055,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
       } else {
         handleInteractionModeChange(standaloneSlashCommand);
       }
-      promptRef.current = "";
-      clearComposerDraftContent(activeThread.id);
-      setComposerHighlightedItemId(null);
-      setComposerCursor(0);
-      setComposerTrigger(null);
+      if (standaloneSlashCommand !== "fork") {
+        promptRef.current = "";
+        clearComposerDraftContent(activeThread.id);
+        setComposerHighlightedItemId(null);
+        setComposerCursor(0);
+        setComposerTrigger(null);
+      }
       return;
     }
     if (!hasSendableContent) {
@@ -3805,6 +3846,93 @@ export default function ChatView({ threadId }: ChatViewProps) {
     selectedModel,
   ]);
 
+  const onForkThread = useCallback(async () => {
+    const api = readNativeApi();
+    if (
+      !api ||
+      !activeThread ||
+      !activeProject ||
+      !isServerThread ||
+      isSendBusy ||
+      isConnecting ||
+      sendInFlightRef.current
+    ) {
+      return;
+    }
+
+    if (!hasActiveThreadForkableHistory) {
+      toastManager.add({
+        type: "error",
+        title: "Could not fork thread",
+        description: "This thread has no persisted history to fork yet.",
+      });
+      return;
+    }
+
+    if (!threadForkReady) {
+      toastManager.add({
+        type: "error",
+        title: "Could not fork thread",
+        description: "This thread is still processing and cannot be forked yet.",
+      });
+      return;
+    }
+
+    const nextThreadId = newThreadId();
+    const createdAt = new Date().toISOString();
+
+    sendInFlightRef.current = true;
+    beginSendPhase("sending-turn");
+    const finish = () => {
+      sendInFlightRef.current = false;
+      resetSendPhase();
+    };
+
+    await api.orchestration
+      .dispatchCommand({
+        type: "thread.fork",
+        commandId: newCommandId(),
+        threadId: nextThreadId,
+        sourceThreadId: activeThread.id,
+        createdAt,
+      })
+      .then(() => api.orchestration.getSnapshot())
+      .then((snapshot) => {
+        syncServerReadModel(snapshot);
+        promptRef.current = "";
+        clearComposerDraftContent(activeThread.id);
+        setComposerHighlightedItemId(null);
+        setComposerCursor(0);
+        setComposerTrigger(null);
+        return navigate({
+          to: "/$threadId",
+          params: { threadId: nextThreadId },
+        });
+      })
+      .catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Could not fork thread",
+          description:
+            error instanceof Error ? error.message : "An error occurred while forking the thread.",
+        });
+      })
+      .then(finish, finish);
+  }, [
+    activeProject,
+    activeThread,
+    beginSendPhase,
+    clearComposerDraftContent,
+    hasActiveThreadForkableHistory,
+    isConnecting,
+    isSendBusy,
+    isServerThread,
+    navigate,
+    resetSendPhase,
+    syncServerReadModel,
+    threadForkReady,
+  ]);
+
   const onProviderModelSelect = useCallback(
     (provider: ProviderKind, model: string) => {
       if (!activeThread) return;
@@ -4074,6 +4202,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
             return;
           }
           toggleCodexFastMode();
+        } else if (item.command === "fork") {
+          void onForkThread();
         } else {
           void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
         }
@@ -4111,6 +4241,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       applyPromptReplacement,
       handleInteractionModeChange,
       onProviderModelSelect,
+      onForkThread,
       resolveActiveComposerTrigger,
       selectedProvider,
       toggleCodexFastMode,

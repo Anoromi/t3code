@@ -50,6 +50,7 @@ function makeThread(
     lastVisitedAt: overrides.lastVisitedAt,
     branch: overrides.branch ?? null,
     worktreePath: overrides.worktreePath ?? null,
+    forkOrigin: overrides.forkOrigin ?? null,
     turnDiffSummaries: overrides.turnDiffSummaries ?? [],
     activities: overrides.activities ?? [],
   };

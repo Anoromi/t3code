@@ -321,4 +321,57 @@ layer("OrchestrationEventStore", (it) => {
       }
     }),
   );
+
+  it.effect("round-trips thread.forked events without checkpoint ancestry", () =>
+    Effect.gen(function* () {
+      const eventStore = yield* OrchestrationEventStore;
+      const now = new Date().toISOString();
+
+      const appended = yield* eventStore.append({
+        type: "thread.forked",
+        eventId: EventId.makeUnsafe("evt-thread-forked-roundtrip"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.makeUnsafe("thread-forked-roundtrip"),
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-thread-forked-roundtrip"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-thread-forked-roundtrip"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.makeUnsafe("thread-forked-roundtrip"),
+          projectId: ProjectId.makeUnsafe("project-roundtrip"),
+          title: "Fork: Roundtrip",
+          model: "gpt-5",
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          forkOrigin: {
+            sourceThreadId: ThreadId.makeUnsafe("thread-source-roundtrip"),
+            sourceTurnId: null,
+            sourceCheckpointTurnCount: null,
+            forkedAt: now,
+          },
+          latestTurn: null,
+          messages: [],
+          proposedPlans: [],
+          activities: [],
+          checkpoints: [],
+          turns: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      const replayed = yield* Stream.runCollect(
+        eventStore.readFromSequence(appended.sequence - 1, 10),
+      ).pipe(Effect.map((chunk) => Array.from(chunk)));
+      const forkedEvent = replayed.find((event) => event.eventId === appended.eventId);
+      assert.equal(forkedEvent?.type, "thread.forked");
+      if (forkedEvent?.type === "thread.forked") {
+        assert.equal(forkedEvent.payload.forkOrigin.sourceTurnId, null);
+        assert.equal(forkedEvent.payload.forkOrigin.sourceCheckpointTurnCount, null);
+      }
+    }),
+  );
 });

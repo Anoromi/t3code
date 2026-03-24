@@ -1,5 +1,6 @@
 import type {
   OrchestrationCommand,
+  OrchestrationLatestTurn,
   OrchestrationProject,
   OrchestrationReadModel,
   OrchestrationThread,
@@ -140,6 +141,67 @@ export function requireThreadAbsent(input: {
       `Thread '${input.threadId}' already exists and cannot be created twice.`,
     ),
   );
+}
+
+export function threadHasForkableHistory(thread: OrchestrationThread): boolean {
+  return (
+    thread.messages.length > 0 ||
+    thread.activities.length > 0 ||
+    thread.proposedPlans.length > 0 ||
+    thread.checkpoints.length > 0 ||
+    thread.latestTurn !== null
+  );
+}
+
+export function latestTurnIsForkSettled(latestTurn: OrchestrationLatestTurn | null): boolean {
+  if (latestTurn === null) {
+    return true;
+  }
+  if (latestTurn.state === "running") {
+    return false;
+  }
+  if (latestTurn.startedAt !== null && latestTurn.completedAt === null) {
+    return false;
+  }
+  return true;
+}
+
+export function requireThreadHasForkableHistory(input: {
+  readonly thread: OrchestrationThread;
+  readonly command: OrchestrationCommand;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  if (threadHasForkableHistory(input.thread)) {
+    return Effect.void;
+  }
+  return Effect.fail(
+    invariantError(
+      input.command.type,
+      `Thread '${input.thread.id}' has no persisted history to fork.`,
+    ),
+  );
+}
+
+export function requireThreadSettledForFork(input: {
+  readonly thread: OrchestrationThread;
+  readonly command: OrchestrationCommand;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  if (input.thread.session?.status === "running") {
+    return Effect.fail(
+      invariantError(
+        input.command.type,
+        `Thread '${input.thread.id}' is still processing and cannot be forked yet.`,
+      ),
+    );
+  }
+  if (!latestTurnIsForkSettled(input.thread.latestTurn)) {
+    return Effect.fail(
+      invariantError(
+        input.command.type,
+        `Thread '${input.thread.id}' is still processing and cannot be forked yet.`,
+      ),
+    );
+  }
+  return Effect.void;
 }
 
 export function requireNonNegativeInteger(input: {
