@@ -21,6 +21,7 @@ import {
 } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
+import { ThreadForkServiceLive } from "./ThreadForkService.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
   OrchestrationProjectionPipeline,
@@ -42,6 +43,7 @@ async function createOrchestrationSystem() {
     Layer.provide(OrchestrationProjectionPipelineLive),
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+    Layer.provide(ThreadForkServiceLive),
     Layer.provide(SqlitePersistenceMemory),
     Layer.provideMerge(ServerConfigLayer),
     Layer.provideMerge(NodeServices.layer),
@@ -175,6 +177,207 @@ describe("OrchestrationEngine", () => {
       "thread.created",
       "thread.deleted",
     ]);
+    await system.dispose();
+  });
+
+  it("forks from the latest settled thread snapshot without requiring a checkpoint", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-project-fork-create"),
+        projectId: asProjectId("project-fork"),
+        title: "Fork Project",
+        workspaceRoot: "/tmp/project-fork",
+        defaultModel: "gpt-5-codex",
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("cmd-thread-fork-source-create"),
+        threadId: ThreadId.makeUnsafe("thread-source"),
+        projectId: asProjectId("project-fork"),
+        title: "Source thread",
+        model: "gpt-5-codex",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: "feature/fork-test",
+        worktreePath: "/tmp/worktrees/fork-test",
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-thread-fork-turn-start"),
+        threadId: ThreadId.makeUnsafe("thread-source"),
+        message: {
+          messageId: asMessageId("msg-source-user"),
+          role: "user",
+          text: "hello from source",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-thread-fork-session-running"),
+        threadId: ThreadId.makeUnsafe("thread-source"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-source"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-source-1"),
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: CommandId.makeUnsafe("cmd-thread-fork-assistant-delta"),
+        threadId: ThreadId.makeUnsafe("thread-source"),
+        messageId: asMessageId("msg-source-assistant"),
+        delta: "assistant reply",
+        turnId: asTurnId("turn-source-1"),
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.message.assistant.complete",
+        commandId: CommandId.makeUnsafe("cmd-thread-fork-assistant-complete"),
+        threadId: ThreadId.makeUnsafe("thread-source"),
+        messageId: asMessageId("msg-source-assistant"),
+        turnId: asTurnId("turn-source-1"),
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.makeUnsafe("cmd-thread-fork-session-ready"),
+        threadId: ThreadId.makeUnsafe("thread-source"),
+        session: {
+          threadId: ThreadId.makeUnsafe("thread-source"),
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+
+    await system.run(
+      engine.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.makeUnsafe("cmd-thread-fork-dispatch"),
+        threadId: ThreadId.makeUnsafe("thread-forked"),
+        sourceThreadId: ThreadId.makeUnsafe("thread-source"),
+        createdAt,
+      }),
+    );
+
+    const readModel = await system.run(engine.getReadModel());
+    const forkedThread = readModel.threads.find((thread) => thread.id === "thread-forked");
+    expect(forkedThread).toBeDefined();
+    expect(forkedThread?.title).toBe("Fork: Source thread");
+    expect(forkedThread?.branch).toBe("feature/fork-test");
+    expect(forkedThread?.worktreePath).toBe("/tmp/worktrees/fork-test");
+    expect(forkedThread?.forkOrigin).toEqual({
+      sourceThreadId: ThreadId.makeUnsafe("thread-source"),
+      sourceTurnId: asTurnId("turn-source-1"),
+      sourceCheckpointTurnCount: null,
+      forkedAt: createdAt,
+    });
+    expect(forkedThread?.latestTurn?.turnId).toBe("turn-source-1");
+    expect(forkedThread?.messages.map((message) => message.text)).toEqual(
+      expect.arrayContaining(["hello from source", "assistant reply"]),
+    );
+    expect(forkedThread?.checkpoints).toEqual([]);
+    expect(
+      forkedThread?.messages.some((message) => message.id === asMessageId("msg-source-user")),
+    ).toBe(false);
+    expect(forkedThread?.session).toBeNull();
+
+    await system.dispose();
+  });
+
+  it("rejects forking while the source thread is still processing", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.makeUnsafe("cmd-project-fork-running-create"),
+        projectId: asProjectId("project-fork-running"),
+        title: "Fork Project",
+        workspaceRoot: "/tmp/project-fork-running",
+        defaultModel: "gpt-5-codex",
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.makeUnsafe("cmd-thread-fork-running-create"),
+        threadId: ThreadId.makeUnsafe("thread-source-running"),
+        projectId: asProjectId("project-fork-running"),
+        title: "Source thread",
+        model: "gpt-5-codex",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-thread-fork-running-turn-start"),
+        threadId: ThreadId.makeUnsafe("thread-source-running"),
+        message: {
+          messageId: asMessageId("msg-source-running-user"),
+          role: "user",
+          text: "still working",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt,
+      }),
+    );
+
+    await expect(
+      system.run(
+        engine.dispatch({
+          type: "thread.fork",
+          commandId: CommandId.makeUnsafe("cmd-thread-fork-running-dispatch"),
+          threadId: ThreadId.makeUnsafe("thread-forked-running"),
+          sourceThreadId: ThreadId.makeUnsafe("thread-source-running"),
+          createdAt,
+        }),
+      ),
+    ).rejects.toThrow("is still processing and cannot be forked yet");
+
     await system.dispose();
   });
 

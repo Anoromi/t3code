@@ -19,6 +19,8 @@ import {
 import { decideOrchestrationCommand } from "../decider.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
+import { ThreadForkServiceLive } from "./ThreadForkService.ts";
+import { ThreadForkService } from "../Services/ThreadForkService.ts";
 import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
@@ -54,6 +56,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const eventStore = yield* OrchestrationEventStore;
   const commandReceiptRepository = yield* OrchestrationCommandReceiptRepository;
   const projectionPipeline = yield* OrchestrationProjectionPipeline;
+  const threadForkService = yield* ThreadForkService;
 
   let readModel = createEmptyReadModel(new Date().toISOString());
 
@@ -102,10 +105,16 @@ const makeOrchestrationEngine = Effect.gen(function* () {
         return;
       }
 
-      const eventBase = yield* decideOrchestrationCommand({
-        command: envelope.command,
-        readModel,
-      });
+      const eventBase =
+        envelope.command.type === "thread.fork"
+          ? yield* threadForkService.createForkEvent({
+              command: envelope.command,
+              readModel,
+            })
+          : yield* decideOrchestrationCommand({
+              command: envelope.command,
+              readModel,
+            });
       const eventBases = Array.isArray(eventBase) ? eventBase : [eventBase];
       const committedCommand = yield* sql
         .withTransaction(
@@ -238,4 +247,4 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 export const OrchestrationEngineLive = Layer.effect(
   OrchestrationEngineService,
   makeOrchestrationEngine,
-);
+).pipe(Layer.provideMerge(ThreadForkServiceLive));

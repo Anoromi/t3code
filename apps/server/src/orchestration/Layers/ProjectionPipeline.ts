@@ -425,7 +425,32 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             interactionMode: event.payload.interactionMode,
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
+            forkSourceThreadId: null,
+            forkSourceTurnId: null,
+            forkSourceCheckpointTurnCount: null,
+            forkedAt: null,
             latestTurnId: null,
+            createdAt: event.payload.createdAt,
+            updatedAt: event.payload.updatedAt,
+            deletedAt: null,
+          });
+          return;
+
+        case "thread.forked":
+          yield* projectionThreadRepository.upsert({
+            threadId: event.payload.threadId,
+            projectId: event.payload.projectId,
+            title: event.payload.title,
+            model: event.payload.model,
+            runtimeMode: event.payload.runtimeMode,
+            interactionMode: event.payload.interactionMode,
+            branch: event.payload.branch,
+            worktreePath: event.payload.worktreePath,
+            forkSourceThreadId: event.payload.forkOrigin.sourceThreadId,
+            forkSourceTurnId: event.payload.forkOrigin.sourceTurnId,
+            forkSourceCheckpointTurnCount: event.payload.forkOrigin.sourceCheckpointTurnCount,
+            forkedAt: event.payload.forkOrigin.forkedAt,
+            latestTurnId: event.payload.latestTurn?.turnId ?? null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
             deletedAt: null,
@@ -605,6 +630,28 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
           return;
         }
 
+        case "thread.forked": {
+          yield* Effect.forEach(
+            event.payload.messages,
+            (message) =>
+              projectionThreadMessageRepository.upsert({
+                messageId: message.id,
+                threadId: event.payload.threadId,
+                turnId: message.turnId,
+                role: message.role,
+                text: message.text,
+                ...(message.attachments !== undefined
+                  ? { attachments: [...message.attachments] }
+                  : {}),
+                isStreaming: message.streaming,
+                createdAt: message.createdAt,
+                updatedAt: message.updatedAt,
+              }),
+            { concurrency: 1 },
+          ).pipe(Effect.asVoid);
+          return;
+        }
+
         case "thread.reverted": {
           const existingRows = yield* projectionThreadMessageRepository.listByThreadId({
             threadId: event.payload.threadId,
@@ -660,6 +707,24 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             createdAt: event.payload.proposedPlan.createdAt,
             updatedAt: event.payload.proposedPlan.updatedAt,
           });
+          return;
+
+        case "thread.forked":
+          yield* Effect.forEach(
+            event.payload.proposedPlans,
+            (proposedPlan) =>
+              projectionThreadProposedPlanRepository.upsert({
+                planId: proposedPlan.id,
+                threadId: event.payload.threadId,
+                turnId: proposedPlan.turnId,
+                planMarkdown: proposedPlan.planMarkdown,
+                implementedAt: proposedPlan.implementedAt,
+                implementationThreadId: proposedPlan.implementationThreadId,
+                createdAt: proposedPlan.createdAt,
+                updatedAt: proposedPlan.updatedAt,
+              }),
+            { concurrency: 1 },
+          ).pipe(Effect.asVoid);
           return;
 
         case "thread.reverted": {
@@ -718,6 +783,25 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
           });
           return;
 
+        case "thread.forked":
+          yield* Effect.forEach(
+            event.payload.activities,
+            (activity) =>
+              projectionThreadActivityRepository.upsert({
+                activityId: activity.id,
+                threadId: event.payload.threadId,
+                turnId: activity.turnId,
+                tone: activity.tone,
+                kind: activity.kind,
+                summary: activity.summary,
+                payload: activity.payload,
+                ...(activity.sequence !== undefined ? { sequence: activity.sequence } : {}),
+                createdAt: activity.createdAt,
+              }),
+            { concurrency: 1 },
+          ).pipe(Effect.asVoid);
+          return;
+
         case "thread.reverted": {
           const existingRows = yield* projectionThreadActivityRepository.listByThreadId({
             threadId: event.payload.threadId,
@@ -755,6 +839,12 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
     _attachmentSideEffects,
   ) =>
     Effect.gen(function* () {
+      if (event.type === "thread.forked") {
+        yield* projectionThreadSessionRepository.deleteByThreadId({
+          threadId: event.payload.threadId,
+        });
+        return;
+      }
       if (event.type !== "thread.session-set") {
         return;
       }
@@ -775,6 +865,34 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       switch (event.type) {
+        case "thread.forked": {
+          yield* Effect.forEach(
+            event.payload.turns,
+            (turn) =>
+              projectionTurnRepository.upsertByTurnId({
+                threadId: event.payload.threadId,
+                turnId: turn.turnId,
+                pendingMessageId: turn.pendingMessageId,
+                sourceProposedPlanThreadId: turn.sourceProposedPlanThreadId,
+                sourceProposedPlanId: turn.sourceProposedPlanId,
+                assistantMessageId: turn.assistantMessageId,
+                state: turn.state,
+                requestedAt: turn.requestedAt,
+                startedAt: turn.startedAt,
+                completedAt: turn.completedAt,
+                checkpointTurnCount: turn.checkpointTurnCount,
+                checkpointRef: turn.checkpointRef,
+                checkpointStatus: turn.checkpointStatus,
+                checkpointFiles: turn.checkpointFiles.map((file) => ({ ...file })),
+              }),
+            { concurrency: 1 },
+          ).pipe(Effect.asVoid);
+          yield* projectionTurnRepository.deletePendingTurnStartByThreadId({
+            threadId: event.payload.threadId,
+          });
+          return;
+        }
+
         case "thread.turn-start-requested": {
           yield* projectionTurnRepository.replacePendingTurnStart({
             threadId: event.payload.threadId,

@@ -191,6 +191,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     });
   };
 
+<<<<<<< HEAD
   const listThreadRows = (threadColumns: ReadonlySet<string>) => {
     const threadModelSelectionExpression = threadColumns.has("model_selection_json")
       ? threadColumns.has("model")
@@ -231,6 +232,34 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         `),
     });
   };
+=======
+  const listThreadRows = SqlSchema.findAll({
+    Request: Schema.Void,
+    Result: ProjectionThreadDbRowSchema,
+    execute: () =>
+      sql`
+        SELECT
+          thread_id AS "threadId",
+          project_id AS "projectId",
+          title,
+          model,
+          runtime_mode AS "runtimeMode",
+          interaction_mode AS "interactionMode",
+          branch,
+          worktree_path AS "worktreePath",
+          fork_source_thread_id AS "forkSourceThreadId",
+          fork_source_turn_id AS "forkSourceTurnId",
+          fork_source_checkpoint_turn_count AS "forkSourceCheckpointTurnCount",
+          forked_at AS "forkedAt",
+          latest_turn_id AS "latestTurnId",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt",
+          deleted_at AS "deletedAt"
+        FROM projection_threads
+        ORDER BY created_at ASC, thread_id ASC
+      `,
+  });
+>>>>>>> 861afa05 (Add settled-state thread forking)
 
   const listThreadMessageRows = SqlSchema.findAll({
     Request: Schema.Void,
@@ -614,6 +643,15 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             interactionMode: row.interactionMode,
             branch: row.branch,
             worktreePath: row.worktreePath,
+            forkOrigin:
+              row.forkSourceThreadId !== null && row.forkedAt !== null
+                ? {
+                    sourceThreadId: row.forkSourceThreadId,
+                    sourceTurnId: row.forkSourceTurnId,
+                    sourceCheckpointTurnCount: row.forkSourceCheckpointTurnCount,
+                    forkedAt: row.forkedAt,
+                  }
+                : null,
             latestTurn: latestTurnByThread.get(row.threadId) ?? null,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,

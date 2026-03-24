@@ -3,7 +3,7 @@ import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
 export type ComposerTriggerKind = "path" | "slash-command" | "slash-model";
-export type ComposerSlashCommand = "model" | "plan" | "default" | "fast" | "reasoning";
+export type ComposerSlashCommand = "model" | "plan" | "default" | "fast" | "reasoning" | "fork";
 export type ComposerStandaloneSlashCommand =
   | Exclude<ComposerSlashCommand, "model" | "reasoning">
   | { kind: "reasoning"; effort: CodexReasoningEffort };
@@ -21,6 +21,7 @@ const SLASH_COMMANDS: readonly ComposerSlashCommand[] = [
   "default",
   "fast",
   "reasoning",
+  "fork",
 ];
 const REASONING_COMMAND_ALIASES = ["reasoning", "r"] as const;
 
@@ -294,11 +295,12 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
 export function parseStandaloneComposerSlashCommand(
   text: string,
 ): ComposerStandaloneSlashCommand | null {
-  const match = /^\/(plan|default|fast)\s*$/i.exec(text.trim());
+  const match = /^\/(plan|default|fast|fork)\s*$/i.exec(text.trim());
   if (match) {
     const command = match[1]?.toLowerCase();
     if (command === "plan") return "plan";
     if (command === "fast") return "fast";
+    if (command === "fork") return "fork";
     return "default";
   }
 

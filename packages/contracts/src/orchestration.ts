@@ -230,6 +230,14 @@ export const OrchestrationCheckpointSummary = Schema.Struct({
 });
 export type OrchestrationCheckpointSummary = typeof OrchestrationCheckpointSummary.Type;
 
+export const ThreadForkOrigin = Schema.Struct({
+  sourceThreadId: ThreadId,
+  sourceTurnId: Schema.NullOr(TurnId),
+  sourceCheckpointTurnCount: Schema.NullOr(NonNegativeInt),
+  forkedAt: IsoDateTime,
+});
+export type ThreadForkOrigin = typeof ThreadForkOrigin.Type;
+
 export const OrchestrationThreadActivityTone = Schema.Literals([
   "info",
   "tool",
@@ -280,6 +288,7 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  forkOrigin: Schema.NullOr(ThreadForkOrigin).pipe(Schema.withDecodingDefault(() => null)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -341,6 +350,15 @@ const ThreadCreateCommand = Schema.Struct({
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
 });
+
+export const ThreadForkCommand = Schema.Struct({
+  type: Schema.Literal("thread.fork"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  sourceThreadId: ThreadId,
+  createdAt: IsoDateTime,
+});
+export type ThreadForkCommand = typeof ThreadForkCommand.Type;
 
 const ThreadDeleteCommand = Schema.Struct({
   type: Schema.Literal("thread.delete"),
@@ -456,6 +474,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
   ThreadCreateCommand,
+  ThreadForkCommand,
   ThreadDeleteCommand,
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
@@ -475,6 +494,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
   ThreadCreateCommand,
+  ThreadForkCommand,
   ThreadDeleteCommand,
   ThreadMetaUpdateCommand,
   ThreadRuntimeModeSetCommand,
@@ -575,6 +595,7 @@ export const OrchestrationEventType = Schema.Literals([
   "project.meta-updated",
   "project.deleted",
   "thread.created",
+  "thread.forked",
   "thread.deleted",
   "thread.meta-updated",
   "thread.runtime-mode-set",
@@ -636,6 +657,54 @@ export const ThreadCreatedPayload = Schema.Struct({
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
+
+export const ProjectionThreadTurnStatus = Schema.Literals([
+  "running",
+  "completed",
+  "interrupted",
+  "error",
+]);
+export type ProjectionThreadTurnStatus = typeof ProjectionThreadTurnStatus.Type;
+
+export const ThreadForkTurnSnapshot = Schema.Struct({
+  turnId: TurnId,
+  pendingMessageId: Schema.NullOr(MessageId),
+  sourceProposedPlanThreadId: Schema.NullOr(ThreadId),
+  sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
+  assistantMessageId: Schema.NullOr(MessageId),
+  state: ProjectionThreadTurnStatus,
+  requestedAt: IsoDateTime,
+  startedAt: Schema.NullOr(IsoDateTime),
+  completedAt: Schema.NullOr(IsoDateTime),
+  checkpointTurnCount: Schema.NullOr(NonNegativeInt),
+  checkpointRef: Schema.NullOr(CheckpointRef),
+  checkpointStatus: Schema.NullOr(OrchestrationCheckpointStatus),
+  checkpointFiles: Schema.Array(OrchestrationCheckpointFile),
+});
+export type ThreadForkTurnSnapshot = typeof ThreadForkTurnSnapshot.Type;
+
+export const ThreadForkedPayload = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  model: TrimmedNonEmptyString,
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_PROVIDER_INTERACTION_MODE),
+  ),
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  forkOrigin: ThreadForkOrigin,
+  latestTurn: Schema.NullOr(OrchestrationLatestTurn),
+  messages: Schema.Array(OrchestrationMessage),
+  proposedPlans: Schema.Array(OrchestrationProposedPlan),
+  activities: Schema.Array(OrchestrationThreadActivity),
+  checkpoints: Schema.Array(OrchestrationCheckpointSummary),
+  turns: Schema.Array(ThreadForkTurnSnapshot),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type ThreadForkedPayload = typeof ThreadForkedPayload.Type;
 
 export const ThreadDeletedPayload = Schema.Struct({
   threadId: ThreadId,
@@ -796,6 +865,11 @@ export const OrchestrationEvent = Schema.Union([
   }),
   Schema.Struct({
     ...EventBaseFields,
+    type: Schema.Literal("thread.forked"),
+    payload: ThreadForkedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
     type: Schema.Literal("thread.deleted"),
     payload: ThreadDeletedPayload,
   }),
@@ -909,14 +983,6 @@ export const ProviderSessionRuntimeStatus = Schema.Literals([
   "error",
 ]);
 export type ProviderSessionRuntimeStatus = typeof ProviderSessionRuntimeStatus.Type;
-
-const ProjectionThreadTurnStatus = Schema.Literals([
-  "running",
-  "completed",
-  "interrupted",
-  "error",
-]);
-export type ProjectionThreadTurnStatus = typeof ProjectionThreadTurnStatus.Type;
 
 const ProjectionCheckpointRow = Schema.Struct({
   threadId: ThreadId,

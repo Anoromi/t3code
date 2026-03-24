@@ -168,6 +168,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.fork":
+      return yield* new OrchestrationCommandInvariantError({
+        commandType: command.type,
+        detail: "thread.fork must be handled by ThreadForkService.",
+      });
+
     case "thread.delete": {
       yield* requireThread({
         readModel,

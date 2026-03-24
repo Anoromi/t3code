@@ -9,6 +9,7 @@ import { OrchestrationCommandReceiptRepositoryLive } from "./persistence/Layers/
 import { OrchestrationEventStoreLive } from "./persistence/Layers/OrchestrationEventStore";
 import { ProviderSessionRuntimeRepositoryLive } from "./persistence/Layers/ProviderSessionRuntime";
 import { OrchestrationEngineLive } from "./orchestration/Layers/OrchestrationEngine";
+import { ThreadForkServiceLive } from "./orchestration/Layers/ThreadForkService";
 import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor";
 import { OrchestrationReactorLive } from "./orchestration/Layers/OrchestrationReactor";
 import { ProviderCommandReactorLive } from "./orchestration/Layers/ProviderCommandReactor";
@@ -97,6 +98,7 @@ export function makeServerRuntimeServicesLayer() {
     Layer.provide(OrchestrationProjectionPipelineLive),
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+    Layer.provide(ThreadForkServiceLive),
   );
 
   const checkpointDiffQueryLayer = CheckpointDiffQueryLive.pipe(

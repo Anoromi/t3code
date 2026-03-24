@@ -30,7 +30,11 @@ import Migration0014 from "./Migrations/014_ProjectionThreadProposedPlanImplemen
 import Migration0015 from "./Migrations/015_ProjectionTurnsSourceProposedPlan.ts";
 import Migration0016 from "./Migrations/016_ProjectionThreadsForkOrigin.ts";
 import Migration0017 from "./Migrations/017_ProjectionThreadsForkOriginCompat.ts";
+<<<<<<< HEAD
 import Migration0018 from "./Migrations/018_CanonicalizeModelSelections.ts";
+=======
+import { Effect } from "effect";
+>>>>>>> 861afa05 (Add settled-state thread forking)
 
 /**
  * Migration loader with all migrations defined inline.
@@ -42,6 +46,7 @@ import Migration0018 from "./Migrations/018_CanonicalizeModelSelections.ts";
  * Uses Migrator.fromRecord which parses the key format and
  * returns migrations sorted by ID.
  */
+<<<<<<< HEAD
 export const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
   [2, "OrchestrationCommandReceipts", Migration0002],
@@ -71,6 +76,27 @@ export const makeMigrationLoader = (throughId?: number) =>
         .map(([id, name, migration]) => [`${id}_${name}`, migration]),
     ),
   );
+=======
+const loader = Migrator.fromRecord({
+  "1_OrchestrationEvents": Migration0001,
+  "2_OrchestrationCommandReceipts": Migration0002,
+  "3_CheckpointDiffBlobs": Migration0003,
+  "4_ProviderSessionRuntime": Migration0004,
+  "5_Projections": Migration0005,
+  "6_ProjectionThreadSessionRuntimeModeColumns": Migration0006,
+  "7_ProjectionThreadMessageAttachments": Migration0007,
+  "8_ProjectionThreadActivitySequence": Migration0008,
+  "9_ProviderSessionRuntimeMode": Migration0009,
+  "10_ProjectionThreadsRuntimeMode": Migration0010,
+  "11_OrchestrationThreadCreatedRuntimeMode": Migration0011,
+  "12_ProjectionThreadsInteractionMode": Migration0012,
+  "13_ProjectionThreadProposedPlans": Migration0013,
+  "14_ProjectionThreadProposedPlanImplementation": Migration0014,
+  "15_ProjectionTurnsSourceProposedPlan": Migration0015,
+  "16_ProjectionThreadsForkOrigin": Migration0016,
+  "17_ProjectionThreadsForkOriginCompat": Migration0017,
+});
+>>>>>>> 861afa05 (Add settled-state thread forking)
 
 /**
  * Migrator run function - no schema dumping needed

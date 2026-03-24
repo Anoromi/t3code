@@ -4,6 +4,7 @@ import type {
   OrchestrationProposedPlanId,
   OrchestrationSessionStatus,
   OrchestrationThreadActivity,
+  ThreadForkOrigin,
   ProjectScript as ContractProjectScript,
   ThreadId,
   ProjectId,
@@ -106,6 +107,7 @@ export interface Thread {
   lastVisitedAt?: string | undefined;
   branch: string | null;
   worktreePath: string | null;
+  forkOrigin: ThreadForkOrigin | null;
   turnDiffSummaries: TurnDiffSummary[];
   activities: OrchestrationThreadActivity[];
 }
