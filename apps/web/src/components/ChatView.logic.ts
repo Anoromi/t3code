@@ -1,10 +1,6 @@
-<<<<<<< HEAD
 import { ProjectId, type ModelSelection, type ThreadId } from "@t3tools/contracts";
-import { type ChatMessage, type Thread } from "../types";
-=======
-import { ProjectId, type OrchestrationLatestTurn, type ThreadId } from "@t3tools/contracts";
 import { type ChatMessage, type SessionPhase, type Thread } from "../types";
->>>>>>> 861afa05 (Add settled-state thread forking)
+import type { OrchestrationLatestTurn } from "@t3tools/contracts";
 import { randomUUID } from "~/lib/utils";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import { Schema } from "effect";

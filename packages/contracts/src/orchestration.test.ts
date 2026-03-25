@@ -13,12 +13,9 @@ import {
   OrchestrationSession,
   OrchestrationThread,
   ProjectCreateCommand,
-<<<<<<< HEAD
   ThreadMetaUpdatedPayload,
-=======
   ThreadForkCommand,
   ThreadForkedPayload,
->>>>>>> 861afa05 (Add settled-state thread forking)
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
   ThreadTurnDiff,
@@ -39,12 +36,9 @@ const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(Orchestration
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
 const decodeOrchestrationThread = Schema.decodeUnknownEffect(OrchestrationThread);
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
-<<<<<<< HEAD
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
-=======
 const decodeThreadForkCommand = Schema.decodeUnknownEffect(ThreadForkCommand);
 const decodeThreadForkedPayload = Schema.decodeUnknownEffect(ThreadForkedPayload);
->>>>>>> 861afa05 (Add settled-state thread forking)
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {

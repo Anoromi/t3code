@@ -78,6 +78,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           workspaceRoot: command.workspaceRoot,
           defaultModelSelection: command.defaultModelSelection ?? null,
           scripts: [],
+          worktreeGroupTitles: [],
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -107,6 +108,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             ? { defaultModelSelection: command.defaultModelSelection }
             : {}),
           ...(command.scripts !== undefined ? { scripts: command.scripts } : {}),
+          ...(command.worktreeGroupTitles !== undefined
+            ? { worktreeGroupTitles: command.worktreeGroupTitles }
+            : {}),
           updatedAt: occurredAt,
         },
       };
@@ -130,6 +134,28 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           projectId: command.projectId,
           deletedAt: occurredAt,
+        },
+      };
+    }
+
+    case "project.worktree-group-title.regenerate": {
+      yield* requireProject({
+        readModel,
+        command,
+        projectId: command.projectId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "project",
+          aggregateId: command.projectId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "project.worktree-group-title-regeneration-requested",
+        payload: {
+          projectId: command.projectId,
+          worktreePath: command.worktreePath,
+          createdAt: command.createdAt,
         },
       };
     }

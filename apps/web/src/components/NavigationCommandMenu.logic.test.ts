@@ -20,6 +20,7 @@ function makeProject(overrides: Partial<Project> & Pick<Project, "id" | "name" |
       } satisfies Project["defaultModelSelection"]),
     expanded: overrides.expanded ?? true,
     scripts: overrides.scripts ?? [],
+    worktreeGroupTitles: overrides.worktreeGroupTitles ?? [],
   };
 }
 

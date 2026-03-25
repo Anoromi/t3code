@@ -51,6 +51,7 @@ function makeState(thread: Thread): AppState {
         },
         expanded: true,
         scripts: [],
+        worktreeGroupTitles: [],
       },
     ],
     threads: [thread],
@@ -102,6 +103,7 @@ function makeReadModel(thread: OrchestrationReadModel["threads"][number]): Orche
         updatedAt: "2026-02-27T00:00:00.000Z",
         deletedAt: null,
         scripts: [],
+        worktreeGroupTitles: [],
       },
     ],
     threads: [thread],
@@ -123,6 +125,7 @@ function makeReadModelProject(
     updatedAt: "2026-02-27T00:00:00.000Z",
     deletedAt: null,
     scripts: [],
+    worktreeGroupTitles: [],
     ...overrides,
   };
 }

@@ -140,12 +140,33 @@ export const ProjectScript = Schema.Struct({
 });
 export type ProjectScript = typeof ProjectScript.Type;
 
+export const OrchestrationWorktreeGroupTitleStatus = Schema.Literals([
+  "pending",
+  "ready",
+  "failed",
+]);
+export type OrchestrationWorktreeGroupTitleStatus =
+  typeof OrchestrationWorktreeGroupTitleStatus.Type;
+
+export const OrchestrationWorktreeGroupTitle = Schema.Struct({
+  worktreePath: TrimmedNonEmptyString,
+  title: Schema.NullOr(TrimmedNonEmptyString),
+  status: OrchestrationWorktreeGroupTitleStatus,
+  sourceThreadId: Schema.NullOr(ThreadId),
+  generationId: TrimmedNonEmptyString,
+  updatedAt: IsoDateTime,
+});
+export type OrchestrationWorktreeGroupTitle = typeof OrchestrationWorktreeGroupTitle.Type;
+
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
+  worktreeGroupTitles: Schema.optional(Schema.Array(OrchestrationWorktreeGroupTitle)).pipe(
+    Schema.withDecodingDefault(() => []),
+  ),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: Schema.NullOr(IsoDateTime),
@@ -327,12 +348,21 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  worktreeGroupTitles: Schema.optional(Schema.Array(OrchestrationWorktreeGroupTitle)),
 });
 
 const ProjectDeleteCommand = Schema.Struct({
   type: Schema.Literal("project.delete"),
   commandId: CommandId,
   projectId: ProjectId,
+});
+
+const ProjectWorktreeGroupTitleRegenerateCommand = Schema.Struct({
+  type: Schema.Literal("project.worktree-group-title.regenerate"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  worktreePath: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
 });
 
 const ThreadCreateCommand = Schema.Struct({
@@ -473,6 +503,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
+  ProjectWorktreeGroupTitleRegenerateCommand,
   ThreadCreateCommand,
   ThreadForkCommand,
   ThreadDeleteCommand,
@@ -493,6 +524,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
+  ProjectWorktreeGroupTitleRegenerateCommand,
   ThreadCreateCommand,
   ThreadForkCommand,
   ThreadDeleteCommand,
@@ -594,6 +626,7 @@ export const OrchestrationEventType = Schema.Literals([
   "project.created",
   "project.meta-updated",
   "project.deleted",
+  "project.worktree-group-title-regeneration-requested",
   "thread.created",
   "thread.forked",
   "thread.deleted",
@@ -625,6 +658,9 @@ export const ProjectCreatedPayload = Schema.Struct({
   workspaceRoot: TrimmedNonEmptyString,
   defaultModelSelection: Schema.NullOr(ModelSelection).pipe(Schema.withDecodingDefault(() => null)),
   scripts: Schema.Array(ProjectScript),
+  worktreeGroupTitles: Schema.optional(Schema.Array(OrchestrationWorktreeGroupTitle)).pipe(
+    Schema.withDecodingDefault(() => []),
+  ),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -635,12 +671,19 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  worktreeGroupTitles: Schema.optional(Schema.Array(OrchestrationWorktreeGroupTitle)),
   updatedAt: IsoDateTime,
 });
 
 export const ProjectDeletedPayload = Schema.Struct({
   projectId: ProjectId,
   deletedAt: IsoDateTime,
+});
+
+export const ProjectWorktreeGroupTitleRegenerationRequestedPayload = Schema.Struct({
+  projectId: ProjectId,
+  worktreePath: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
 });
 
 export const ThreadCreatedPayload = Schema.Struct({
@@ -857,6 +900,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("project.deleted"),
     payload: ProjectDeletedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("project.worktree-group-title-regeneration-requested"),
+    payload: ProjectWorktreeGroupTitleRegenerationRequestedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

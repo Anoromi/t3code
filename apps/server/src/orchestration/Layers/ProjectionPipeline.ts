@@ -364,6 +364,7 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             workspaceRoot: event.payload.workspaceRoot,
             defaultModelSelection: event.payload.defaultModelSelection,
             scripts: event.payload.scripts,
+            worktreeGroupTitles: event.payload.worktreeGroupTitles ?? [],
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
             deletedAt: null,
@@ -387,6 +388,9 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
               ? { defaultModelSelection: event.payload.defaultModelSelection }
               : {}),
             ...(event.payload.scripts !== undefined ? { scripts: event.payload.scripts } : {}),
+            ...(event.payload.worktreeGroupTitles !== undefined
+              ? { worktreeGroupTitles: event.payload.worktreeGroupTitles }
+              : {}),
             updatedAt: event.payload.updatedAt,
           });
           return;
@@ -441,7 +445,12 @@ const makeOrchestrationProjectionPipeline = Effect.gen(function* () {
             threadId: event.payload.threadId,
             projectId: event.payload.projectId,
             title: event.payload.title,
-            model: event.payload.model,
+            modelSelection: {
+              provider: event.payload.model.toLowerCase().includes("claude")
+                ? "claudeAgent"
+                : "codex",
+              model: event.payload.model,
+            },
             runtimeMode: event.payload.runtimeMode,
             interactionMode: event.payload.interactionMode,
             branch: event.payload.branch,

@@ -42,6 +42,7 @@ import {
   type SidebarProjectSortOrder,
   type SidebarThreadSortOrder,
 } from "@t3tools/contracts/settings";
+import { Schema } from "effect";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isLinuxPlatform, isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
@@ -71,6 +72,7 @@ import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
 import { Collapsible, CollapsibleContent } from "./ui/collapsible";
 import { Menu, MenuGroup, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
+import { Skeleton } from "./ui/skeleton";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
   SidebarContent,
@@ -89,21 +91,25 @@ import {
 } from "./ui/sidebar";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
+import { useLocalStorage } from "../hooks/useLocalStorage";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
   buildSidebarProjectTree,
+  buildSidebarProjectThreadEntries,
+  flattenSidebarProjectThreadIds,
   getFallbackThreadIdAfterDelete,
   getProjectSortTimestamp,
   getThreadSortTimestamp,
-  getVisibleThreadsForProject,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
+  shouldDisableWorktreeTitleRegenerate,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
   sortThreadsForSidebar,
 } from "./Sidebar.logic";
+import type { SidebarWorktreeGroupEntry } from "./Sidebar.logic";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
 
@@ -123,6 +129,7 @@ const SIDEBAR_LIST_ANIMATION_OPTIONS = {
   easing: "ease-out",
 } as const;
 const loadedProjectFaviconSrcs = new Set<string>();
+const COLLAPSED_WORKTREE_GROUPS_STORAGE_KEY = "sidebar_collapsed_worktree_groups";
 
 interface TerminalStatusIndicator {
   label: "Terminal process running";
@@ -399,6 +406,11 @@ export default function Sidebar() {
   const [expandedThreadListsByProject, setExpandedThreadListsByProject] = useState<
     ReadonlySet<ProjectId>
   >(() => new Set());
+  const [collapsedWorktreeGroupKeys, setCollapsedWorktreeGroupKeys] = useLocalStorage(
+    COLLAPSED_WORKTREE_GROUPS_STORAGE_KEY,
+    [],
+    Schema.Array(Schema.String),
+  );
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
   const dragInProgressRef = useRef(false);
@@ -416,6 +428,10 @@ export default function Sidebar() {
   const projectCwdById = useMemo(
     () => new Map(projects.map((project) => [project.id, project.cwd] as const)),
     [projects],
+  );
+  const collapsedWorktreeGroupKeySet = useMemo(
+    () => new Set(collapsedWorktreeGroupKeys),
+    [collapsedWorktreeGroupKeys],
   );
   const threadGitTargets = useMemo(
     () =>
@@ -880,6 +896,56 @@ export default function Sidebar() {
     ],
   );
 
+  const handleWorktreeGroupContextMenu = useCallback(
+    async (
+      projectId: ProjectId,
+      input: {
+        worktreePath: string;
+        worktreeTitleStatus: "pending" | "ready" | "failed" | "absent";
+        worktreeTitleUpdatedAt: string | null;
+      },
+      position: { x: number; y: number },
+    ) => {
+      const api = readNativeApi();
+      if (!api) return;
+
+      const regenerateDisabled = shouldDisableWorktreeTitleRegenerate({
+        worktreeTitleStatus: input.worktreeTitleStatus,
+        worktreeTitleUpdatedAt: input.worktreeTitleUpdatedAt,
+        nowMs: Date.now(),
+      });
+
+      const clicked = await api.contextMenu.show(
+        [
+          {
+            id: "regenerate-title",
+            label: "Regenerate title",
+            disabled: regenerateDisabled,
+          },
+        ],
+        position,
+      );
+      if (clicked !== "regenerate-title") return;
+
+      try {
+        await api.orchestration.dispatchCommand({
+          type: "project.worktree-group-title.regenerate",
+          commandId: newCommandId(),
+          projectId,
+          worktreePath: input.worktreePath,
+          createdAt: new Date().toISOString(),
+        });
+      } catch (error) {
+        toastManager.add({
+          type: "error",
+          title: "Failed to regenerate worktree title",
+          description: error instanceof Error ? error.message : "An error occurred.",
+        });
+      }
+    },
+    [],
+  );
+
   const handleMultiSelectContextMenu = useCallback(
     async (position: { x: number; y: number }) => {
       const api = readNativeApi();
@@ -1128,6 +1194,7 @@ export default function Sidebar() {
       ),
     );
     const activeThreadId = routeThreadId ?? undefined;
+    const projectThreadEntries = buildSidebarProjectThreadEntries(project, projectThreads);
     const isThreadListExpanded = expandedThreadListsByProject.has(project.id);
     const pinnedCollapsedThread =
       !project.expanded && activeThreadId
@@ -1144,14 +1211,28 @@ export default function Sidebar() {
       pinnedCollapsedThread !== null ||
       hasExpandedChildProject ||
       hasActiveChildProject;
-    const { hasHiddenThreads, visibleThreads } = getVisibleThreadsForProject({
-      threads: projectThreads,
-      activeThreadId,
-      isThreadListExpanded,
-      previewLimit: THREAD_PREVIEW_LIMIT,
-    });
-    const orderedProjectThreadIds = projectThreads.map((thread) => thread.id);
-    const renderedThreads = pinnedCollapsedThread ? [pinnedCollapsedThread] : visibleThreads;
+    const hasHiddenThreadEntries = projectThreadEntries.length > THREAD_PREVIEW_LIMIT;
+    const visibleThreadEntries = pinnedCollapsedThread
+      ? [
+          {
+            kind: "thread" as const,
+            positionCreatedAt: pinnedCollapsedThread.createdAt,
+            thread: pinnedCollapsedThread,
+          },
+        ]
+      : hasHiddenThreadEntries && !isThreadListExpanded
+        ? projectThreadEntries.slice(0, THREAD_PREVIEW_LIMIT)
+        : projectThreadEntries;
+    const visibleSelectableThreadEntries = visibleThreadEntries.reduce<typeof visibleThreadEntries>(
+      (entries, entry) => {
+        if (entry.kind === "thread" || !collapsedWorktreeGroupKeySet.has(entry.groupKey)) {
+          entries.push(entry);
+        }
+        return entries;
+      },
+      [],
+    );
+    const orderedProjectThreadIds = flattenSidebarProjectThreadIds(visibleSelectableThreadEntries);
     const childProjectThreadsByProjectId = new Map(
       childProjects.map((childProject) => [
         childProject.project.id,
@@ -1161,23 +1242,60 @@ export default function Sidebar() {
         ),
       ]),
     );
-    const orderedProjectContent = [
-      ...renderedThreads.map((thread, index) => ({
-        type: "thread" as const,
-        thread,
-        sortTimestamp: getThreadSortTimestamp(thread, appSettings.sidebarThreadSortOrder),
-        orderIndex: index,
-      })),
-      ...childProjects.map((childProject, index) => ({
-        type: "childProject" as const,
-        childProject,
-        sortTimestamp: getProjectSortTimestamp(
-          childProject.project,
-          childProjectThreadsByProjectId.get(childProject.project.id) ?? [],
-          appSettings.sidebarThreadSortOrder,
-        ),
-        orderIndex: renderedThreads.length + index,
-      })),
+    type OrderedProjectContentEntry =
+      | {
+          type: "thread";
+          thread: (typeof projectThreads)[number];
+          sortTimestamp: number;
+          orderIndex: number;
+        }
+      | {
+          type: "worktreeGroup";
+          worktreeGroup: SidebarWorktreeGroupEntry;
+          sortTimestamp: number;
+          orderIndex: number;
+        }
+      | {
+          type: "childProject";
+          childProject: (typeof childProjects)[number];
+          sortTimestamp: number;
+          orderIndex: number;
+        };
+
+    const orderedProjectContent: OrderedProjectContentEntry[] = [
+      ...visibleThreadEntries.map(
+        (entry, index): OrderedProjectContentEntry =>
+          entry.kind === "thread"
+            ? {
+                type: "thread",
+                thread: entry.thread,
+                sortTimestamp: getThreadSortTimestamp(
+                  entry.thread,
+                  appSettings.sidebarThreadSortOrder,
+                ),
+                orderIndex: index,
+              }
+            : {
+                type: "worktreeGroup",
+                worktreeGroup: entry,
+                sortTimestamp: Number.isFinite(Date.parse(entry.positionCreatedAt))
+                  ? Date.parse(entry.positionCreatedAt)
+                  : Number.NEGATIVE_INFINITY,
+                orderIndex: index,
+              },
+      ),
+      ...childProjects.map(
+        (childProject, index): OrderedProjectContentEntry => ({
+          type: "childProject",
+          childProject,
+          sortTimestamp: getProjectSortTimestamp(
+            childProject.project,
+            childProjectThreadsByProjectId.get(childProject.project.id) ?? [],
+            appSettings.sidebarThreadSortOrder,
+          ),
+          orderIndex: visibleThreadEntries.length + index,
+        }),
+      ),
     ].toSorted((left, right) => {
       const byTimestamp =
         right.sortTimestamp === left.sortTimestamp
@@ -1419,6 +1537,8 @@ export default function Sidebar() {
                       envMode: resolveSidebarNewThreadEnvMode({
                         defaultEnvMode: appSettings.defaultThreadEnvMode,
                       }),
+                      codexFastMode: appSettings.defaultCodexFastMode,
+                      codexReasoningEffort: appSettings.defaultCodexReasoningEffort,
                     });
                   }}
                 >
@@ -1440,6 +1560,78 @@ export default function Sidebar() {
             {orderedProjectContent.map((entry) =>
               entry.type === "thread" ? (
                 renderThreadRow(entry.thread)
+              ) : entry.type === "worktreeGroup" ? (
+                <SidebarMenuSubItem
+                  key={entry.worktreeGroup.groupKey}
+                  className="w-full"
+                  data-thread-selection-safe
+                >
+                  <Collapsible
+                    className="w-full"
+                    open={!collapsedWorktreeGroupKeySet.has(entry.worktreeGroup.groupKey)}
+                    onOpenChange={(open) => {
+                      setWorktreeGroupCollapsed(entry.worktreeGroup.groupKey, !open);
+                    }}
+                  >
+                    <div className="overflow-hidden rounded-xl border border-border/60 bg-muted/20">
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-2 px-2.5 py-2 text-left transition-colors hover:bg-accent/60"
+                        data-thread-selection-safe
+                        onContextMenu={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          void handleWorktreeGroupContextMenu(
+                            project.id,
+                            {
+                              worktreePath: entry.worktreeGroup.worktreePath,
+                              worktreeTitleStatus: entry.worktreeGroup.worktreeTitleStatus,
+                              worktreeTitleUpdatedAt: entry.worktreeGroup.worktreeTitleUpdatedAt,
+                            },
+                            {
+                              x: event.clientX,
+                              y: event.clientY,
+                            },
+                          );
+                        }}
+                        onClick={() => {
+                          setWorktreeGroupCollapsed(
+                            entry.worktreeGroup.groupKey,
+                            !collapsedWorktreeGroupKeySet.has(entry.worktreeGroup.groupKey),
+                          );
+                        }}
+                      >
+                        <ChevronRightIcon
+                          className={`size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150 ${
+                            collapsedWorktreeGroupKeySet.has(entry.worktreeGroup.groupKey)
+                              ? ""
+                              : "rotate-90"
+                          }`}
+                        />
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              entry.worktreeGroup.worktreeTitleStatus === "pending" ? (
+                                <Skeleton className="h-3.5 w-28 rounded-full" />
+                              ) : (
+                                <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-foreground/85">
+                                  {entry.worktreeGroup.label}
+                                </span>
+                              )
+                            }
+                          />
+                          <TooltipPopup side="top">{entry.worktreeGroup.worktreePath}</TooltipPopup>
+                        </Tooltip>
+                      </button>
+
+                      <CollapsibleContent keepMounted>
+                        <SidebarMenuSub className="mx-0 translate-x-0 border-t border-border/50 px-1.5 py-1">
+                          {entry.worktreeGroup.threads.map((thread) => renderThreadRow(thread))}
+                        </SidebarMenuSub>
+                      </CollapsibleContent>
+                    </div>
+                  </Collapsible>
+                </SidebarMenuSubItem>
               ) : (
                 <div
                   key={entry.childProject.project.id}
@@ -1450,7 +1642,7 @@ export default function Sidebar() {
               ),
             )}
 
-            {project.expanded && hasHiddenThreads && !isThreadListExpanded && (
+            {project.expanded && hasHiddenThreadEntries && !isThreadListExpanded && (
               <SidebarMenuSubItem className="w-full">
                 <SidebarMenuSubButton
                   render={<button type="button" />}
@@ -1465,7 +1657,7 @@ export default function Sidebar() {
                 </SidebarMenuSubButton>
               </SidebarMenuSubItem>
             )}
-            {project.expanded && hasHiddenThreads && isThreadListExpanded && (
+            {project.expanded && hasHiddenThreadEntries && isThreadListExpanded && (
               <SidebarMenuSubItem className="w-full">
                 <SidebarMenuSubButton
                   render={<button type="button" />}
@@ -1675,6 +1867,21 @@ export default function Sidebar() {
       return next;
     });
   }, []);
+
+  const setWorktreeGroupCollapsed = useCallback(
+    (groupKey: string, collapsed: boolean) => {
+      setCollapsedWorktreeGroupKeys((currentKeys) => {
+        const nextKeys = new Set(currentKeys);
+        if (collapsed) {
+          nextKeys.add(groupKey);
+        } else {
+          nextKeys.delete(groupKey);
+        }
+        return [...nextKeys].toSorted((left, right) => left.localeCompare(right));
+      });
+    },
+    [setCollapsedWorktreeGroupKeys],
+  );
 
   const wordmark = (
     <div className="flex items-center gap-2">

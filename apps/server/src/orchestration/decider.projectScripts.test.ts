@@ -61,6 +61,7 @@ describe("decider project scripts", () => {
           workspaceRoot: "/tmp/scripts",
           defaultModelSelection: null,
           scripts: [],
+          worktreeGroupTitles: [],
           createdAt: now,
           updatedAt: now,
         },
@@ -94,6 +95,56 @@ describe("decider project scripts", () => {
     expect((event.payload as { scripts?: unknown[] }).scripts).toEqual(scripts);
   });
 
+  it("emits a regeneration-requested event for worktree title regeneration", async () => {
+    const now = new Date().toISOString();
+    const initial = createEmptyReadModel(now);
+    const readModel = await Effect.runPromise(
+      projectEvent(initial, {
+        sequence: 1,
+        eventId: asEventId("evt-project-create-worktree-title"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-worktree-title"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.makeUnsafe("cmd-project-create-worktree-title"),
+        causationEventId: null,
+        correlationId: CommandId.makeUnsafe("cmd-project-create-worktree-title"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-worktree-title"),
+          title: "Project",
+          workspaceRoot: "/tmp/project",
+          defaultModelSelection: null,
+          scripts: [],
+          worktreeGroupTitles: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "project.worktree-group-title.regenerate",
+          commandId: CommandId.makeUnsafe("cmd-regenerate-worktree-title"),
+          projectId: asProjectId("project-worktree-title"),
+          worktreePath: "/tmp/worktrees/feature-a",
+          createdAt: now,
+        },
+        readModel,
+      }),
+    );
+
+    const event = Array.isArray(result) ? result[0] : result;
+    expect(event.type).toBe("project.worktree-group-title-regeneration-requested");
+    expect(event.payload).toMatchObject({
+      projectId: asProjectId("project-worktree-title"),
+      worktreePath: "/tmp/worktrees/feature-a",
+      createdAt: now,
+    });
+  });
+
   it("emits user message and turn-start-requested events for thread.turn.start", async () => {
     const now = new Date().toISOString();
     const initial = createEmptyReadModel(now);
@@ -115,6 +166,7 @@ describe("decider project scripts", () => {
           workspaceRoot: "/tmp/project",
           defaultModelSelection: null,
           scripts: [],
+          worktreeGroupTitles: [],
           createdAt: now,
           updatedAt: now,
         },
@@ -224,6 +276,7 @@ describe("decider project scripts", () => {
           workspaceRoot: "/tmp/project",
           defaultModelSelection: null,
           scripts: [],
+          worktreeGroupTitles: [],
           createdAt: now,
           updatedAt: now,
         },
@@ -306,6 +359,7 @@ describe("decider project scripts", () => {
           workspaceRoot: "/tmp/project",
           defaultModelSelection: null,
           scripts: [],
+          worktreeGroupTitles: [],
           createdAt: now,
           updatedAt: now,
         },

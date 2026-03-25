@@ -8,11 +8,8 @@
  */
 import {
   IsoDateTime,
-<<<<<<< HEAD
   ModelSelection,
-=======
   NonNegativeInt,
->>>>>>> 861afa05 (Add settled-state thread forking)
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,

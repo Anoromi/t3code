@@ -43,11 +43,17 @@ export function showContextMenuFallback<T extends string>(
       const btn = document.createElement("button");
       btn.type = "button";
       btn.textContent = item.label;
+      btn.disabled = item.disabled === true;
       const isDestructiveAction = item.destructive === true || item.id === "delete";
+      const baseClassName = item.disabled
+        ? "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] cursor-not-allowed opacity-50"
+        : "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] cursor-default";
       btn.className = isDestructiveAction
-        ? "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-destructive hover:bg-accent cursor-default"
-        : "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-popover-foreground hover:bg-accent cursor-default";
-      btn.addEventListener("click", () => cleanup(item.id));
+        ? `${baseClassName} text-destructive ${item.disabled ? "" : "hover:bg-accent"}`
+        : `${baseClassName} text-popover-foreground ${item.disabled ? "" : "hover:bg-accent"}`;
+      if (!item.disabled) {
+        btn.addEventListener("click", () => cleanup(item.id));
+      }
       menu.appendChild(btn);
     }
 

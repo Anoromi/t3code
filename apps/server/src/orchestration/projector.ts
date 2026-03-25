@@ -184,6 +184,7 @@ export function projectEvent(
             workspaceRoot: payload.workspaceRoot,
             defaultModelSelection: payload.defaultModelSelection,
             scripts: payload.scripts,
+            worktreeGroupTitles: payload.worktreeGroupTitles ?? [],
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
             deletedAt: null,
@@ -216,12 +217,18 @@ export function projectEvent(
                     ? { defaultModelSelection: payload.defaultModelSelection }
                     : {}),
                   ...(payload.scripts !== undefined ? { scripts: payload.scripts } : {}),
+                  ...(payload.worktreeGroupTitles !== undefined
+                    ? { worktreeGroupTitles: payload.worktreeGroupTitles }
+                    : {}),
                   updatedAt: payload.updatedAt,
                 }
               : project,
           ),
         })),
       );
+
+    case "project.worktree-group-title-regeneration-requested":
+      return Effect.succeed(nextBase);
 
     case "project.deleted":
       return decodeForEvent(ProjectDeletedPayload, event.payload, event.type, "payload").pipe(

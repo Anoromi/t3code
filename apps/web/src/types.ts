@@ -4,6 +4,7 @@ import type {
   OrchestrationProposedPlanId,
   OrchestrationSessionStatus,
   OrchestrationThreadActivity,
+  OrchestrationWorktreeGroupTitle as ContractOrchestrationWorktreeGroupTitle,
   ThreadForkOrigin,
   ProjectScript as ContractProjectScript,
   ThreadId,
@@ -24,6 +25,7 @@ export const DEFAULT_THREAD_TERMINAL_HEIGHT = 280;
 export const DEFAULT_THREAD_TERMINAL_ID = "default";
 export const MAX_TERMINALS_PER_GROUP = 4;
 export type ProjectScript = ContractProjectScript;
+export type WorktreeGroupTitle = ContractOrchestrationWorktreeGroupTitle;
 
 export interface ThreadTerminalGroup {
   id: string;
@@ -87,6 +89,7 @@ export interface Project {
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
   scripts: ProjectScript[];
+  worktreeGroupTitles?: WorktreeGroupTitle[];
 }
 
 export interface Thread {

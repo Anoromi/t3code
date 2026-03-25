@@ -473,7 +473,7 @@ const makeThreadForkService = Effect.gen(function* () {
           threadId: command.threadId,
           projectId: sourceThread.projectId,
           title: truncateThreadTitle(`Fork: ${sourceThread.title}`),
-          model: sourceThread.model,
+          model: sourceThread.modelSelection.model,
           runtimeMode: sourceThread.runtimeMode,
           interactionMode: sourceThread.interactionMode,
           branch: sourceThread.branch,
