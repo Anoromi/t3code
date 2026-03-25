@@ -7,6 +7,7 @@ import {
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
   buildSidebarProjectThreadEntries,
+  detectWorktreeGroupBirths,
   flattenSidebarProjectThreadIds,
   hasUnseenCompletion,
   resolveProjectStatusIndicator,
@@ -324,6 +325,213 @@ describe("buildSidebarProjectThreadEntries", () => {
       worktreeTitleStatus: "pending",
       worktreeTitleUpdatedAt: "2026-02-16T00:00:00.000Z",
     });
+  });
+});
+
+describe("detectWorktreeGroupBirths", () => {
+  it("detects a visible flat thread becoming a visible worktree group", () => {
+    const previousEntries = buildSidebarProjectThreadEntries(makeProject(), [
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-1"),
+        worktreePath: "/tmp/worktrees/feature-a",
+      }),
+    ]);
+    const currentEntries = buildSidebarProjectThreadEntries(makeProject(), [
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-1"),
+        worktreePath: "/tmp/worktrees/feature-a",
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-2"),
+        createdAt: "2026-02-14T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/feature-a",
+      }),
+    ]);
+
+    expect(detectWorktreeGroupBirths(previousEntries, currentEntries)).toEqual([
+      {
+        groupKey: "project-1::/tmp/worktrees/feature-a",
+        sourceThreadId: ThreadId.makeUnsafe("thread-1"),
+        worktreePath: "/tmp/worktrees/feature-a",
+      },
+    ]);
+  });
+
+  it("does not detect births on initial render", () => {
+    const currentEntries = buildSidebarProjectThreadEntries(makeProject(), [
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-1"),
+        worktreePath: "/tmp/worktrees/feature-a",
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-2"),
+        createdAt: "2026-02-14T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/feature-a",
+      }),
+    ]);
+
+    expect(detectWorktreeGroupBirths([], currentEntries)).toEqual([]);
+  });
+
+  it("does not detect a birth when the previous state already had a group", () => {
+    const previousEntries = buildSidebarProjectThreadEntries(makeProject(), [
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-1"),
+        worktreePath: "/tmp/worktrees/feature-a",
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-2"),
+        createdAt: "2026-02-14T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/feature-a",
+      }),
+    ]);
+    const currentEntries = buildSidebarProjectThreadEntries(makeProject(), [
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-1"),
+        worktreePath: "/tmp/worktrees/feature-a",
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-2"),
+        createdAt: "2026-02-14T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/feature-a",
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-3"),
+        createdAt: "2026-02-15T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/feature-a",
+      }),
+    ]);
+
+    expect(detectWorktreeGroupBirths(previousEntries, currentEntries)).toEqual([]);
+  });
+
+  it("does not detect births for null worktree paths", () => {
+    const previousEntries = buildSidebarProjectThreadEntries(makeProject(), [
+      makeThread({ id: ThreadId.makeUnsafe("thread-1"), worktreePath: null }),
+    ]);
+    const currentEntries = buildSidebarProjectThreadEntries(makeProject(), [
+      makeThread({ id: ThreadId.makeUnsafe("thread-1"), worktreePath: null }),
+      makeThread({ id: ThreadId.makeUnsafe("thread-2"), worktreePath: null }),
+    ]);
+
+    expect(detectWorktreeGroupBirths(previousEntries, currentEntries)).toEqual([]);
+  });
+
+  it("does not detect a birth when the transition is not visible in the rendered slice", () => {
+    const previousEntries = buildSidebarProjectThreadEntries(makeProject(), [
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-1"),
+        createdAt: "2026-02-20T00:00:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-2"),
+        createdAt: "2026-02-19T00:00:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-3"),
+        createdAt: "2026-02-18T00:00:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-4"),
+        createdAt: "2026-02-17T00:00:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-5"),
+        createdAt: "2026-02-16T00:00:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-6"),
+        createdAt: "2026-02-15T00:00:00.000Z",
+      }),
+    ]).slice(0, 6);
+    const currentEntries = buildSidebarProjectThreadEntries(makeProject(), [
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-1"),
+        createdAt: "2026-02-20T00:00:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-2"),
+        createdAt: "2026-02-19T00:00:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-3"),
+        createdAt: "2026-02-18T00:00:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-4"),
+        createdAt: "2026-02-17T00:00:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-5"),
+        createdAt: "2026-02-16T00:00:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-6"),
+        createdAt: "2026-02-15T00:00:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-hidden-old"),
+        createdAt: "2026-02-01T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/hidden",
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-hidden-new"),
+        createdAt: "2026-02-14T12:00:00.000Z",
+        worktreePath: "/tmp/worktrees/hidden",
+      }),
+    ]).slice(0, 6);
+
+    expect(detectWorktreeGroupBirths(previousEntries, currentEntries)).toEqual([]);
+  });
+
+  it("returns births in deterministic current-entry order", () => {
+    const previousEntries = buildSidebarProjectThreadEntries(makeProject(), [
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-a"),
+        createdAt: "2026-02-10T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/a",
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-b"),
+        createdAt: "2026-02-09T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/b",
+      }),
+    ]);
+    const currentEntries = buildSidebarProjectThreadEntries(makeProject(), [
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-a"),
+        createdAt: "2026-02-10T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/a",
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-a2"),
+        createdAt: "2026-02-11T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/a",
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-b"),
+        createdAt: "2026-02-09T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/b",
+      }),
+      makeThread({
+        id: ThreadId.makeUnsafe("thread-b2"),
+        createdAt: "2026-02-12T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/b",
+      }),
+    ]);
+
+    expect(detectWorktreeGroupBirths(previousEntries, currentEntries)).toEqual([
+      {
+        groupKey: "project-1::/tmp/worktrees/a",
+        sourceThreadId: ThreadId.makeUnsafe("thread-a"),
+        worktreePath: "/tmp/worktrees/a",
+      },
+      {
+        groupKey: "project-1::/tmp/worktrees/b",
+        sourceThreadId: ThreadId.makeUnsafe("thread-b"),
+        worktreePath: "/tmp/worktrees/b",
+      },
+    ]);
   });
 });
 

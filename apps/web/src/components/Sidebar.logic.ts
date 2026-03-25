@@ -45,6 +45,12 @@ export interface SidebarWorktreeGroupEntry {
 
 export type SidebarProjectThreadEntry = SidebarThreadEntry | SidebarWorktreeGroupEntry;
 
+export interface SidebarWorktreeGroupBirth {
+  groupKey: string;
+  sourceThreadId: Thread["id"];
+  worktreePath: string;
+}
+
 export interface ThreadStatusPill {
   label:
     | "Working"
@@ -191,6 +197,54 @@ export function flattenSidebarProjectThreadIds(
     }
   }
   return orderedThreadIds;
+}
+
+export function detectWorktreeGroupBirths(
+  previousEntries: readonly SidebarProjectThreadEntry[],
+  currentEntries: readonly SidebarProjectThreadEntry[],
+): SidebarWorktreeGroupBirth[] {
+  const previousGroups = new Set<string>();
+  const previousThreadsByGroupKey = new Map<
+    string,
+    Pick<SidebarWorktreeGroupBirth, "sourceThreadId" | "worktreePath">
+  >();
+
+  for (const entry of previousEntries) {
+    if (entry.kind === "worktree-group") {
+      previousGroups.add(entry.groupKey);
+      continue;
+    }
+
+    const worktreePath = normalizeWorktreePath(entry.thread.worktreePath);
+    if (!worktreePath) {
+      continue;
+    }
+
+    previousThreadsByGroupKey.set(sidebarWorktreeGroupKey(entry.thread, worktreePath), {
+      sourceThreadId: entry.thread.id,
+      worktreePath,
+    });
+  }
+
+  const births: SidebarWorktreeGroupBirth[] = [];
+  for (const entry of currentEntries) {
+    if (entry.kind !== "worktree-group" || previousGroups.has(entry.groupKey)) {
+      continue;
+    }
+
+    const sourceThread = previousThreadsByGroupKey.get(entry.groupKey);
+    if (!sourceThread) {
+      continue;
+    }
+
+    births.push({
+      groupKey: entry.groupKey,
+      sourceThreadId: sourceThread.sourceThreadId,
+      worktreePath: sourceThread.worktreePath,
+    });
+  }
+
+  return births;
 }
 
 export function shouldDisableWorktreeTitleRegenerate(input: {
