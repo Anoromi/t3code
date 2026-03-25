@@ -52,6 +52,8 @@ import { RuntimeReceiptBusLive } from "../src/orchestration/Layers/RuntimeReceip
 import { OrchestrationReactorLive } from "../src/orchestration/Layers/OrchestrationReactor.ts";
 import { ProviderCommandReactorLive } from "../src/orchestration/Layers/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionLive } from "../src/orchestration/Layers/ProviderRuntimeIngestion.ts";
+import { WorktreeGroupTitleReactorLive } from "../src/orchestration/Layers/WorktreeGroupTitleReactor.ts";
+import { WorktreeTitleGenerationLive } from "../src/orchestration/Layers/WorktreeTitleGeneration.ts";
 import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
@@ -329,10 +331,16 @@ export const makeOrchestrationIntegrationHarness = (
       ),
       Layer.provideMerge(WorkspacePathsLive),
     );
+    const worktreeTitleGenerationLayer = WorktreeTitleGenerationLive;
+    const worktreeGroupTitleReactorLayer = WorktreeGroupTitleReactorLive.pipe(
+      Layer.provideMerge(runtimeServicesLayer),
+      Layer.provideMerge(worktreeTitleGenerationLayer),
+    );
     const orchestrationReactorLayer = OrchestrationReactorLive.pipe(
       Layer.provideMerge(runtimeIngestionLayer),
       Layer.provideMerge(providerCommandReactorLayer),
       Layer.provideMerge(checkpointReactorLayer),
+      Layer.provideMerge(worktreeGroupTitleReactorLayer),
     );
     const layer = Layer.empty.pipe(
       Layer.provideMerge(runtimeServicesLayer),

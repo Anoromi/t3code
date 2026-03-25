@@ -78,6 +78,19 @@ export class OrchestrationListenerCallbackError extends Schema.TaggedErrorClass<
   }
 }
 
+export class WorktreeTitleGenerationError extends Schema.TaggedErrorClass<WorktreeTitleGenerationError>()(
+  "WorktreeTitleGenerationError",
+  {
+    operation: Schema.String,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
+  override get message(): string {
+    return `Worktree title generation failed in ${this.operation}: ${this.detail}`;
+  }
+}
+
 export type OrchestrationDispatchError =
   | ProjectionRepositoryError
   | OrchestrationCommandInvariantError

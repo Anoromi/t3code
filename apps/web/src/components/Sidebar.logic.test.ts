@@ -1,3 +1,9 @@
+import {
+  type OrchestrationLatestTurn,
+  type OrchestrationWorktreeGroupTitle,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -8,6 +14,8 @@ import {
   getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
+  buildSidebarProjectThreadEntries,
+  flattenSidebarProjectThreadIds,
   hasUnseenCompletion,
   isContextMenuPointerDown,
   orderItemsByPreferredIds,
@@ -16,18 +24,79 @@ import {
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
+  shouldDisableWorktreeTitleRegenerate,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
   sortThreadsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
 } from "./Sidebar.logic";
-import { OrchestrationLatestTurn, ProjectId, ThreadId } from "@t3tools/contracts";
 import {
   DEFAULT_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
   type Project,
   type Thread,
 } from "../types";
+
+function makeGroupedProject(
+  worktreeGroupTitles: Project["worktreeGroupTitles"] = [],
+  overrides: Partial<Project> = {},
+): Project {
+  return {
+    id: ProjectId.makeUnsafe("project-1"),
+    name: "Project",
+    cwd: "/tmp/project",
+    defaultModelSelection: {
+      provider: "codex",
+      model: "gpt-5.4",
+    },
+    expanded: true,
+    scripts: [],
+    worktreeGroupTitles,
+    ...overrides,
+  };
+}
+
+function makeWorktreeGroupTitle(
+  overrides: Partial<OrchestrationWorktreeGroupTitle> = {},
+): OrchestrationWorktreeGroupTitle {
+  return {
+    worktreePath: "/tmp/worktrees/feature-a",
+    title: "Feature title",
+    status: "ready",
+    sourceThreadId: ThreadId.makeUnsafe("thread-source"),
+    generationId: "generation-1" as never,
+    updatedAt: "2026-02-15T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function makeGroupedThread(overrides: Partial<Thread> = {}): Thread {
+  return {
+    id: ThreadId.makeUnsafe("thread-1"),
+    codexThreadId: null,
+    projectId: ProjectId.makeUnsafe("project-1"),
+    title: "Thread",
+    modelSelection: {
+      provider: "codex",
+      model: "gpt-5.3-codex",
+    },
+    runtimeMode: DEFAULT_RUNTIME_MODE,
+    interactionMode: DEFAULT_INTERACTION_MODE,
+    session: null,
+    messages: [],
+    turnDiffSummaries: [],
+    activities: [],
+    proposedPlans: [],
+    error: null,
+    createdAt: "2026-02-13T00:00:00.000Z",
+    updatedAt: "2026-02-13T00:00:00.000Z",
+    latestTurn: null,
+    branch: null,
+    worktreePath: null,
+    forkOrigin: null,
+    ...overrides,
+  };
+}
 
 function makeLatestTurn(overrides?: {
   completedAt?: string | null;
@@ -146,6 +215,218 @@ describe("shouldClearThreadSelectionOnMouseDown", () => {
     } as unknown as HTMLElement;
 
     expect(shouldClearThreadSelectionOnMouseDown(unrelated)).toBe(true);
+  });
+});
+
+describe("buildSidebarProjectThreadEntries", () => {
+  it("groups threads that share the same worktree path", () => {
+    const entries = buildSidebarProjectThreadEntries(makeGroupedProject(), [
+      makeGroupedThread({
+        id: ThreadId.makeUnsafe("thread-1"),
+        createdAt: "2026-02-13T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/feature-a",
+      }),
+      makeGroupedThread({
+        id: ThreadId.makeUnsafe("thread-2"),
+        createdAt: "2026-02-14T00:00:00.000Z",
+        worktreePath: " /tmp/worktrees/feature-a ",
+      }),
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      kind: "worktree-group",
+      groupKey: "project-1::/tmp/worktrees/feature-a",
+      label: "feature-a",
+      fallbackLabel: "feature-a",
+      positionCreatedAt: "2026-02-13T00:00:00.000Z",
+      worktreeTitleStatus: "absent",
+      worktreeTitleUpdatedAt: null,
+      worktreePath: "/tmp/worktrees/feature-a",
+    });
+    expect(
+      entries[0]?.kind === "worktree-group" ? entries[0].threads.map((thread) => thread.id) : [],
+    ).toEqual([ThreadId.makeUnsafe("thread-2"), ThreadId.makeUnsafe("thread-1")]);
+  });
+
+  it("keeps single-thread worktrees as flat rows", () => {
+    const entries = buildSidebarProjectThreadEntries(makeGroupedProject(), [
+      makeGroupedThread({
+        id: ThreadId.makeUnsafe("thread-1"),
+        worktreePath: "/tmp/worktrees/feature-a",
+      }),
+    ]);
+
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({
+      kind: "thread",
+      positionCreatedAt: "2026-02-13T00:00:00.000Z",
+    });
+  });
+
+  it("does not group threads without a worktree path", () => {
+    const entries = buildSidebarProjectThreadEntries(makeGroupedProject(), [
+      makeGroupedThread({ id: ThreadId.makeUnsafe("thread-1"), worktreePath: null }),
+      makeGroupedThread({ id: ThreadId.makeUnsafe("thread-2"), worktreePath: null }),
+    ]);
+
+    expect(entries.map((entry) => entry.kind)).toEqual(["thread", "thread"]);
+  });
+
+  it("keeps grouping project-local when worktree strings repeat in another project", () => {
+    const entries = buildSidebarProjectThreadEntries(makeGroupedProject(), [
+      makeGroupedThread({
+        id: ThreadId.makeUnsafe("thread-1"),
+        projectId: ProjectId.makeUnsafe("project-1"),
+        worktreePath: "/tmp/worktrees/shared",
+      }),
+      makeGroupedThread({
+        id: ThreadId.makeUnsafe("thread-2"),
+        projectId: ProjectId.makeUnsafe("project-2"),
+        worktreePath: "/tmp/worktrees/shared",
+      }),
+    ]);
+
+    expect(entries.map((entry) => entry.kind)).toEqual(["thread", "thread"]);
+  });
+
+  it("anchors group ordering to the earliest thread on that worktree", () => {
+    const entries = buildSidebarProjectThreadEntries(makeGroupedProject(), [
+      makeGroupedThread({
+        id: ThreadId.makeUnsafe("thread-old"),
+        createdAt: "2026-02-10T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/feature-a",
+      }),
+      makeGroupedThread({
+        id: ThreadId.makeUnsafe("thread-new"),
+        createdAt: "2026-02-15T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/feature-a",
+      }),
+      makeGroupedThread({
+        id: ThreadId.makeUnsafe("thread-mid"),
+        createdAt: "2026-02-12T00:00:00.000Z",
+      }),
+    ]);
+
+    expect(
+      entries.map((entry) => (entry.kind === "thread" ? entry.thread.id : entry.groupKey)),
+    ).toEqual([ThreadId.makeUnsafe("thread-mid"), "project-1::/tmp/worktrees/feature-a"]);
+  });
+
+  it("breaks ties deterministically for grouped entries", () => {
+    const entries = buildSidebarProjectThreadEntries(makeGroupedProject(), [
+      makeGroupedThread({
+        id: ThreadId.makeUnsafe("thread-a1"),
+        createdAt: "2026-02-10T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/a",
+      }),
+      makeGroupedThread({
+        id: ThreadId.makeUnsafe("thread-a2"),
+        createdAt: "2026-02-11T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/a",
+      }),
+      makeGroupedThread({
+        id: ThreadId.makeUnsafe("thread-b1"),
+        createdAt: "2026-02-10T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/b",
+      }),
+      makeGroupedThread({
+        id: ThreadId.makeUnsafe("thread-b2"),
+        createdAt: "2026-02-12T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/b",
+      }),
+    ]);
+
+    expect(
+      entries.map((entry) =>
+        entry.kind === "worktree-group" ? entry.worktreePath : entry.thread.id,
+      ),
+    ).toEqual(["/tmp/worktrees/b", "/tmp/worktrees/a"]);
+  });
+
+  it("uses the generated worktree title when metadata is ready", () => {
+    const entries = buildSidebarProjectThreadEntries(
+      makeGroupedProject([makeWorktreeGroupTitle()]),
+      [
+        makeGroupedThread({
+          id: ThreadId.makeUnsafe("thread-1"),
+          createdAt: "2026-02-13T00:00:00.000Z",
+          worktreePath: "/tmp/worktrees/feature-a",
+        }),
+        makeGroupedThread({
+          id: ThreadId.makeUnsafe("thread-2"),
+          createdAt: "2026-02-14T00:00:00.000Z",
+          worktreePath: "/tmp/worktrees/feature-a",
+        }),
+      ],
+    );
+
+    expect(entries[0]).toMatchObject({
+      kind: "worktree-group",
+      label: "Feature title",
+      fallbackLabel: "feature-a",
+      worktreeTitleStatus: "ready",
+      worktreeTitleUpdatedAt: "2026-02-15T00:00:00.000Z",
+    });
+  });
+
+  it("keeps the fallback label while title generation is pending", () => {
+    const entries = buildSidebarProjectThreadEntries(
+      makeGroupedProject([
+        makeWorktreeGroupTitle({
+          title: null,
+          status: "pending",
+          updatedAt: "2026-02-16T00:00:00.000Z",
+        }),
+      ]),
+      [
+        makeGroupedThread({
+          id: ThreadId.makeUnsafe("thread-1"),
+          createdAt: "2026-02-13T00:00:00.000Z",
+          worktreePath: "/tmp/worktrees/feature-a",
+        }),
+        makeGroupedThread({
+          id: ThreadId.makeUnsafe("thread-2"),
+          createdAt: "2026-02-14T00:00:00.000Z",
+          worktreePath: "/tmp/worktrees/feature-a",
+        }),
+      ],
+    );
+
+    expect(entries[0]).toMatchObject({
+      kind: "worktree-group",
+      label: "feature-a",
+      fallbackLabel: "feature-a",
+      worktreeTitleStatus: "pending",
+      worktreeTitleUpdatedAt: "2026-02-16T00:00:00.000Z",
+    });
+  });
+});
+
+describe("flattenSidebarProjectThreadIds", () => {
+  it("returns thread ids in visual order across grouped and ungrouped entries", () => {
+    const entries = buildSidebarProjectThreadEntries(makeGroupedProject(), [
+      makeGroupedThread({
+        id: ThreadId.makeUnsafe("thread-1"),
+        createdAt: "2026-02-13T00:00:00.000Z",
+      }),
+      makeGroupedThread({
+        id: ThreadId.makeUnsafe("thread-2"),
+        createdAt: "2026-02-12T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/feature-a",
+      }),
+      makeGroupedThread({
+        id: ThreadId.makeUnsafe("thread-3"),
+        createdAt: "2026-02-14T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/feature-a",
+      }),
+    ]);
+
+    expect(flattenSidebarProjectThreadIds(entries)).toEqual([
+      ThreadId.makeUnsafe("thread-1"),
+      ThreadId.makeUnsafe("thread-3"),
+      ThreadId.makeUnsafe("thread-2"),
+    ]);
   });
 });
 
@@ -518,6 +799,57 @@ describe("resolveThreadRowClassName", () => {
   });
 });
 
+describe("shouldDisableWorktreeTitleRegenerate", () => {
+  const nowMs = Date.parse("2026-03-24T12:00:10.000Z");
+
+  it("disables regenerate when the group has no title metadata yet", () => {
+    expect(
+      shouldDisableWorktreeTitleRegenerate({
+        worktreeTitleStatus: "absent",
+        worktreeTitleUpdatedAt: null,
+        nowMs,
+      }),
+    ).toBe(true);
+  });
+
+  it("disables regenerate while pending is still fresh", () => {
+    expect(
+      shouldDisableWorktreeTitleRegenerate({
+        worktreeTitleStatus: "pending",
+        worktreeTitleUpdatedAt: "2026-03-24T12:00:05.500Z",
+        nowMs,
+      }),
+    ).toBe(true);
+  });
+
+  it("enables regenerate when pending is stale", () => {
+    expect(
+      shouldDisableWorktreeTitleRegenerate({
+        worktreeTitleStatus: "pending",
+        worktreeTitleUpdatedAt: "2026-03-24T12:00:00.000Z",
+        nowMs,
+      }),
+    ).toBe(false);
+  });
+
+  it("enables regenerate for ready and failed titles", () => {
+    expect(
+      shouldDisableWorktreeTitleRegenerate({
+        worktreeTitleStatus: "ready",
+        worktreeTitleUpdatedAt: "2026-03-24T12:00:09.000Z",
+        nowMs,
+      }),
+    ).toBe(false);
+    expect(
+      shouldDisableWorktreeTitleRegenerate({
+        worktreeTitleStatus: "failed",
+        worktreeTitleUpdatedAt: "2026-03-24T12:00:09.000Z",
+        nowMs,
+      }),
+    ).toBe(false);
+  });
+});
+
 describe("resolveProjectStatusIndicator", () => {
   it("returns null when no threads have a notable status", () => {
     expect(resolveProjectStatusIndicator([null, null])).toBeNull();
@@ -657,6 +989,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     latestTurn: null,
     branch: null,
     worktreePath: null,
+    forkOrigin: null,
     turnDiffSummaries: [],
     activities: [],
     ...overrides,

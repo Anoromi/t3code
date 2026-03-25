@@ -2,7 +2,11 @@ import { ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
-import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "./worktreeCleanup";
+import {
+  formatWorktreePathForDisplay,
+  getOrphanedWorktreePathForThread,
+  normalizeWorktreePath,
+} from "./worktreeCleanup";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
   return {
@@ -105,5 +109,20 @@ describe("formatWorktreePathForDisplay", () => {
   it("ignores trailing slashes", () => {
     const result = formatWorktreePathForDisplay("/tmp/custom-worktrees/my-worktree/");
     expect(result).toBe("my-worktree");
+  });
+});
+
+describe("normalizeWorktreePath", () => {
+  it("returns null for null input", () => {
+    expect(normalizeWorktreePath(null)).toBeNull();
+  });
+
+  it("returns null for empty or whitespace-only input", () => {
+    expect(normalizeWorktreePath("")).toBeNull();
+    expect(normalizeWorktreePath("   ")).toBeNull();
+  });
+
+  it("trims surrounding whitespace without changing the inner path", () => {
+    expect(normalizeWorktreePath("  /tmp/worktrees/feature-a  ")).toBe("/tmp/worktrees/feature-a");
   });
 });

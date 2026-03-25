@@ -189,6 +189,7 @@ function mapProject(project: OrchestrationReadModel["projects"][number]): Projec
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
     scripts: mapProjectScripts(project.scripts),
+    worktreeGroupTitles: Array.from(project.worktreeGroupTitles ?? []),
   };
 }
 

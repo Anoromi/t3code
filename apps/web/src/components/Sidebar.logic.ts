@@ -1,8 +1,13 @@
 import * as React from "react";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
-import type { SidebarThreadSummary, Thread } from "../types";
+import type { Project, Thread, WorktreeGroupTitle } from "../types";
 import { cn } from "../lib/utils";
-import { isLatestTurnSettled } from "../session-logic";
+import { formatWorktreePathForDisplay, normalizeWorktreePath } from "../worktreeCleanup";
+import {
+  findLatestProposedPlan,
+  hasActionableProposedPlan,
+  isLatestTurnSettled,
+} from "../session-logic";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
@@ -27,6 +32,26 @@ export interface SidebarProjectTreeNode<TProject extends SidebarProject = Sideba
   childProjects: SidebarProjectTreeNode<TProject>[];
 }
 
+export interface SidebarThreadEntry {
+  kind: "thread";
+  positionCreatedAt: string;
+  thread: Thread;
+}
+
+export interface SidebarWorktreeGroupEntry {
+  kind: "worktree-group";
+  groupKey: string;
+  label: string;
+  fallbackLabel: string;
+  positionCreatedAt: string;
+  threads: Thread[];
+  worktreeTitleStatus: WorktreeGroupTitle["status"] | "absent";
+  worktreeTitleUpdatedAt: string | null;
+  worktreePath: string;
+}
+
+export type SidebarProjectThreadEntry = SidebarThreadEntry | SidebarWorktreeGroupEntry;
+
 export interface ThreadStatusPill {
   label:
     | "Working"
@@ -50,13 +75,8 @@ const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
 };
 
 type ThreadStatusInput = Pick<
-  SidebarThreadSummary,
-  | "hasActionableProposedPlan"
-  | "hasPendingApprovals"
-  | "hasPendingUserInput"
-  | "interactionMode"
-  | "latestTurn"
-  | "session"
+  Thread,
+  "interactionMode" | "latestTurn" | "proposedPlans" | "session"
 > & {
   lastVisitedAt?: string | undefined;
 };
@@ -146,6 +166,146 @@ export function useThreadJumpHintVisibility(): {
   };
 }
 
+function compareThreadCreatedAtDesc(
+  left: Pick<Thread, "createdAt" | "id">,
+  right: Pick<Thread, "createdAt" | "id">,
+): number {
+  const byCreatedAt = right.createdAt.localeCompare(left.createdAt);
+  if (byCreatedAt !== 0) return byCreatedAt;
+  return String(right.id).localeCompare(String(left.id));
+}
+
+function compareSidebarEntryOrder(
+  left: Pick<SidebarProjectThreadEntry, "kind" | "positionCreatedAt"> &
+    Partial<Pick<SidebarWorktreeGroupEntry, "worktreePath">> &
+    Partial<Pick<SidebarThreadEntry, "thread">>,
+  right: Pick<SidebarProjectThreadEntry, "kind" | "positionCreatedAt"> &
+    Partial<Pick<SidebarWorktreeGroupEntry, "worktreePath">> &
+    Partial<Pick<SidebarThreadEntry, "thread">>,
+): number {
+  const byPositionCreatedAt = right.positionCreatedAt.localeCompare(left.positionCreatedAt);
+  if (byPositionCreatedAt !== 0) return byPositionCreatedAt;
+
+  const leftIdentity =
+    left.kind === "worktree-group" ? (left.worktreePath ?? "") : String(left.thread?.id ?? "");
+  const rightIdentity =
+    right.kind === "worktree-group" ? (right.worktreePath ?? "") : String(right.thread?.id ?? "");
+  return rightIdentity.localeCompare(leftIdentity);
+}
+
+function sidebarWorktreeGroupKey(thread: Pick<Thread, "projectId">, worktreePath: string): string {
+  return `${String(thread.projectId)}::${worktreePath}`;
+}
+
+export function buildSidebarProjectThreadEntries(
+  project: Pick<Project, "worktreeGroupTitles">,
+  threads: readonly Thread[],
+): SidebarProjectThreadEntry[] {
+  const groupsByWorktreeKey = new Map<string, Thread[]>();
+  const worktreeTitlesByPath = new Map<string, WorktreeGroupTitle>();
+
+  for (const worktreeGroupTitle of project.worktreeGroupTitles ?? []) {
+    const worktreePath = normalizeWorktreePath(worktreeGroupTitle.worktreePath);
+    if (!worktreePath) {
+      continue;
+    }
+    worktreeTitlesByPath.set(worktreePath, worktreeGroupTitle);
+  }
+
+  for (const thread of threads) {
+    const worktreePath = normalizeWorktreePath(thread.worktreePath);
+    if (!worktreePath) {
+      continue;
+    }
+    const groupKey = sidebarWorktreeGroupKey(thread, worktreePath);
+    const existing = groupsByWorktreeKey.get(groupKey);
+    if (existing) {
+      existing.push(thread);
+    } else {
+      groupsByWorktreeKey.set(groupKey, [thread]);
+    }
+  }
+
+  const entries: SidebarProjectThreadEntry[] = [];
+  for (const thread of threads) {
+    const worktreePath = normalizeWorktreePath(thread.worktreePath);
+    const worktreeThreads = worktreePath
+      ? (groupsByWorktreeKey.get(sidebarWorktreeGroupKey(thread, worktreePath)) ?? [])
+      : [];
+
+    if (!worktreePath || worktreeThreads.length <= 1) {
+      entries.push({
+        kind: "thread",
+        positionCreatedAt: thread.createdAt,
+        thread,
+      });
+      continue;
+    }
+
+    const earliestThread = [...worktreeThreads].toSorted(
+      (left, right) =>
+        left.createdAt.localeCompare(right.createdAt) ||
+        String(left.id).localeCompare(String(right.id)),
+    )[0];
+    if (!earliestThread || earliestThread.id !== thread.id) {
+      continue;
+    }
+
+    const worktreeGroupTitle = worktreeTitlesByPath.get(worktreePath) ?? null;
+    entries.push({
+      kind: "worktree-group",
+      groupKey: sidebarWorktreeGroupKey(thread, worktreePath),
+      label:
+        worktreeGroupTitle?.status === "ready" && worktreeGroupTitle.title
+          ? worktreeGroupTitle.title
+          : formatWorktreePathForDisplay(worktreePath),
+      fallbackLabel: formatWorktreePathForDisplay(worktreePath),
+      positionCreatedAt: earliestThread.createdAt,
+      threads: [...worktreeThreads].toSorted(compareThreadCreatedAtDesc),
+      worktreeTitleStatus: worktreeGroupTitle?.status ?? "absent",
+      worktreeTitleUpdatedAt: worktreeGroupTitle?.updatedAt ?? null,
+      worktreePath,
+    });
+  }
+
+  return entries.toSorted(compareSidebarEntryOrder);
+}
+
+export function flattenSidebarProjectThreadIds(
+  entries: readonly SidebarProjectThreadEntry[],
+): Thread["id"][] {
+  const orderedThreadIds: Thread["id"][] = [];
+  for (const entry of entries) {
+    if (entry.kind === "thread") {
+      orderedThreadIds.push(entry.thread.id);
+      continue;
+    }
+    for (const thread of entry.threads) {
+      orderedThreadIds.push(thread.id);
+    }
+  }
+  return orderedThreadIds;
+}
+
+export function shouldDisableWorktreeTitleRegenerate(input: {
+  worktreeTitleStatus: SidebarWorktreeGroupEntry["worktreeTitleStatus"];
+  worktreeTitleUpdatedAt: string | null;
+  nowMs: number;
+}): boolean {
+  if (input.worktreeTitleStatus === "absent") {
+    return true;
+  }
+
+  if (input.worktreeTitleStatus !== "pending") {
+    return false;
+  }
+
+  const updatedAtMs = input.worktreeTitleUpdatedAt
+    ? Date.parse(input.worktreeTitleUpdatedAt)
+    : Number.NaN;
+  return !(Number.isFinite(updatedAtMs) && input.nowMs - updatedAtMs >= 10_000);
+}
+
 export function hasUnseenCompletion(thread: ThreadStatusInput): boolean {
   if (!thread.latestTurn?.completedAt) return false;
   const completedAt = Date.parse(thread.latestTurn.completedAt);
@@ -167,46 +327,6 @@ export function resolveSidebarNewThreadEnvMode(input: {
   defaultEnvMode: SidebarNewThreadEnvMode;
 }): SidebarNewThreadEnvMode {
   return input.requestedEnvMode ?? input.defaultEnvMode;
-}
-
-export function resolveSidebarNewThreadSeedContext(input: {
-  projectId: string;
-  defaultEnvMode: SidebarNewThreadEnvMode;
-  activeThread?: {
-    projectId: string;
-    branch: string | null;
-    worktreePath: string | null;
-  } | null;
-  activeDraftThread?: {
-    projectId: string;
-    branch: string | null;
-    worktreePath: string | null;
-    envMode: SidebarNewThreadEnvMode;
-  } | null;
-}): {
-  branch?: string | null;
-  worktreePath?: string | null;
-  envMode: SidebarNewThreadEnvMode;
-} {
-  if (input.activeDraftThread?.projectId === input.projectId) {
-    return {
-      branch: input.activeDraftThread.branch,
-      worktreePath: input.activeDraftThread.worktreePath,
-      envMode: input.activeDraftThread.envMode,
-    };
-  }
-
-  if (input.activeThread?.projectId === input.projectId) {
-    return {
-      branch: input.activeThread.branch,
-      worktreePath: input.activeThread.worktreePath,
-      envMode: input.activeThread.worktreePath ? "worktree" : "local",
-    };
-  }
-
-  return {
-    envMode: input.defaultEnvMode,
-  };
 }
 
 export function orderItemsByPreferredIds<TItem, TId>(input: {
@@ -240,11 +360,15 @@ export function orderItemsByPreferredIds<TItem, TId>(input: {
 export function getVisibleSidebarThreadIds<TThreadId>(
   renderedProjects: readonly {
     shouldShowThreadPanel?: boolean;
-    renderedThreadIds: readonly TThreadId[];
+    renderedThreads: readonly {
+      id: TThreadId;
+    }[];
   }[],
 ): TThreadId[] {
   return renderedProjects.flatMap((renderedProject) =>
-    renderedProject.shouldShowThreadPanel === false ? [] : renderedProject.renderedThreadIds,
+    renderedProject.shouldShowThreadPanel === false
+      ? []
+      : renderedProject.renderedThreads.map((thread) => thread.id),
   );
 }
 
@@ -316,10 +440,12 @@ export function resolveThreadRowClassName(input: {
 
 export function resolveThreadStatusPill(input: {
   thread: ThreadStatusInput;
+  hasPendingApprovals: boolean;
+  hasPendingUserInput: boolean;
 }): ThreadStatusPill | null {
-  const { thread } = input;
+  const { hasPendingApprovals, hasPendingUserInput, thread } = input;
 
-  if (thread.hasPendingApprovals) {
+  if (hasPendingApprovals) {
     return {
       label: "Pending Approval",
       colorClass: "text-amber-600 dark:text-amber-300/90",
@@ -328,7 +454,7 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (thread.hasPendingUserInput) {
+  if (hasPendingUserInput) {
     return {
       label: "Awaiting Input",
       colorClass: "text-indigo-600 dark:text-indigo-300/90",
@@ -356,10 +482,12 @@ export function resolveThreadStatusPill(input: {
   }
 
   const hasPlanReadyPrompt =
-    !thread.hasPendingUserInput &&
+    !hasPendingUserInput &&
     thread.interactionMode === "plan" &&
     isLatestTurnSettled(thread.latestTurn, thread.session) &&
-    thread.hasActionableProposedPlan;
+    hasActionableProposedPlan(
+      findLatestProposedPlan(thread.proposedPlans, thread.latestTurn?.turnId ?? null),
+    );
   if (hasPlanReadyPrompt) {
     return {
       label: "Plan Ready",

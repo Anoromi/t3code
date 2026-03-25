@@ -372,7 +372,10 @@ describe("OrchestrationEngine", () => {
         projectId: asProjectId("project-fork"),
         title: "Fork Project",
         workspaceRoot: "/tmp/project-fork",
-        defaultModel: "gpt-5-codex",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
         createdAt,
       }),
     );
@@ -383,7 +386,10 @@ describe("OrchestrationEngine", () => {
         threadId: ThreadId.makeUnsafe("thread-source"),
         projectId: asProjectId("project-fork"),
         title: "Source thread",
-        model: "gpt-5-codex",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         branch: "feature/fork-test",
@@ -510,7 +516,10 @@ describe("OrchestrationEngine", () => {
         projectId: asProjectId("project-fork-running"),
         title: "Fork Project",
         workspaceRoot: "/tmp/project-fork-running",
-        defaultModel: "gpt-5-codex",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
         createdAt,
       }),
     );
@@ -521,7 +530,10 @@ describe("OrchestrationEngine", () => {
         threadId: ThreadId.makeUnsafe("thread-source-running"),
         projectId: asProjectId("project-fork-running"),
         title: "Source thread",
-        model: "gpt-5-codex",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         branch: null,

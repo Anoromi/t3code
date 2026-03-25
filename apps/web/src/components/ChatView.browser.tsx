@@ -262,6 +262,7 @@ function createSnapshotForTargetUser(options: {
           model: "gpt-5",
         },
         scripts: [],
+        worktreeGroupTitles: [],
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
         deletedAt: null,

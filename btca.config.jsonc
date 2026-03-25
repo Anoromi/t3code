@@ -6,9 +6,9 @@
       "type": "git",
       "name": "monaco-vim",
       "url": "https://github.com/brijeshb42/monaco-vim",
-      "branch": "master"
-    }
+      "branch": "master",
+    },
   ],
   "model": "gpt-5.4",
-  "provider": "openai"
+  "provider": "openai",
 }

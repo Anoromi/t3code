@@ -43,6 +43,7 @@ export function showContextMenuFallback<T extends string>(
       const btn = document.createElement("button");
       btn.type = "button";
       btn.textContent = item.label;
+      btn.disabled = item.disabled === true;
       const isDestructiveAction = item.destructive === true || item.id === "delete";
       const isDisabled = item.disabled === true;
       btn.disabled = isDisabled;

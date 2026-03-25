@@ -6,6 +6,7 @@ import {
   OrchestrationCheckpointFile,
   OrchestrationProposedPlanId,
   OrchestrationReadModel,
+  OrchestrationWorktreeGroupTitle,
   ProjectScript,
   TurnId,
   type OrchestrationCheckpointSummary,
@@ -51,6 +52,7 @@ const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
   Struct.assign({
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
+    worktreeGroupTitles: Schema.fromJsonString(Schema.Array(OrchestrationWorktreeGroupTitle)),
   }),
 );
 const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
@@ -196,6 +198,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           )`
         : "default_model_selection_json"
       : legacyModelSelectionJsonExpression("default_model");
+    const projectWorktreeGroupTitlesExpression = projectColumns.has("worktree_group_titles_json")
+      ? "worktree_group_titles_json"
+      : "'[]'";
 
     return SqlSchema.findAll({
       Request: Schema.Void,
@@ -208,6 +213,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             workspace_root AS "workspaceRoot",
             ${projectModelSelectionExpression} AS "defaultModelSelection",
             scripts_json AS "scripts",
+            ${projectWorktreeGroupTitlesExpression} AS "worktreeGroupTitles",
             created_at AS "createdAt",
             updated_at AS "updatedAt",
             deleted_at AS "deletedAt"
@@ -216,8 +222,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         `),
     });
   };
-
-<<<<<<< HEAD
   const listThreadRows = (threadColumns: ReadonlySet<string>) => {
     const threadModelSelectionExpression = threadColumns.has("model_selection_json")
       ? threadColumns.has("model")
@@ -235,6 +239,24 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       ? "interaction_mode"
       : "'default'";
     const threadArchivedAtExpression = threadColumns.has("archived_at") ? "archived_at" : "NULL";
+    const threadForkSourceThreadIdExpression = threadColumns.has("fork_source_thread_id")
+      ? "fork_source_thread_id"
+      : threadColumns.has("source_thread_id")
+        ? "source_thread_id"
+        : "NULL";
+    const threadForkSourceTurnIdExpression = threadColumns.has("fork_source_turn_id")
+      ? "fork_source_turn_id"
+      : threadColumns.has("source_turn_id")
+        ? "source_turn_id"
+        : "NULL";
+    const threadForkSourceCheckpointTurnCountExpression = threadColumns.has(
+      "fork_source_checkpoint_turn_count",
+    )
+      ? "fork_source_checkpoint_turn_count"
+      : threadColumns.has("source_checkpoint_turn_count")
+        ? "source_checkpoint_turn_count"
+        : "NULL";
+    const threadForkedAtExpression = threadColumns.has("forked_at") ? "forked_at" : "NULL";
 
     return SqlSchema.findAll({
       Request: Schema.Void,
@@ -250,6 +272,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             ${threadInteractionModeExpression} AS "interactionMode",
             branch,
             worktree_path AS "worktreePath",
+            ${threadForkSourceThreadIdExpression} AS "forkSourceThreadId",
+            ${threadForkSourceTurnIdExpression} AS "forkSourceTurnId",
+            ${threadForkSourceCheckpointTurnCountExpression} AS "forkSourceCheckpointTurnCount",
+            ${threadForkedAtExpression} AS "forkedAt",
             latest_turn_id AS "latestTurnId",
             created_at AS "createdAt",
             updated_at AS "updatedAt",
@@ -260,34 +286,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         `),
     });
   };
-=======
-  const listThreadRows = SqlSchema.findAll({
-    Request: Schema.Void,
-    Result: ProjectionThreadDbRowSchema,
-    execute: () =>
-      sql`
-        SELECT
-          thread_id AS "threadId",
-          project_id AS "projectId",
-          title,
-          model,
-          runtime_mode AS "runtimeMode",
-          interaction_mode AS "interactionMode",
-          branch,
-          worktree_path AS "worktreePath",
-          fork_source_thread_id AS "forkSourceThreadId",
-          fork_source_turn_id AS "forkSourceTurnId",
-          fork_source_checkpoint_turn_count AS "forkSourceCheckpointTurnCount",
-          forked_at AS "forkedAt",
-          latest_turn_id AS "latestTurnId",
-          created_at AS "createdAt",
-          updated_at AS "updatedAt",
-          deleted_at AS "deletedAt"
-        FROM projection_threads
-        ORDER BY created_at ASC, thread_id ASC
-      `,
-  });
->>>>>>> 861afa05 (Add settled-state thread forking)
 
   const listThreadMessageRows = SqlSchema.findAll({
     Request: Schema.Void,
@@ -745,6 +743,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             workspaceRoot: row.workspaceRoot,
             defaultModelSelection: row.defaultModelSelection,
             scripts: row.scripts,
+            worktreeGroupTitles: row.worktreeGroupTitles,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
             deletedAt: row.deletedAt,
