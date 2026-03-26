@@ -3,7 +3,9 @@ import { assert, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
+import * as NodeSqliteClient from "../../persistence/NodeSqliteClient.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import { runMigrations } from "../../persistence/Migrations.ts";
 import { ORCHESTRATION_PROJECTOR_NAMES } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -17,12 +19,15 @@ const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.makeUnsa
 const projectionSnapshotLayer = it.layer(
   OrchestrationProjectionSnapshotQueryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
 );
+const legacyProjectionSnapshotLayer = it.layer(
+  OrchestrationProjectionSnapshotQueryLive.pipe(Layer.provideMerge(NodeSqliteClient.layerMemory())),
+);
 
 projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
   it.effect("hydrates read model from projection tables and computes snapshot sequence", () =>
     Effect.gen(function* () {
-      const snapshotQuery = yield* ProjectionSnapshotQuery;
       const sql = yield* SqlClient.SqlClient;
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
 
       yield* sql`DELETE FROM projection_projects`;
       yield* sql`DELETE FROM projection_state`;
@@ -57,7 +62,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           thread_id,
           project_id,
           title,
+          model,
           model_selection_json,
+          runtime_mode,
+          interaction_mode,
           branch,
           worktree_path,
           latest_turn_id,
@@ -69,7 +77,10 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           'thread-1',
           'project-1',
           'Thread 1',
+          'gpt-5-codex',
           '{"provider":"codex","model":"gpt-5-codex"}',
+          'full-access',
+          'default',
           NULL,
           NULL,
           'turn-1',
@@ -333,6 +344,130 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
             lastError: null,
             updatedAt: "2026-02-24T00:00:07.000Z",
           },
+        },
+      ]);
+    }),
+  );
+});
+
+legacyProjectionSnapshotLayer("ProjectionSnapshotQuery legacy schema compatibility", (it) => {
+  it.effect("hydrates read model from legacy scalar model columns", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* runMigrations({ toMigrationInclusive: 17 });
+      const snapshotQuery = yield* ProjectionSnapshotQuery;
+
+      yield* sql`
+        INSERT INTO projection_projects (
+          project_id,
+          title,
+          workspace_root,
+          default_model,
+          scripts_json,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'legacy-project-1',
+          'Legacy Project 1',
+          '/tmp/legacy-project-1',
+          'gpt-5.4',
+          '[]',
+          '2026-02-24T00:00:00.000Z',
+          '2026-02-24T00:00:01.000Z',
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          created_at,
+          updated_at,
+          deleted_at
+        )
+        VALUES (
+          'legacy-thread-1',
+          'legacy-project-1',
+          'Legacy Thread 1',
+          'claude-sonnet-4-6',
+          'approval-required',
+          'plan',
+          NULL,
+          NULL,
+          NULL,
+          '2026-02-24T00:00:02.000Z',
+          '2026-02-24T00:00:03.000Z',
+          NULL
+        )
+      `;
+
+      let sequence = 5;
+      for (const projector of Object.values(ORCHESTRATION_PROJECTOR_NAMES)) {
+        yield* sql`
+          INSERT INTO projection_state (
+            projector,
+            last_applied_sequence,
+            updated_at
+          )
+          VALUES (
+            ${projector},
+            ${sequence},
+            '2026-02-24T00:00:09.000Z'
+          )
+        `;
+        sequence += 1;
+      }
+
+      const snapshot = yield* snapshotQuery.getSnapshot();
+
+      assert.deepEqual(snapshot.projects, [
+        {
+          id: asProjectId("legacy-project-1"),
+          title: "Legacy Project 1",
+          workspaceRoot: "/tmp/legacy-project-1",
+          defaultModelSelection: {
+            provider: "codex",
+            model: "gpt-5.4",
+          },
+          scripts: [],
+          createdAt: "2026-02-24T00:00:00.000Z",
+          updatedAt: "2026-02-24T00:00:01.000Z",
+          deletedAt: null,
+        },
+      ]);
+      assert.deepEqual(snapshot.threads, [
+        {
+          id: ThreadId.makeUnsafe("legacy-thread-1"),
+          projectId: asProjectId("legacy-project-1"),
+          title: "Legacy Thread 1",
+          modelSelection: {
+            provider: "claudeAgent",
+            model: "claude-sonnet-4-6",
+          },
+          interactionMode: "plan",
+          runtimeMode: "approval-required",
+          branch: null,
+          worktreePath: null,
+          latestTurn: null,
+          createdAt: "2026-02-24T00:00:02.000Z",
+          updatedAt: "2026-02-24T00:00:03.000Z",
+          deletedAt: null,
+          messages: [],
+          proposedPlans: [],
+          activities: [],
+          checkpoints: [],
+          session: null,
         },
       ]);
     }),

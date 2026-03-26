@@ -28,7 +28,9 @@ import Migration0012 from "./Migrations/012_ProjectionThreadsInteractionMode.ts"
 import Migration0013 from "./Migrations/013_ProjectionThreadProposedPlans.ts";
 import Migration0014 from "./Migrations/014_ProjectionThreadProposedPlanImplementation.ts";
 import Migration0015 from "./Migrations/015_ProjectionTurnsSourceProposedPlan.ts";
-import Migration0016 from "./Migrations/016_CanonicalizeModelSelections.ts";
+import Migration0016 from "./Migrations/016_ProjectionThreadsForkOrigin.ts";
+import Migration0017 from "./Migrations/017_ProjectionThreadsForkOriginCompat.ts";
+import Migration0018 from "./Migrations/018_CanonicalizeModelSelections.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -56,7 +58,9 @@ export const migrationEntries = [
   [13, "ProjectionThreadProposedPlans", Migration0013],
   [14, "ProjectionThreadProposedPlanImplementation", Migration0014],
   [15, "ProjectionTurnsSourceProposedPlan", Migration0015],
-  [16, "CanonicalizeModelSelections", Migration0016],
+  [16, "ProjectionThreadsForkOrigin", Migration0016],
+  [17, "ProjectionThreadsForkOriginCompat", Migration0017],
+  [18, "CanonicalizeModelSelections", Migration0018],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

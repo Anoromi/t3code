@@ -54,16 +54,6 @@ export default Effect.gen(function* () {
   `;
 
   yield* sql`
-    ALTER TABLE projection_projects
-    DROP COLUMN default_model
-  `;
-
-  yield* sql`
-    ALTER TABLE projection_threads
-    DROP COLUMN model
-  `;
-
-  yield* sql`
     UPDATE orchestration_events
     SET payload_json = CASE
       WHEN json_type(payload_json, '$.defaultModel') = 'null' THEN json_remove(
@@ -220,7 +210,6 @@ export default Effect.gen(function* () {
       AND json_type(payload_json, '$.model') IS NOT NULL
   `;
 
-  // Backfill thread.created events that predate the model field entirely
   yield* sql`
     UPDATE orchestration_events
     SET payload_json = json_set(

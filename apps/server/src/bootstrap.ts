@@ -87,6 +87,11 @@ const isUnavailableBootstrapFdError = Predicate.compose(
   (_) => _.code === "EBADF" || _.code === "ENOENT",
 );
 
+const isDirectBootstrapReadFallbackError = Predicate.compose(
+  Predicate.hasProperty("code"),
+  (_) => _.code === "ENXIO",
+);
+
 const isFdReady = (fd: number) =>
   Effect.try({
     try: () => NFS.fstatSync(fd),
@@ -117,12 +122,23 @@ const makeBootstrapInputStream = (fd: number) =>
         return stream;
       }
 
-      const streamFd = NFS.openSync(fdPath, "r");
-      return NFS.createReadStream("", {
-        fd: streamFd,
-        encoding: "utf8",
-        autoClose: true,
-      });
+      try {
+        const streamFd = NFS.openSync(fdPath, "r");
+        return NFS.createReadStream("", {
+          fd: streamFd,
+          encoding: "utf8",
+          autoClose: true,
+        });
+      } catch (error) {
+        if (isDirectBootstrapReadFallbackError(error)) {
+          return NFS.createReadStream("", {
+            fd,
+            encoding: "utf8",
+            autoClose: true,
+          });
+        }
+        throw error;
+      }
     },
     catch: (error) =>
       new BootstrapError({

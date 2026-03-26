@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildSidebarProjectTree,
   getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
@@ -705,5 +706,82 @@ describe("sortProjectsForSidebar", () => {
     );
 
     expect(timestamp).toBe(Date.parse("2026-03-09T10:10:00.000Z"));
+  });
+});
+
+describe("buildSidebarProjectTree", () => {
+  it("nests managed worktree projects under their matching primary project", () => {
+    const primaryProject = makeProject({
+      id: ProjectId.makeUnsafe("project-primary"),
+      name: "server",
+      cwd: "/home/anoromi/code/stolen/t3code/apps/server",
+    });
+    const worktreeProject = makeProject({
+      id: ProjectId.makeUnsafe("project-worktree"),
+      name: "server",
+      cwd: "/home/anoromi/.t3/worktrees/t3code/t3code-0f9f8314/apps/server",
+    });
+    const siblingProject = makeProject({
+      id: ProjectId.makeUnsafe("project-sibling"),
+      name: "web",
+      cwd: "/home/anoromi/code/stolen/t3code/apps/web",
+    });
+
+    const tree = buildSidebarProjectTree([primaryProject, worktreeProject, siblingProject]);
+
+    expect(tree.map((entry) => entry.project.id)).toEqual([
+      ProjectId.makeUnsafe("project-primary"),
+      ProjectId.makeUnsafe("project-sibling"),
+    ]);
+    expect(tree[0]?.childProjects).toHaveLength(1);
+    expect(tree[0]?.childProjects[0]?.project.id).toBe(ProjectId.makeUnsafe("project-worktree"));
+    expect(tree[0]?.childProjects[0]?.displayName).toBe("t3code-0f9f8314");
+  });
+
+  it("leaves worktree-like projects top-level when no matching parent exists", () => {
+    const unmatchedWorktreeProject = makeProject({
+      id: ProjectId.makeUnsafe("project-worktree"),
+      name: "server",
+      cwd: "/home/anoromi/.t3/worktrees/t3code/t3code-0f9f8314/apps/server",
+    });
+    const unrelatedProject = makeProject({
+      id: ProjectId.makeUnsafe("project-unrelated"),
+      name: "other",
+      cwd: "/home/anoromi/code/stolen/t3code/apps/web",
+    });
+
+    const tree = buildSidebarProjectTree([unmatchedWorktreeProject, unrelatedProject]);
+
+    expect(tree.map((entry) => entry.project.id)).toEqual([
+      ProjectId.makeUnsafe("project-worktree"),
+      ProjectId.makeUnsafe("project-unrelated"),
+    ]);
+    expect(tree[0]?.childProjects).toEqual([]);
+    expect(tree[0]?.displayName).toBe("server");
+  });
+
+  it("keeps the grouped project at the earliest sorted position of its children", () => {
+    const primaryProject = makeProject({
+      id: ProjectId.makeUnsafe("project-primary"),
+      name: "server",
+      cwd: "/home/anoromi/code/stolen/t3code/apps/server",
+    });
+    const worktreeProject = makeProject({
+      id: ProjectId.makeUnsafe("project-worktree"),
+      name: "server",
+      cwd: "/home/anoromi/.t3/worktrees/t3code/t3code-0f9f8314/apps/server",
+    });
+    const siblingProject = makeProject({
+      id: ProjectId.makeUnsafe("project-sibling"),
+      name: "web",
+      cwd: "/home/anoromi/code/stolen/t3code/apps/web",
+    });
+
+    const tree = buildSidebarProjectTree([worktreeProject, siblingProject, primaryProject]);
+
+    expect(tree.map((entry) => entry.project.id)).toEqual([
+      ProjectId.makeUnsafe("project-primary"),
+      ProjectId.makeUnsafe("project-sibling"),
+    ]);
   });
 });

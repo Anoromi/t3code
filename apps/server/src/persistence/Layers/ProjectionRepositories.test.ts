@@ -38,9 +38,12 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       });
 
       const rows = yield* sql<{
+        readonly defaultModel: string | null;
         readonly defaultModelSelection: string | null;
       }>`
-        SELECT default_model_selection_json AS "defaultModelSelection"
+        SELECT
+          default_model AS "defaultModel",
+          default_model_selection_json AS "defaultModelSelection"
         FROM projection_projects
         WHERE project_id = 'project-null-options'
       `;
@@ -49,6 +52,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         return yield* Effect.fail(new Error("Expected projection_projects row to exist."));
       }
 
+      assert.strictEqual(row.defaultModel, "gpt-5.4");
       assert.strictEqual(
         row.defaultModelSelection,
         JSON.stringify({
@@ -91,9 +95,12 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       });
 
       const rows = yield* sql<{
+        readonly model: string | null;
         readonly modelSelection: string | null;
       }>`
-        SELECT model_selection_json AS "modelSelection"
+        SELECT
+          model,
+          model_selection_json AS "modelSelection"
         FROM projection_threads
         WHERE thread_id = 'thread-null-options'
       `;
@@ -102,6 +109,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
         return yield* Effect.fail(new Error("Expected projection_threads row to exist."));
       }
 
+      assert.strictEqual(row.model, "claude-opus-4-6");
       assert.strictEqual(
         row.modelSelection,
         JSON.stringify({

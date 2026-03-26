@@ -47,6 +47,7 @@ import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isLinuxPlatform, isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
 import { useStore } from "../store";
 import { shortcutLabelForCommand } from "../keybindings";
+import { formatRelativeTime } from "../relativeTime";
 import { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
 import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
@@ -90,7 +91,10 @@ import { useThreadSelectionStore } from "../threadSelectionStore";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
 import {
+  buildSidebarProjectTree,
   getFallbackThreadIdAfterDelete,
+  getProjectSortTimestamp,
+  getThreadSortTimestamp,
   getVisibleThreadsForProject,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
@@ -119,16 +123,6 @@ const SIDEBAR_LIST_ANIMATION_OPTIONS = {
   easing: "ease-out",
 } as const;
 const loadedProjectFaviconSrcs = new Set<string>();
-
-function formatRelativeTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
-}
 
 interface TerminalStatusIndicator {
   label: "Terminal process running";
@@ -1104,12 +1098,22 @@ export default function Sidebar() {
     () => sortProjectsForSidebar(projects, threads, appSettings.sidebarProjectSortOrder),
     [appSettings.sidebarProjectSortOrder, projects, threads],
   );
+  const sortedProjectTree = useMemo(
+    () => buildSidebarProjectTree(sortedProjects),
+    [sortedProjects],
+  );
   const isManualProjectSorting = appSettings.sidebarProjectSortOrder === "manual";
+  const routeThreadProjectId = useMemo(
+    () => threads.find((thread) => thread.id === routeThreadId)?.projectId ?? null,
+    [routeThreadId, threads],
+  );
 
   function renderProjectItem(
-    project: (typeof sortedProjects)[number],
+    projectNode: (typeof sortedProjectTree)[number],
     dragHandleProps: SortableProjectHandleProps | null,
+    nested = false,
   ) {
+    const { childProjects, displayName, project } = projectNode;
     const projectThreads = sortThreadsForSidebar(
       threads.filter((thread) => thread.projectId === project.id),
       appSettings.sidebarThreadSortOrder,
@@ -1129,7 +1133,17 @@ export default function Sidebar() {
       !project.expanded && activeThreadId
         ? (projectThreads.find((thread) => thread.id === activeThreadId) ?? null)
         : null;
-    const shouldShowThreadPanel = project.expanded || pinnedCollapsedThread !== null;
+    const hasExpandedChildProject = childProjects.some(
+      (childProject) => childProject.project.expanded,
+    );
+    const hasActiveChildProject =
+      routeThreadProjectId !== null &&
+      childProjects.some((childProject) => childProject.project.id === routeThreadProjectId);
+    const shouldShowThreadPanel =
+      project.expanded ||
+      pinnedCollapsedThread !== null ||
+      hasExpandedChildProject ||
+      hasActiveChildProject;
     const { hasHiddenThreads, visibleThreads } = getVisibleThreadsForProject({
       threads: projectThreads,
       activeThreadId,
@@ -1138,6 +1152,44 @@ export default function Sidebar() {
     });
     const orderedProjectThreadIds = projectThreads.map((thread) => thread.id);
     const renderedThreads = pinnedCollapsedThread ? [pinnedCollapsedThread] : visibleThreads;
+    const childProjectThreadsByProjectId = new Map(
+      childProjects.map((childProject) => [
+        childProject.project.id,
+        sortThreadsForSidebar(
+          threads.filter((thread) => thread.projectId === childProject.project.id),
+          appSettings.sidebarThreadSortOrder,
+        ),
+      ]),
+    );
+    const orderedProjectContent = [
+      ...renderedThreads.map((thread, index) => ({
+        type: "thread" as const,
+        thread,
+        sortTimestamp: getThreadSortTimestamp(thread, appSettings.sidebarThreadSortOrder),
+        orderIndex: index,
+      })),
+      ...childProjects.map((childProject, index) => ({
+        type: "childProject" as const,
+        childProject,
+        sortTimestamp: getProjectSortTimestamp(
+          childProject.project,
+          childProjectThreadsByProjectId.get(childProject.project.id) ?? [],
+          appSettings.sidebarThreadSortOrder,
+        ),
+        orderIndex: renderedThreads.length + index,
+      })),
+    ].toSorted((left, right) => {
+      const byTimestamp =
+        right.sortTimestamp === left.sortTimestamp
+          ? 0
+          : right.sortTimestamp > left.sortTimestamp
+            ? 1
+            : -1;
+      if (byTimestamp !== 0) {
+        return byTimestamp;
+      }
+      return left.orderIndex - right.orderIndex;
+    });
     const renderThreadRow = (thread: (typeof projectThreads)[number]) => {
       const isActive = routeThreadId === thread.id;
       const isSelected = selectedThreadIds.has(thread.id);
@@ -1290,17 +1342,25 @@ export default function Sidebar() {
       );
     };
 
-    return (
+    const projectContent = (
       <Collapsible className="group/collapsible" open={shouldShowThreadPanel}>
         <div className="group/project-header relative">
           <SidebarMenuButton
-            ref={isManualProjectSorting ? dragHandleProps?.setActivatorNodeRef : undefined}
+            ref={
+              !nested && isManualProjectSorting ? dragHandleProps?.setActivatorNodeRef : undefined
+            }
             size="sm"
             className={`gap-2 px-2 py-1.5 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground ${
-              isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
-            }`}
-            {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.attributes : {})}
-            {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.listeners : {})}
+              !nested && isManualProjectSorting
+                ? "cursor-grab active:cursor-grabbing"
+                : "cursor-pointer"
+            } ${nested ? "rounded-lg" : ""}`}
+            {...(!nested && isManualProjectSorting && dragHandleProps
+              ? dragHandleProps.attributes
+              : {})}
+            {...(!nested && isManualProjectSorting && dragHandleProps
+              ? dragHandleProps.listeners
+              : {})}
             onPointerDownCapture={handleProjectTitlePointerDownCapture}
             onClick={(event) => handleProjectTitleClick(event, project.id)}
             onKeyDown={(event) => handleProjectTitleKeyDown(event, project.id)}
@@ -1336,7 +1396,7 @@ export default function Sidebar() {
             )}
             <ProjectFavicon cwd={project.cwd} />
             <span className="flex-1 truncate text-xs font-medium text-foreground/90">
-              {project.name}
+              {displayName}
             </span>
           </SidebarMenuButton>
           <Tooltip>
@@ -1346,7 +1406,7 @@ export default function Sidebar() {
                   render={
                     <button
                       type="button"
-                      aria-label={`Create new thread in ${project.name}`}
+                      aria-label={`Create new thread in ${displayName}`}
                       data-testid="new-thread-button"
                     />
                   }
@@ -1377,7 +1437,18 @@ export default function Sidebar() {
             ref={attachThreadListAutoAnimateRef}
             className="mx-1 my-0 w-full translate-x-0 gap-0.5 px-1.5 py-0"
           >
-            {renderedThreads.map((thread) => renderThreadRow(thread))}
+            {orderedProjectContent.map((entry) =>
+              entry.type === "thread" ? (
+                renderThreadRow(entry.thread)
+              ) : (
+                <div
+                  key={entry.childProject.project.id}
+                  className="mt-1.5 ml-2 rounded-xl border border-border/40 bg-sidebar-accent/20 px-1 py-1"
+                >
+                  {renderProjectItem(entry.childProject, null, true)}
+                </div>
+              ),
+            )}
 
             {project.expanded && hasHiddenThreads && !isThreadListExpanded && (
               <SidebarMenuSubItem className="w-full">
@@ -1413,6 +1484,8 @@ export default function Sidebar() {
         </CollapsibleContent>
       </Collapsible>
     );
+
+    return projectContent;
   }
 
   const handleProjectTitleClick = useCallback(
@@ -1801,12 +1874,15 @@ export default function Sidebar() {
             >
               <SidebarMenu>
                 <SortableContext
-                  items={sortedProjects.map((project) => project.id)}
+                  items={sortedProjectTree.map((projectNode) => projectNode.project.id)}
                   strategy={verticalListSortingStrategy}
                 >
-                  {sortedProjects.map((project) => (
-                    <SortableProjectItem key={project.id} projectId={project.id}>
-                      {(dragHandleProps) => renderProjectItem(project, dragHandleProps)}
+                  {sortedProjectTree.map((projectNode) => (
+                    <SortableProjectItem
+                      key={projectNode.project.id}
+                      projectId={projectNode.project.id}
+                    >
+                      {(dragHandleProps) => renderProjectItem(projectNode, dragHandleProps)}
                     </SortableProjectItem>
                   ))}
                 </SortableContext>
@@ -1814,9 +1890,9 @@ export default function Sidebar() {
             </DndContext>
           ) : (
             <SidebarMenu ref={attachProjectListAutoAnimateRef}>
-              {sortedProjects.map((project) => (
-                <SidebarMenuItem key={project.id} className="rounded-md">
-                  {renderProjectItem(project, null)}
+              {sortedProjectTree.map((projectNode) => (
+                <SidebarMenuItem key={projectNode.project.id} className="rounded-md">
+                  {renderProjectItem(projectNode, null)}
                 </SidebarMenuItem>
               ))}
             </SidebarMenu>
