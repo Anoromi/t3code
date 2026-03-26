@@ -87,6 +87,11 @@ const isUnavailableBootstrapFdError = Predicate.compose(
   (_) => _.code === "EBADF" || _.code === "ENOENT",
 );
 
+const isDirectBootstrapReadFallbackError = Predicate.compose(
+  Predicate.hasProperty("code"),
+  (_) => _.code === "ENXIO",
+);
+
 const isFdReady = (fd: number) =>
   Effect.try({
     try: () => NFS.fstatSync(fd),

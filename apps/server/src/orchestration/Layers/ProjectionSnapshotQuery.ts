@@ -161,51 +161,104 @@ function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: st
       : toPersistenceSqlError(sqlOperation)(cause);
 }
 
+const getTableColumns = (sql: SqlClient.SqlClient, tableName: string) =>
+  sql
+    .unsafe(`PRAGMA table_info(${tableName})`)
+    .values.pipe(
+      Effect.map(
+        (rows) => new Set(rows.flatMap((row) => (typeof row[1] === "string" ? [row[1]] : []))),
+      ),
+    );
+
+function legacyModelSelectionJsonExpression(columnName: string): string {
+  return `CASE
+    WHEN ${columnName} IS NULL THEN NULL
+    ELSE json_object(
+      'provider',
+      CASE
+        WHEN lower(${columnName}) LIKE '%claude%' THEN 'claudeAgent'
+        ELSE 'codex'
+      END,
+      'model',
+      ${columnName}
+    )
+  END`;
+}
+
 const makeProjectionSnapshotQuery = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const listProjectRows = (projectColumns: ReadonlySet<string>) => {
+    const projectModelSelectionExpression = projectColumns.has("default_model_selection_json")
+      ? projectColumns.has("default_model")
+        ? `COALESCE(
+            default_model_selection_json,
+            ${legacyModelSelectionJsonExpression("default_model")}
+          )`
+        : "default_model_selection_json"
+      : legacyModelSelectionJsonExpression("default_model");
 
-  const listProjectRows = SqlSchema.findAll({
-    Request: Schema.Void,
-    Result: ProjectionProjectDbRowSchema,
-    execute: () =>
-      sql`
-        SELECT
-          project_id AS "projectId",
-          title,
-          workspace_root AS "workspaceRoot",
-          default_model_selection_json AS "defaultModelSelection",
-          scripts_json AS "scripts",
-          created_at AS "createdAt",
-          updated_at AS "updatedAt",
-          deleted_at AS "deletedAt"
-        FROM projection_projects
-        ORDER BY created_at ASC, project_id ASC
-      `,
-  });
+    return SqlSchema.findAll({
+      Request: Schema.Void,
+      Result: ProjectionProjectDbRowSchema,
+      execute: () =>
+        sql.unsafe(`
+          SELECT
+            project_id AS "projectId",
+            title,
+            workspace_root AS "workspaceRoot",
+            ${projectModelSelectionExpression} AS "defaultModelSelection",
+            scripts_json AS "scripts",
+            created_at AS "createdAt",
+            updated_at AS "updatedAt",
+            deleted_at AS "deletedAt"
+          FROM projection_projects
+          ORDER BY created_at ASC, project_id ASC
+        `),
+    });
+  };
 
-  const listThreadRows = SqlSchema.findAll({
-    Request: Schema.Void,
-    Result: ProjectionThreadDbRowSchema,
-    execute: () =>
-      sql`
-        SELECT
-          thread_id AS "threadId",
-          project_id AS "projectId",
-          title,
-          model_selection_json AS "modelSelection",
-          runtime_mode AS "runtimeMode",
-          interaction_mode AS "interactionMode",
-          branch,
-          worktree_path AS "worktreePath",
-          latest_turn_id AS "latestTurnId",
-          created_at AS "createdAt",
-          updated_at AS "updatedAt",
-          archived_at AS "archivedAt",
-          deleted_at AS "deletedAt"
-        FROM projection_threads
-        ORDER BY created_at ASC, thread_id ASC
-      `,
-  });
+  const listThreadRows = (threadColumns: ReadonlySet<string>) => {
+    const threadModelSelectionExpression = threadColumns.has("model_selection_json")
+      ? threadColumns.has("model")
+        ? `COALESCE(
+            model_selection_json,
+            ${legacyModelSelectionJsonExpression("model")}
+          )`
+        : "model_selection_json"
+      : legacyModelSelectionJsonExpression("model");
+
+    const threadRuntimeModeExpression = threadColumns.has("runtime_mode")
+      ? "runtime_mode"
+      : "'full-access'";
+    const threadInteractionModeExpression = threadColumns.has("interaction_mode")
+      ? "interaction_mode"
+      : "'default'";
+    const threadArchivedAtExpression = threadColumns.has("archived_at") ? "archived_at" : "NULL";
+
+    return SqlSchema.findAll({
+      Request: Schema.Void,
+      Result: ProjectionThreadDbRowSchema,
+      execute: () =>
+        sql.unsafe(`
+          SELECT
+            thread_id AS "threadId",
+            project_id AS "projectId",
+            title,
+            ${threadModelSelectionExpression} AS "modelSelection",
+            ${threadRuntimeModeExpression} AS "runtimeMode",
+            ${threadInteractionModeExpression} AS "interactionMode",
+            branch,
+            worktree_path AS "worktreePath",
+            latest_turn_id AS "latestTurnId",
+            created_at AS "createdAt",
+            updated_at AS "updatedAt",
+            ${threadArchivedAtExpression} AS "archivedAt",
+            deleted_at AS "deletedAt"
+          FROM projection_threads
+          ORDER BY created_at ASC, thread_id ASC
+        `),
+    });
+  };
 
   const listThreadMessageRows = SqlSchema.findAll({
     Request: Schema.Void,
@@ -437,6 +490,11 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     sql
       .withTransaction(
         Effect.gen(function* () {
+          const [projectColumns, threadColumns] = yield* Effect.all([
+            getTableColumns(sql, "projection_projects"),
+            getTableColumns(sql, "projection_threads"),
+          ]);
+
           const [
             projectRows,
             threadRows,
@@ -448,7 +506,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             latestTurnRows,
             stateRows,
           ] = yield* Effect.all([
-            listProjectRows(undefined).pipe(
+            listProjectRows(projectColumns)(undefined).pipe(
               Effect.mapError(
                 toPersistenceSqlOrDecodeError(
                   "ProjectionSnapshotQuery.getSnapshot:listProjects:query",
@@ -456,7 +514,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 ),
               ),
             ),
-            listThreadRows(undefined).pipe(
+            listThreadRows(threadColumns)(undefined).pipe(
               Effect.mapError(
                 toPersistenceSqlOrDecodeError(
                   "ProjectionSnapshotQuery.getSnapshot:listThreads:query",

@@ -4,6 +4,7 @@ import {
   createThreadJumpHintVisibilityController,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
+  buildSidebarProjectTree,
   getFallbackThreadIdAfterDelete,
   getVisibleThreadsForProject,
   getProjectSortTimestamp,
@@ -393,7 +394,6 @@ describe("isContextMenuPointerDown", () => {
     ).toBe(false);
   });
 });
-
 describe("resolveThreadStatusPill", () => {
   const baseThread = {
     hasActionableProposedPlan: false,
@@ -594,9 +594,6 @@ describe("getVisibleThreadsForProject", () => {
       ThreadId.makeUnsafe("thread-6"),
       ThreadId.makeUnsafe("thread-8"),
     ]);
-    expect(result.hiddenThreads.map((thread) => thread.id)).toEqual([
-      ThreadId.makeUnsafe("thread-7"),
-    ]);
   });
 
   it("returns all threads when the list is expanded", () => {
@@ -617,7 +614,6 @@ describe("getVisibleThreadsForProject", () => {
     expect(result.visibleThreads.map((thread) => thread.id)).toEqual(
       threads.map((thread) => thread.id),
     );
-    expect(result.hiddenThreads).toEqual([]);
   });
 });
 
@@ -657,7 +653,6 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     proposedPlans: [],
     error: null,
     createdAt: "2026-03-09T10:00:00.000Z",
-    archivedAt: null,
     updatedAt: "2026-03-09T10:00:00.000Z",
     latestTurn: null,
     branch: null,
@@ -975,43 +970,6 @@ describe("sortProjectsForSidebar", () => {
     ]);
   });
 
-  it("ignores archived threads when sorting projects", () => {
-    const sorted = sortProjectsForSidebar(
-      [
-        makeProject({
-          id: ProjectId.makeUnsafe("project-1"),
-          name: "Visible project",
-          updatedAt: "2026-03-09T10:01:00.000Z",
-        }),
-        makeProject({
-          id: ProjectId.makeUnsafe("project-2"),
-          name: "Archived-only project",
-          updatedAt: "2026-03-09T10:00:00.000Z",
-        }),
-      ],
-      [
-        makeThread({
-          id: ThreadId.makeUnsafe("thread-visible"),
-          projectId: ProjectId.makeUnsafe("project-1"),
-          updatedAt: "2026-03-09T10:02:00.000Z",
-          archivedAt: null,
-        }),
-        makeThread({
-          id: ThreadId.makeUnsafe("thread-archived"),
-          projectId: ProjectId.makeUnsafe("project-2"),
-          updatedAt: "2026-03-09T10:10:00.000Z",
-          archivedAt: "2026-03-09T10:11:00.000Z",
-        }),
-      ].filter((thread) => thread.archivedAt === null),
-      "updated_at",
-    );
-
-    expect(sorted.map((project) => project.id)).toEqual([
-      ProjectId.makeUnsafe("project-1"),
-      ProjectId.makeUnsafe("project-2"),
-    ]);
-  });
-
   it("returns the project timestamp when no threads are present", () => {
     const timestamp = getProjectSortTimestamp(
       makeProject({ updatedAt: "2026-03-09T10:10:00.000Z" }),
@@ -1020,5 +978,82 @@ describe("sortProjectsForSidebar", () => {
     );
 
     expect(timestamp).toBe(Date.parse("2026-03-09T10:10:00.000Z"));
+  });
+});
+
+describe("buildSidebarProjectTree", () => {
+  it("nests managed worktree projects under their matching primary project", () => {
+    const primaryProject = makeProject({
+      id: ProjectId.makeUnsafe("project-primary"),
+      name: "server",
+      cwd: "/home/anoromi/code/stolen/t3code/apps/server",
+    });
+    const worktreeProject = makeProject({
+      id: ProjectId.makeUnsafe("project-worktree"),
+      name: "server",
+      cwd: "/home/anoromi/.t3/worktrees/t3code/t3code-0f9f8314/apps/server",
+    });
+    const siblingProject = makeProject({
+      id: ProjectId.makeUnsafe("project-sibling"),
+      name: "web",
+      cwd: "/home/anoromi/code/stolen/t3code/apps/web",
+    });
+
+    const tree = buildSidebarProjectTree([primaryProject, worktreeProject, siblingProject]);
+
+    expect(tree.map((entry) => entry.project.id)).toEqual([
+      ProjectId.makeUnsafe("project-primary"),
+      ProjectId.makeUnsafe("project-sibling"),
+    ]);
+    expect(tree[0]?.childProjects).toHaveLength(1);
+    expect(tree[0]?.childProjects[0]?.project.id).toBe(ProjectId.makeUnsafe("project-worktree"));
+    expect(tree[0]?.childProjects[0]?.displayName).toBe("t3code-0f9f8314");
+  });
+
+  it("leaves worktree-like projects top-level when no matching parent exists", () => {
+    const unmatchedWorktreeProject = makeProject({
+      id: ProjectId.makeUnsafe("project-worktree"),
+      name: "server",
+      cwd: "/home/anoromi/.t3/worktrees/t3code/t3code-0f9f8314/apps/server",
+    });
+    const unrelatedProject = makeProject({
+      id: ProjectId.makeUnsafe("project-unrelated"),
+      name: "other",
+      cwd: "/home/anoromi/code/stolen/t3code/apps/web",
+    });
+
+    const tree = buildSidebarProjectTree([unmatchedWorktreeProject, unrelatedProject]);
+
+    expect(tree.map((entry) => entry.project.id)).toEqual([
+      ProjectId.makeUnsafe("project-worktree"),
+      ProjectId.makeUnsafe("project-unrelated"),
+    ]);
+    expect(tree[0]?.childProjects).toEqual([]);
+    expect(tree[0]?.displayName).toBe("server");
+  });
+
+  it("keeps the grouped project at the earliest sorted position of its children", () => {
+    const primaryProject = makeProject({
+      id: ProjectId.makeUnsafe("project-primary"),
+      name: "server",
+      cwd: "/home/anoromi/code/stolen/t3code/apps/server",
+    });
+    const worktreeProject = makeProject({
+      id: ProjectId.makeUnsafe("project-worktree"),
+      name: "server",
+      cwd: "/home/anoromi/.t3/worktrees/t3code/t3code-0f9f8314/apps/server",
+    });
+    const siblingProject = makeProject({
+      id: ProjectId.makeUnsafe("project-sibling"),
+      name: "web",
+      cwd: "/home/anoromi/code/stolen/t3code/apps/web",
+    });
+
+    const tree = buildSidebarProjectTree([worktreeProject, siblingProject, primaryProject]);
+
+    expect(tree.map((entry) => entry.project.id)).toEqual([
+      ProjectId.makeUnsafe("project-primary"),
+      ProjectId.makeUnsafe("project-sibling"),
+    ]);
   });
 });

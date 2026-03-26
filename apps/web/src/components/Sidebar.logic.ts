@@ -10,6 +10,7 @@ export type SidebarNewThreadEnvMode = "local" | "worktree";
 type SidebarProject = {
   id: string;
   name: string;
+  cwd: string;
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
 };
@@ -19,6 +20,12 @@ type SidebarThreadSortInput = Pick<Thread, "createdAt" | "updatedAt"> & {
 };
 
 export type ThreadTraversalDirection = "previous" | "next";
+
+export interface SidebarProjectTreeNode<TProject extends SidebarProject = SidebarProject> {
+  project: TProject;
+  displayName: string;
+  childProjects: SidebarProjectTreeNode<TProject>[];
+}
 
 export interface ThreadStatusPill {
   label:
@@ -276,7 +283,6 @@ export function isContextMenuPointerDown(input: {
   if (input.button === 2) return true;
   return input.isMac && input.button === 0 && input.ctrlKey;
 }
-
 export function resolveThreadRowClassName(input: {
   isActive: boolean;
   isSelected: boolean;
@@ -409,7 +415,6 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
   if (!hasHiddenThreads || isThreadListExpanded) {
     return {
       hasHiddenThreads,
-      hiddenThreads: [],
       visibleThreads: [...threads],
     };
   }
@@ -418,7 +423,6 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
   if (!activeThreadId || previewThreads.some((thread) => thread.id === activeThreadId)) {
     return {
       hasHiddenThreads: true,
-      hiddenThreads: threads.slice(previewLimit),
       visibleThreads: previewThreads,
     };
   }
@@ -427,7 +431,6 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
   if (!activeThread) {
     return {
       hasHiddenThreads: true,
-      hiddenThreads: threads.slice(previewLimit),
       visibleThreads: previewThreads,
     };
   }
@@ -436,7 +439,6 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
 
   return {
     hasHiddenThreads: true,
-    hiddenThreads: threads.filter((thread) => !visibleThreadIds.has(thread.id)),
     visibleThreads: threads.filter((thread) => visibleThreadIds.has(thread.id)),
   };
 }
@@ -471,7 +473,7 @@ function getLatestUserMessageTimestamp(thread: SidebarThreadSortInput): number {
   return toSortableTimestamp(thread.updatedAt ?? thread.createdAt) ?? Number.NEGATIVE_INFINITY;
 }
 
-function getThreadSortTimestamp(
+export function getThreadSortTimestamp(
   thread: SidebarThreadSortInput,
   sortOrder: SidebarThreadSortOrder | Exclude<SidebarProjectSortOrder, "manual">,
 ): number {
@@ -537,6 +539,131 @@ export function getProjectSortTimestamp(
     return toSortableTimestamp(project.createdAt) ?? Number.NEGATIVE_INFINITY;
   }
   return toSortableTimestamp(project.updatedAt ?? project.createdAt) ?? Number.NEGATIVE_INFINITY;
+}
+
+function normalizeProjectPath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/\/+$/, "");
+}
+
+function pathEndsWithRelativeProjectPath(cwd: string, relativeProjectPath: string): boolean {
+  const normalizedCwd = normalizeProjectPath(cwd);
+  const normalizedRelativeProjectPath = relativeProjectPath.replace(/^\/+/, "").replace(/\/+$/, "");
+  if (normalizedRelativeProjectPath.length === 0) {
+    return false;
+  }
+  return (
+    normalizedCwd === normalizedRelativeProjectPath ||
+    normalizedCwd.endsWith(`/${normalizedRelativeProjectPath}`)
+  );
+}
+
+function parseManagedWorktreeProjectPath(cwd: string): {
+  worktreeName: string;
+  relativeProjectPath: string | null;
+} | null {
+  const normalized = normalizeProjectPath(cwd);
+  if (!normalized) {
+    return null;
+  }
+
+  const parts = normalized.split("/");
+  const worktreesIndex = parts.lastIndexOf("worktrees");
+  if (worktreesIndex < 0 || worktreesIndex + 2 >= parts.length) {
+    return null;
+  }
+
+  const worktreeName = parts[worktreesIndex + 2]?.trim() ?? "";
+  if (worktreeName.length === 0) {
+    return null;
+  }
+
+  const relativeProjectPath = parts.slice(worktreesIndex + 3).join("/");
+  return {
+    worktreeName,
+    relativeProjectPath: relativeProjectPath.length > 0 ? relativeProjectPath : null,
+  };
+}
+
+export function buildSidebarProjectTree<TProject extends SidebarProject>(
+  projects: readonly TProject[],
+): SidebarProjectTreeNode<TProject>[] {
+  const projectIndexById = new Map(projects.map((project, index) => [project.id, index] as const));
+  const worktreeProjectInfoById = new Map<
+    TProject["id"],
+    {
+      worktreeName: string;
+      relativeProjectPath: string | null;
+    }
+  >();
+
+  for (const project of projects) {
+    const worktreeProjectInfo = parseManagedWorktreeProjectPath(project.cwd);
+    if (worktreeProjectInfo) {
+      worktreeProjectInfoById.set(project.id, worktreeProjectInfo);
+    }
+  }
+
+  const childProjectsByParentId = new Map<TProject["id"], TProject[]>();
+  const childProjectIds = new Set<TProject["id"]>();
+
+  for (const project of projects) {
+    const worktreeProjectInfo = worktreeProjectInfoById.get(project.id);
+    if (!worktreeProjectInfo?.relativeProjectPath) {
+      continue;
+    }
+
+    const parentProject = projects
+      .filter(
+        (candidate) =>
+          candidate.id !== project.id &&
+          candidate.name === project.name &&
+          !worktreeProjectInfoById.has(candidate.id) &&
+          pathEndsWithRelativeProjectPath(candidate.cwd, worktreeProjectInfo.relativeProjectPath!),
+      )
+      .toSorted((left, right) => right.cwd.length - left.cwd.length)[0];
+
+    if (!parentProject) {
+      continue;
+    }
+
+    const existingChildren = childProjectsByParentId.get(parentProject.id) ?? [];
+    existingChildren.push(project);
+    childProjectsByParentId.set(parentProject.id, existingChildren);
+    childProjectIds.add(project.id);
+  }
+
+  return projects
+    .filter((project) => !childProjectIds.has(project.id))
+    .map((project) => {
+      const childProjects = (childProjectsByParentId.get(project.id) ?? [])
+        .toSorted(
+          (left, right) =>
+            (projectIndexById.get(left.id) ?? Number.MAX_SAFE_INTEGER) -
+            (projectIndexById.get(right.id) ?? Number.MAX_SAFE_INTEGER),
+        )
+        .map((childProject) => ({
+          project: childProject,
+          displayName:
+            worktreeProjectInfoById.get(childProject.id)?.worktreeName ?? childProject.name,
+          childProjects: [],
+        }));
+      const orderIndex = Math.min(
+        projectIndexById.get(project.id) ?? Number.MAX_SAFE_INTEGER,
+        ...childProjects.map(
+          (childProject) =>
+            projectIndexById.get(childProject.project.id) ?? Number.MAX_SAFE_INTEGER,
+        ),
+      );
+
+      return {
+        project,
+        displayName: project.name,
+        childProjects,
+        orderIndex,
+      };
+    })
+    .toSorted((left, right) => left.orderIndex - right.orderIndex)
+    .map(({ orderIndex: _orderIndex, ...entry }) => entry);
 }
 
 export function sortProjectsForSidebar<
