@@ -2178,7 +2178,7 @@ export default function Sidebar() {
                     : "text-muted-foreground/40"
                 }`}
               >
-                {formatRelativeTime(thread.createdAt)}
+                {formatRelativeTime(thread.updatedAt ?? thread.createdAt)}
               </span>
             </div>
           </SidebarMenuSubButton>
@@ -2203,7 +2203,6 @@ export default function Sidebar() {
       terminalStateByThreadId,
     ],
   );
-
   const wordmark = (
     <div className="flex items-center gap-2">
       <SidebarTrigger className="shrink-0 md:hidden" />
