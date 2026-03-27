@@ -16,7 +16,7 @@ layer("020_RepairForkedMigrationDrift", (it) => {
 
         yield* runMigrations({ toMigrationInclusive: 15 });
 
-      yield* sql`
+        yield* sql`
         INSERT INTO projection_projects (
           project_id,
           title,
@@ -39,24 +39,24 @@ layer("020_RepairForkedMigrationDrift", (it) => {
         )
       `;
 
-      yield* sql`
+        yield* sql`
         ALTER TABLE projection_projects
         ADD COLUMN worktree_group_titles_json TEXT NOT NULL DEFAULT '[]'
       `;
 
-      yield* sql`
+        yield* sql`
         ALTER TABLE projection_threads
         ADD COLUMN fork_source_thread_id TEXT
       `;
-      yield* sql`
+        yield* sql`
         ALTER TABLE projection_threads
         ADD COLUMN fork_source_turn_id TEXT
       `;
-      yield* sql`
+        yield* sql`
         ALTER TABLE projection_threads
         ADD COLUMN fork_source_checkpoint_turn_count INTEGER
       `;
-      yield* sql`
+        yield* sql`
         ALTER TABLE projection_threads
         ADD COLUMN forked_at TEXT
       `;

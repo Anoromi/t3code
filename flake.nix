@@ -42,9 +42,63 @@
           inherit desktop;
           default = desktop;
         };
+      mkDevShell =
+        system:
+        let
+          pkgs = mkPkgs system;
+          runtimeLibraries = with pkgs; [
+            alsa-lib
+            atk
+            at-spi2-atk
+            at-spi2-core
+            cairo
+            cups
+            dbus
+            expat
+            glib
+            gtk3
+            libdrm
+            libgbm
+            libnotify
+            libsecret
+            libx11
+            libxcomposite
+            libxdamage
+            libxext
+            libxfixes
+            libxrandr
+            libxcb
+            libxkbcommon
+            nspr
+            nss
+            pango
+            systemd
+          ];
+        in
+        {
+          default = pkgs.mkShell {
+            packages =
+              with pkgs;
+              [
+                bun
+                git
+                jq
+                nodejs_24
+                pkg-config
+                python3
+              ]
+              ++ runtimeLibraries;
+
+            env = {
+              ELECTRON_SKIP_BINARY_DOWNLOAD = "1";
+              npm_config_nodedir = pkgs.nodejs_24;
+            };
+          };
+        };
     in
     {
       packages = forEachSystem mkPackages;
+      devShells = forEachSystem mkDevShell;
 
       checks = forEachSystem (system: {
         desktop = self.packages.${system}.desktop;

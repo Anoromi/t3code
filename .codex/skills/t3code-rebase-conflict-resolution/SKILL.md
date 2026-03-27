@@ -20,6 +20,9 @@ Rebase T3 Code onto upstream behavior without breaking persisted state, desktop 
 
 3. Audit compatibility surfaces explicitly.
    Check migrations for numbering drift versus upstream.
+   Compare the intended migration order against `upstream/main`, not only the current branch.
+   Inspect a copied real database's `effect_sql_migrations` ledger and actual schema together.
+   If a forked database already used a migration ID for a different migration than `upstream/main`, restore canonical upstream numbering in code for fresh databases and add a new repair migration after the canonical tip for already-affected databases.
    Check orchestration event types and payload shapes for legacy rows.
    Check projection tables and snapshot queries for mixed old/new schemas.
    Check settings and local storage migrations when web state models changed.
@@ -29,6 +32,7 @@ Rebase T3 Code onto upstream behavior without breaking persisted state, desktop 
    Keep read paths tolerant of old persisted shapes.
    Keep write paths compatible with legacy not-null or still-present scalar columns until migrations are proven on real data.
    Normalize legacy event payloads during replay instead of assuming all rows were rewritten.
+   Make repair migrations idempotent and schema-driven: inspect real columns/data, add missing columns, backfill from legacy fields, and normalize old persisted payloads as needed.
 
 5. Validate on real state, not only clean fixtures.
    Run `bun fmt`, `bun lint`, and `bun typecheck`.
@@ -51,6 +55,8 @@ Rebase T3 Code onto upstream behavior without breaking persisted state, desktop 
 
 - Do not treat a clean git index as proof that the rebase is finished.
 - Do not renumber or reuse migrations without checking upstream IDs first.
+- Do not trust `effect_sql_migrations` alone when forked databases may have recorded the wrong migration under a reused ID.
+- Do not repair shipped databases by rewriting old migration IDs in place; prefer additive repair migrations after the canonical upstream sequence.
 - Do not assume production snapshots match the newest projection schema.
 - Do not reintroduce old settings or state modules if upstream already replaced them.
 - Do add regression tests immediately when a copied real database exposes a bug.
