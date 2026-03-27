@@ -12,6 +12,28 @@ export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const columns = yield* getProjectionThreadColumns(sql);
 
+  if (!columns.has("archived_at")) {
+    yield* sql`
+      ALTER TABLE projection_threads
+      ADD COLUMN archived_at TEXT
+    `;
+  }
+
+  yield* sql`
+    CREATE INDEX IF NOT EXISTS idx_projection_threads_project_archived_at
+    ON projection_threads(project_id, archived_at)
+  `;
+
+  yield* sql`
+    CREATE INDEX IF NOT EXISTS idx_projection_projects_workspace_root_deleted_at
+    ON projection_projects(workspace_root, deleted_at)
+  `;
+
+  yield* sql`
+    CREATE INDEX IF NOT EXISTS idx_projection_threads_project_deleted_created
+    ON projection_threads(project_id, deleted_at, created_at)
+  `;
+
   if (columns.has("source_thread_id") && !columns.has("fork_source_thread_id")) {
     yield* sql`
       ALTER TABLE projection_threads
