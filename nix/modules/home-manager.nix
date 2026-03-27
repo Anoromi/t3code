@@ -47,8 +47,8 @@ let
       exit 1
     fi
 
-    desktop_path="$("$nix_bin" build --no-link --print-out-paths "$repo_root#desktop")"
-    exec "$desktop_path/bin/t3-code" "$@"
+    exec "$nix_bin" develop --impure "$repo_root" \
+      --command bash "$repo_root/scripts/run-local-desktop.sh" "$repo_root" "$@"
   '';
 
   localPackage =
