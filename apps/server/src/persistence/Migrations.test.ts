@@ -26,6 +26,7 @@ const migrationNames = [
   "ProjectionThreadProposedPlans",
   "ProjectionThreadProposedPlanImplementation",
   "ProjectionTurnsSourceProposedPlan",
+  "CanonicalizeModelSelections",
   "ProjectionThreadsForkOrigin",
 ] as const;
 
@@ -118,7 +119,7 @@ it.effect("migrates seeded worktree databases with legacy thread fork origin col
 
     const persistenceLayer = SqliteClient.layer({ filename: dbPath });
 
-    yield* runMigrations({ toMigrationInclusive: 17 }).pipe(Effect.provide(persistenceLayer));
+    yield* runMigrations({ toMigrationInclusive: 18 }).pipe(Effect.provide(persistenceLayer));
 
     const migratedColumns = yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

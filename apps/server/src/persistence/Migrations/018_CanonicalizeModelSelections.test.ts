@@ -7,12 +7,12 @@ import * as SqliteClient from "../NodeSqliteClient.ts";
 
 const layer = it.layer(SqliteClient.layerMemory());
 
-layer("018_CanonicalizeModelSelections", (it) => {
+layer("016_CanonicalizeModelSelections", (it) => {
   it.effect("canonicalizes legacy projection model columns and event payloads", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 
-      yield* runMigrations({ toMigrationInclusive: 17 });
+      yield* runMigrations({ toMigrationInclusive: 15 });
 
       yield* sql`
         INSERT INTO projection_projects (
@@ -49,11 +49,7 @@ layer("018_CanonicalizeModelSelections", (it) => {
           updated_at,
           deleted_at,
           runtime_mode,
-          interaction_mode,
-          fork_source_thread_id,
-          fork_source_turn_id,
-          fork_source_checkpoint_turn_count,
-          forked_at
+          interaction_mode
         )
         VALUES (
           'thread-1',
@@ -67,11 +63,7 @@ layer("018_CanonicalizeModelSelections", (it) => {
           '2026-01-01T00:00:00.000Z',
           NULL,
           'full-access',
-          'default',
-          NULL,
-          NULL,
-          NULL,
-          NULL
+          'default'
         )
       `;
       yield* sql`
@@ -105,7 +97,7 @@ layer("018_CanonicalizeModelSelections", (it) => {
         )
       `;
 
-      yield* runMigrations({ toMigrationInclusive: 18 });
+      yield* runMigrations({ toMigrationInclusive: 16 });
 
       const projectColumns = yield* sql`PRAGMA table_info(projection_projects)`.values;
       const threadColumns = yield* sql`PRAGMA table_info(projection_threads)`.values;
