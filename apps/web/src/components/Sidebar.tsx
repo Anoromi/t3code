@@ -2007,8 +2007,6 @@ export default function Sidebar() {
     [setCollapsedWorktreeGroupKeys],
   );
 
-<<<<<<< HEAD
-=======
   const renderThreadRow = useCallback(
     (
       thread: Thread,
@@ -2180,7 +2178,7 @@ export default function Sidebar() {
                     : "text-muted-foreground/40"
                 }`}
               >
-                {formatRelativeTime(thread.createdAt)}
+                {formatRelativeTime(thread.updatedAt ?? thread.createdAt)}
               </span>
             </div>
           </SidebarMenuSubButton>
@@ -2205,8 +2203,6 @@ export default function Sidebar() {
       terminalStateByThreadId,
     ],
   );
-
->>>>>>> 6ff9ef5d (Animate sidebar worktree group creation)
   const wordmark = (
     <div className="flex items-center gap-2">
       <SidebarTrigger className="shrink-0 md:hidden" />
@@ -2394,7 +2390,6 @@ export default function Sidebar() {
             </div>
           )}
 
-<<<<<<< HEAD
           {isManualProjectSorting ? (
             <DndContext
               sensors={projectDnDSensors}
@@ -2415,257 +2410,6 @@ export default function Sidebar() {
                       projectId={projectNode.project.id}
                     >
                       {(dragHandleProps) => renderProjectItem(projectNode, dragHandleProps)}
-=======
-          <DndContext
-            sensors={projectDnDSensors}
-            collisionDetection={projectCollisionDetection}
-            modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
-            onDragStart={handleProjectDragStart}
-            onDragEnd={handleProjectDragEnd}
-            onDragCancel={handleProjectDragCancel}
-          >
-            <SidebarMenu>
-              <SortableContext
-                items={projects.map((project) => project.id)}
-                strategy={verticalListSortingStrategy}
-              >
-                {projectSidebarSections.map((section) => {
-                  const {
-                    hasHiddenThreadEntries,
-                    isThreadListExpanded,
-                    orderedProjectThreadIds,
-                    project,
-                    projectStatus,
-                    visibleThreadEntries,
-                  } = section;
-                  return (
-                    <SortableProjectItem key={project.id} projectId={project.id}>
-                      {(dragHandleProps) => (
-                        <Collapsible className="group/collapsible" open={project.expanded}>
-                          <div className="group/project-header relative">
-                            <SidebarMenuButton
-                              size="sm"
-                              className="gap-2 px-2 py-1.5 text-left cursor-grab active:cursor-grabbing hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground"
-                              {...dragHandleProps.attributes}
-                              {...dragHandleProps.listeners}
-                              onPointerDownCapture={handleProjectTitlePointerDownCapture}
-                              onClick={(event) => handleProjectTitleClick(event, project.id)}
-                              onKeyDown={(event) => handleProjectTitleKeyDown(event, project.id)}
-                              onContextMenu={(event) => {
-                                event.preventDefault();
-                                void handleProjectContextMenu(project.id, {
-                                  x: event.clientX,
-                                  y: event.clientY,
-                                });
-                              }}
-                            >
-                              {!project.expanded && projectStatus ? (
-                                <span
-                                  aria-hidden="true"
-                                  title={projectStatus.label}
-                                  className={`-ml-0.5 relative inline-flex size-3.5 shrink-0 items-center justify-center ${projectStatus.colorClass}`}
-                                >
-                                  <span className="absolute inset-0 flex items-center justify-center transition-opacity duration-150 group-hover/project-header:opacity-0">
-                                    <span
-                                      className={`size-[9px] rounded-full ${projectStatus.dotClass} ${
-                                        projectStatus.pulse ? "animate-pulse" : ""
-                                      }`}
-                                    />
-                                  </span>
-                                  <ChevronRightIcon className="absolute inset-0 m-auto size-3.5 text-muted-foreground/70 opacity-0 transition-opacity duration-150 group-hover/project-header:opacity-100" />
-                                </span>
-                              ) : (
-                                <ChevronRightIcon
-                                  className={`-ml-0.5 size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150 ${
-                                    project.expanded ? "rotate-90" : ""
-                                  }`}
-                                />
-                              )}
-                              <ProjectFavicon cwd={project.cwd} />
-                              <span className="flex-1 truncate text-xs font-medium text-foreground/90">
-                                {project.name}
-                              </span>
-                            </SidebarMenuButton>
-                            <Tooltip>
-                              <TooltipTrigger
-                                render={
-                                  <SidebarMenuAction
-                                    render={
-                                      <button
-                                        type="button"
-                                        aria-label={`Create new thread in ${project.name}`}
-                                        data-testid="new-thread-button"
-                                      />
-                                    }
-                                    showOnHover
-                                    className="top-1 right-1 size-5 rounded-md p-0 text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
-                                    onClick={(event) => {
-                                      event.preventDefault();
-                                      event.stopPropagation();
-                                      void handleNewThread(project.id, {
-                                        envMode: resolveSidebarNewThreadEnvMode({
-                                          defaultEnvMode: appSettings.defaultThreadEnvMode,
-                                        }),
-                                        codexFastMode: appSettings.defaultCodexFastMode,
-                                        codexReasoningEffort:
-                                          appSettings.defaultCodexReasoningEffort,
-                                      });
-                                    }}
-                                  >
-                                    <SquarePenIcon className="size-3.5" />
-                                  </SidebarMenuAction>
-                                }
-                              />
-                              <TooltipPopup side="top">
-                                {newThreadShortcutLabel
-                                  ? `New thread (${newThreadShortcutLabel})`
-                                  : "New thread"}
-                              </TooltipPopup>
-                            </Tooltip>
-                          </div>
-
-                          <CollapsibleContent keepMounted>
-                            <SidebarMenuSub className="mx-1 my-0 w-full translate-x-0 gap-0.5 px-1.5 py-0">
-                              {visibleThreadEntries.map((entry) => {
-                                if (entry.kind === "thread") {
-                                  return renderThreadRow(entry.thread, orderedProjectThreadIds, {
-                                    topLevelDataThreadId: entry.thread.id,
-                                  });
-                                }
-
-                                const isCollapsed = collapsedWorktreeGroupKeySet.has(
-                                  entry.groupKey,
-                                );
-                                const isAnimatingGroup = animatingGroupKeys.has(entry.groupKey);
-                                const shouldAnimateGroupChildren =
-                                  isAnimatingGroup && !isCollapsed && !prefersReducedMotion;
-
-                                return (
-                                  <SidebarMenuSubItem
-                                    key={entry.groupKey}
-                                    className="w-full"
-                                    data-thread-selection-safe
-                                  >
-                                    <Collapsible
-                                      className="w-full"
-                                      open={!isCollapsed}
-                                      onOpenChange={(open) => {
-                                        setWorktreeGroupCollapsed(entry.groupKey, !open);
-                                      }}
-                                    >
-                                      <div
-                                        ref={(element) => {
-                                          registerWorktreeGroupElement(entry.groupKey, element);
-                                        }}
-                                        data-worktree-group-key={entry.groupKey}
-                                        className={`overflow-hidden rounded-xl border border-border/60 bg-muted/20 ${
-                                          isAnimatingGroup ? "sidebar-worktree-group-born" : ""
-                                        }`}
-                                      >
-                                        <button
-                                          type="button"
-                                          className="flex w-full items-center gap-2 px-2.5 py-2 text-left transition-colors hover:bg-accent/60"
-                                          data-thread-selection-safe
-                                          onContextMenu={(event) => {
-                                            event.preventDefault();
-                                            event.stopPropagation();
-                                            void handleWorktreeGroupContextMenu(
-                                              project.id,
-                                              {
-                                                worktreePath: entry.worktreePath,
-                                                worktreeTitleStatus: entry.worktreeTitleStatus,
-                                                worktreeTitleUpdatedAt:
-                                                  entry.worktreeTitleUpdatedAt,
-                                              },
-                                              {
-                                                x: event.clientX,
-                                                y: event.clientY,
-                                              },
-                                            );
-                                          }}
-                                          onClick={() => {
-                                            setWorktreeGroupCollapsed(entry.groupKey, !isCollapsed);
-                                          }}
-                                        >
-                                          <ChevronRightIcon
-                                            className={`size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150 ${
-                                              isCollapsed ? "" : "rotate-90"
-                                            }`}
-                                          />
-                                          <Tooltip>
-                                            <TooltipTrigger
-                                              render={
-                                                entry.worktreeTitleStatus === "pending" ? (
-                                                  <Skeleton className="h-3.5 w-28 rounded-full" />
-                                                ) : (
-                                                  <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-foreground/85">
-                                                    {entry.label}
-                                                  </span>
-                                                )
-                                              }
-                                            />
-                                            <TooltipPopup side="top">
-                                              {entry.worktreePath}
-                                            </TooltipPopup>
-                                          </Tooltip>
-                                        </button>
-
-                                        <CollapsibleContent keepMounted>
-                                          <SidebarMenuSub className="mx-0 translate-x-0 border-t border-border/50 px-1.5 py-1">
-                                            {entry.threads.map((thread, index) =>
-                                              renderThreadRow(
-                                                thread,
-                                                orderedProjectThreadIds,
-                                                shouldAnimateGroupChildren
-                                                  ? {
-                                                      childAnimationIndex: index,
-                                                    }
-                                                  : undefined,
-                                              ),
-                                            )}
-                                          </SidebarMenuSub>
-                                        </CollapsibleContent>
-                                      </div>
-                                    </Collapsible>
-                                  </SidebarMenuSubItem>
-                                );
-                              })}
-
-                              {hasHiddenThreadEntries && !isThreadListExpanded && (
-                                <SidebarMenuSubItem className="w-full">
-                                  <SidebarMenuSubButton
-                                    render={<button type="button" />}
-                                    data-thread-selection-safe
-                                    size="sm"
-                                    className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
-                                    onClick={() => {
-                                      expandThreadListForProject(project.id);
-                                    }}
-                                  >
-                                    <span>Show more</span>
-                                  </SidebarMenuSubButton>
-                                </SidebarMenuSubItem>
-                              )}
-                              {hasHiddenThreadEntries && isThreadListExpanded && (
-                                <SidebarMenuSubItem className="w-full">
-                                  <SidebarMenuSubButton
-                                    render={<button type="button" />}
-                                    data-thread-selection-safe
-                                    size="sm"
-                                    className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
-                                    onClick={() => {
-                                      collapseThreadListForProject(project.id);
-                                    }}
-                                  >
-                                    <span>Show less</span>
-                                  </SidebarMenuSubButton>
-                                </SidebarMenuSubItem>
-                              )}
-                            </SidebarMenuSub>
-                          </CollapsibleContent>
-                        </Collapsible>
-                      )}
->>>>>>> 6ff9ef5d (Animate sidebar worktree group creation)
                     </SortableProjectItem>
                   ))}
                 </SortableContext>
