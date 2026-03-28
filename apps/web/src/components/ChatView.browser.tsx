@@ -59,6 +59,31 @@ interface TestFixture {
   snapshot: OrchestrationReadModel;
   serverConfig: ServerConfig;
   welcome: WsWelcomePayload;
+  gitBranches: {
+    isRepo: boolean;
+    hasOriginRemote: boolean;
+    branches: Array<{
+      name: string;
+      current: boolean;
+      isDefault: boolean;
+      worktreePath: string | null;
+      isRemote?: boolean;
+      remoteName?: string;
+    }>;
+  };
+  gitStatus: {
+    branch: string | null;
+    hasWorkingTreeChanges: boolean;
+    workingTree: {
+      files: unknown[];
+      insertions: number;
+      deletions: number;
+    };
+    hasUpstream: boolean;
+    aheadCount: number;
+    behindCount: number;
+    pr: null;
+  };
 }
 
 let fixture: TestFixture;
@@ -320,6 +345,31 @@ function buildFixture(snapshot: OrchestrationReadModel): TestFixture {
       bootstrapProjectId: PROJECT_ID,
       bootstrapThreadId: THREAD_ID,
     },
+    gitBranches: {
+      isRepo: true,
+      hasOriginRemote: true,
+      branches: [
+        {
+          name: "main",
+          current: true,
+          isDefault: true,
+          worktreePath: null,
+        },
+      ],
+    },
+    gitStatus: {
+      branch: "main",
+      hasWorkingTreeChanges: false,
+      workingTree: {
+        files: [],
+        insertions: 0,
+        deletions: 0,
+      },
+      hasUpstream: true,
+      aheadCount: 0,
+      behindCount: 0,
+      pr: null,
+    },
   };
 }
 
@@ -518,33 +568,10 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
     return fixture.serverConfig;
   }
   if (tag === WS_METHODS.gitListBranches) {
-    return {
-      isRepo: true,
-      hasOriginRemote: true,
-      branches: [
-        {
-          name: "main",
-          current: true,
-          isDefault: true,
-          worktreePath: null,
-        },
-      ],
-    };
+    return fixture.gitBranches;
   }
   if (tag === WS_METHODS.gitStatus) {
-    return {
-      branch: "main",
-      hasWorkingTreeChanges: false,
-      workingTree: {
-        files: [],
-        insertions: 0,
-        deletions: 0,
-      },
-      hasUpstream: true,
-      aheadCount: 0,
-      behindCount: 0,
-      pr: null,
-    };
+    return fixture.gitStatus;
   }
   if (tag === WS_METHODS.projectsSearchEntries) {
     return {
@@ -1729,6 +1756,542 @@ describe("ChatView timeline estimator parity (full app)", () => {
     try {
       await expect.element(page.getByText("/reasoning")).toBeInTheDocument();
       await expect.element(page.getByText("/reasoning xhigh")).not.toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows /branch as a slash-command suggestion for /br", async () => {
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/br");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-branch-short-suggestion" as MessageId,
+        targetText: "branch short suggestion",
+      }),
+    });
+
+    try {
+      await expect.element(page.getByText("/branch")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows /worktree as a slash-command suggestion for /wo when env mode is editable", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/wo");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+    });
+
+    try {
+      await expect.element(page.getByText("/worktree")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows explicit mode choices for /worktree", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "main",
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/worktree ");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+    });
+
+    try {
+      await expect.element(page.getByText("/worktree local")).toBeInTheDocument();
+      await expect.element(page.getByText("/worktree worktree")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("updates draft env mode when selecting /worktree worktree", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "main",
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/worktree ");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+    });
+
+    try {
+      const worktreeItem = page.getByText("/worktree worktree");
+      await expect.element(worktreeItem).toBeInTheDocument();
+      await worktreeItem.click();
+
+      await vi.waitFor(
+        () => {
+          const draftThread = useComposerDraftStore.getState().draftThreadsByThreadId[THREAD_ID];
+          expect(draftThread?.envMode).toBe("worktree");
+          expect(draftThread?.branch).toBe("main");
+          const draft = useComposerDraftStore.getState().draftsByThreadId[THREAD_ID];
+          expect(draft?.prompt ?? "").toBe("");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("updates draft env mode when selecting /worktree local", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "feature/base",
+          worktreePath: null,
+          envMode: "worktree",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/worktree ");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+    });
+
+    try {
+      const localItem = page.getByText("/worktree local");
+      await expect.element(localItem).toBeInTheDocument();
+      await localItem.click();
+
+      await vi.waitFor(
+        () => {
+          const draftThread = useComposerDraftStore.getState().draftThreadsByThreadId[THREAD_ID];
+          expect(draftThread?.envMode).toBe("local");
+          expect(draftThread?.branch).toBe("feature/base");
+          const draft = useComposerDraftStore.getState().draftsByThreadId[THREAD_ID];
+          expect(draft?.prompt ?? "").toBe("");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows git branches for /branch", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/branch ");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.gitBranches = {
+          isRepo: true,
+          hasOriginRemote: true,
+          branches: [
+            {
+              name: "main",
+              current: true,
+              isDefault: true,
+              worktreePath: null,
+            },
+            {
+              name: "feature/one",
+              current: false,
+              isDefault: false,
+              worktreePath: null,
+            },
+            {
+              name: "feature/worktree",
+              current: false,
+              isDefault: false,
+              worktreePath: "/repo/worktrees/feature-worktree",
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await expect.element(page.getByText("feature/one")).toBeInTheDocument();
+      await expect.element(page.getByText("feature/worktree")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("checks out a branch from /branch in local mode and updates draft context", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/branch feature/local");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.gitBranches = {
+          isRepo: true,
+          hasOriginRemote: true,
+          branches: [
+            {
+              name: "main",
+              current: true,
+              isDefault: true,
+              worktreePath: null,
+            },
+            {
+              name: "feature/local",
+              current: false,
+              isDefault: false,
+              worktreePath: null,
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      const branchItem = page.getByText("feature/local");
+      await expect.element(branchItem).toBeInTheDocument();
+      await branchItem.click();
+
+      await vi.waitFor(
+        () => {
+          expect(
+            wsRequests.some(
+              (request) =>
+                request._tag === WS_METHODS.gitCheckout && request.branch === "feature/local",
+            ),
+          ).toBe(true);
+          const draftThread = useComposerDraftStore.getState().draftThreadsByThreadId[THREAD_ID];
+          expect(draftThread?.branch).toBe("feature/local");
+          expect(draftThread?.worktreePath).toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("uses /branch to set the base branch in new-worktree mode without checkout", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "worktree",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/branch feature/base");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.gitBranches = {
+          isRepo: true,
+          hasOriginRemote: true,
+          branches: [
+            {
+              name: "main",
+              current: true,
+              isDefault: true,
+              worktreePath: null,
+            },
+            {
+              name: "feature/base",
+              current: false,
+              isDefault: false,
+              worktreePath: null,
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      const branchItem = page.getByText("feature/base");
+      await expect.element(branchItem).toBeInTheDocument();
+      await branchItem.click();
+
+      await vi.waitFor(
+        () => {
+          const draftThread = useComposerDraftStore.getState().draftThreadsByThreadId[THREAD_ID];
+          expect(draftThread?.branch).toBe("feature/base");
+          expect(draftThread?.worktreePath).toBeNull();
+          expect(draftThread?.envMode).toBe("worktree");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      expect(wsRequests.some((request) => request._tag === WS_METHODS.gitCheckout)).toBe(false);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("reuses an existing worktree when selecting /branch for a worktree-backed branch", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/branch feature/worktree");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.gitBranches = {
+          isRepo: true,
+          hasOriginRemote: true,
+          branches: [
+            {
+              name: "main",
+              current: true,
+              isDefault: true,
+              worktreePath: null,
+            },
+            {
+              name: "feature/worktree",
+              current: false,
+              isDefault: false,
+              worktreePath: "/repo/worktrees/feature-worktree",
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      const branchItem = page.getByText("feature/worktree");
+      await expect.element(branchItem).toBeInTheDocument();
+      await branchItem.click();
+
+      await vi.waitFor(
+        () => {
+          const draftThread = useComposerDraftStore.getState().draftThreadsByThreadId[THREAD_ID];
+          expect(draftThread?.branch).toBe("feature/worktree");
+          expect(draftThread?.worktreePath).toBe("/repo/worktrees/feature-worktree");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      expect(wsRequests.some((request) => request._tag === WS_METHODS.gitCheckout)).toBe(false);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("applies /worktree local from the send button without dispatching a turn", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "feature/base",
+          worktreePath: null,
+          envMode: "worktree",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/worktree local");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+    });
+
+    try {
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const draftThread = useComposerDraftStore.getState().draftThreadsByThreadId[THREAD_ID];
+          expect(draftThread?.envMode).toBe("local");
+          const draft = useComposerDraftStore.getState().draftsByThreadId[THREAD_ID];
+          expect(draft?.prompt ?? "").toBe("");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      expect(findDispatchCommand("thread.turn.start")).toBeUndefined();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("applies /branch from the send button without dispatching a turn", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/branch feature/send");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.gitBranches = {
+          isRepo: true,
+          hasOriginRemote: true,
+          branches: [
+            {
+              name: "main",
+              current: true,
+              isDefault: true,
+              worktreePath: null,
+            },
+            {
+              name: "feature/send",
+              current: false,
+              isDefault: false,
+              worktreePath: null,
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(
+            wsRequests.some(
+              (request) =>
+                request._tag === WS_METHODS.gitCheckout && request.branch === "feature/send",
+            ),
+          ).toBe(true);
+          const draftThread = useComposerDraftStore.getState().draftThreadsByThreadId[THREAD_ID];
+          expect(draftThread?.branch).toBe("feature/send");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      expect(findDispatchCommand("thread.turn.start")).toBeUndefined();
     } finally {
       await mounted.cleanup();
     }

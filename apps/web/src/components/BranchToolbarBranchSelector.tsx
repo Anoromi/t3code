@@ -20,13 +20,12 @@ import {
   gitStatusQueryOptions,
   invalidateGitQueries,
 } from "../lib/gitReactQuery";
+import { applyGitBranchSelection, toBranchActionErrorMessage } from "../lib/gitBranchSelection";
 import { readNativeApi } from "../nativeApi";
 import { parsePullRequestReference } from "../pullRequestReference";
 import {
   dedupeRemoteBranchesWithLocalMatches,
-  deriveLocalBranchNameFromRemoteRef,
   EnvMode,
-  resolveBranchSelectionTarget,
   resolveBranchToolbarValue,
 } from "./BranchToolbar.logic";
 import { Button } from "./ui/button";
@@ -51,10 +50,6 @@ interface BranchToolbarBranchSelectorProps {
   onSetThreadBranch: (branch: string | null, worktreePath: string | null) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
-}
-
-function toBranchActionErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "An error occurred.";
 }
 
 function getBranchTriggerLabel(input: {
@@ -166,51 +161,29 @@ export function BranchToolbarBranchSelector({
       return;
     }
 
-    const selectionTarget = resolveBranchSelectionTarget({
-      activeProjectCwd,
-      activeWorktreePath,
-      branch,
-    });
-
-    // If the branch already lives in a worktree, point the thread there.
-    if (selectionTarget.reuseExistingWorktree) {
-      onSetThreadBranch(branch.name, selectionTarget.nextWorktreePath);
-      setIsBranchMenuOpen(false);
-      onComposerFocusRequest?.();
-      return;
-    }
-
-    const selectedBranchName = branch.isRemote
-      ? deriveLocalBranchNameFromRemoteRef(branch.name)
-      : branch.name;
-
     setIsBranchMenuOpen(false);
     onComposerFocusRequest?.();
 
     runBranchAction(async () => {
-      setOptimisticBranch(selectedBranchName);
-      try {
-        await api.git.checkout({ cwd: selectionTarget.checkoutCwd, branch: branch.name });
-        await invalidateGitQueries(queryClient);
-      } catch (error) {
-        toastManager.add({
-          type: "error",
-          title: "Failed to checkout branch.",
-          description: toBranchActionErrorMessage(error),
-        });
-        return;
-      }
-
-      let nextBranchName = selectedBranchName;
-      if (branch.isRemote) {
-        const status = await api.git.status({ cwd: branchCwd }).catch(() => null);
-        if (status?.branch) {
-          nextBranchName = status.branch;
-        }
-      }
-
-      setOptimisticBranch(nextBranchName);
-      onSetThreadBranch(nextBranchName, selectionTarget.nextWorktreePath);
+      await applyGitBranchSelection({
+        activeProjectCwd,
+        activeWorktreePath,
+        api,
+        branch,
+        branchCwd,
+        effectiveEnvMode,
+        envLocked,
+        onSetThreadBranch,
+        onSetOptimisticBranch: setOptimisticBranch,
+        onBranchActionError: (title, description) => {
+          toastManager.add({
+            type: "error",
+            title,
+            description,
+          });
+        },
+        queryClient,
+      });
     });
   };
 

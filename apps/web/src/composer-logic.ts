@@ -3,10 +3,27 @@ import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
 
 export type ComposerTriggerKind = "path" | "slash-command" | "slash-model";
-export type ComposerSlashCommand = "model" | "plan" | "default" | "fast" | "reasoning" | "fork";
+export type ComposerSlashCommand =
+  | "model"
+  | "plan"
+  | "default"
+  | "fast"
+  | "reasoning"
+  | "fork"
+  | "branch"
+  | "worktree";
 export type ComposerStandaloneSlashCommand =
-  | Exclude<ComposerSlashCommand, "model" | "reasoning">
+  | Exclude<ComposerSlashCommand, "model" | "reasoning" | "branch" | "worktree">
   | { kind: "reasoning"; effort: CodexReasoningEffort };
+export type ComposerMenuSlashCommand = Extract<
+  ComposerSlashCommand,
+  "reasoning" | "branch" | "worktree"
+>;
+
+export interface ParsedComposerMenuSlashCommandQuery {
+  command: ComposerMenuSlashCommand;
+  valueQuery: string;
+}
 
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;
@@ -22,6 +39,8 @@ const SLASH_COMMANDS: readonly ComposerSlashCommand[] = [
   "fast",
   "reasoning",
   "fork",
+  "branch",
+  "worktree",
 ];
 const REASONING_COMMAND_ALIASES = ["reasoning", "r"] as const;
 
@@ -52,6 +71,34 @@ export function normalizeReasoningValue(value: string): CodexReasoningEffort | n
       return null;
   }
 }
+
+export function parseComposerMenuSlashCommandQuery(
+  query: string,
+): ParsedComposerMenuSlashCommandQuery | null {
+  const trimmedQuery = query.trim();
+  if (trimmedQuery.length === 0) {
+    return null;
+  }
+
+  const match = /^(reasoning|r|branch|worktree)(?:\s+(.*))?$/i.exec(trimmedQuery);
+  if (!match) {
+    return null;
+  }
+
+  const rawCommand = match[1]?.toLowerCase() ?? "";
+  const command =
+    normalizeReasoningCommandAlias(rawCommand) ??
+    (rawCommand === "branch" || rawCommand === "worktree" ? rawCommand : null);
+  if (!command) {
+    return null;
+  }
+
+  return {
+    command,
+    valueQuery: (match[2] ?? "").trim().toLowerCase(),
+  };
+}
+
 const isInlineTokenSegment = (
   segment: { type: "text"; text: string } | { type: "mention" } | { type: "terminal-context" },
 ): boolean => segment.type !== "text";
@@ -265,10 +312,11 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
       };
     }
 
-    const reasoningMatch = /^\/(reasoning|r)(?:\s+(.*))?$/i.exec(linePrefix);
-    if (reasoningMatch) {
-      const command = reasoningMatch[1]?.toLowerCase() ?? "reasoning";
-      const valueQuery = reasoningMatch[2] ?? "";
+    const menuSlashMatch = /^\/(reasoning|r|branch|worktree)(?:\s+(.*))?$/i.exec(linePrefix);
+    if (menuSlashMatch) {
+      const rawCommand = menuSlashMatch[1]?.toLowerCase() ?? "reasoning";
+      const command = normalizeReasoningCommandAlias(rawCommand) ?? rawCommand;
+      const valueQuery = menuSlashMatch[2] ?? "";
       return {
         kind: "slash-command",
         query: `${command}${linePrefix.endsWith(" ") ? ` ${valueQuery}` : valueQuery ? ` ${valueQuery}` : ""}`,
