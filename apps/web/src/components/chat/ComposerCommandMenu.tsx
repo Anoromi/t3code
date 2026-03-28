@@ -1,4 +1,5 @@
 import {
+  type GitBranch,
   type ProjectEntry,
   type ProviderKind,
   type CodexReasoningEffort,
@@ -39,6 +40,20 @@ export type ComposerCommandItem =
       id: string;
       type: "reasoning";
       effort: CodexReasoningEffort;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "branch";
+      branch: GitBranch;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "worktree-mode";
+      mode: "local" | "worktree";
       label: string;
       description: string;
     };
@@ -145,6 +160,16 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       {props.item.type === "reasoning" ? (
         <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
           reasoning
+        </Badge>
+      ) : null}
+      {props.item.type === "branch" ? (
+        <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+          branch
+        </Badge>
+      ) : null}
+      {props.item.type === "worktree-mode" ? (
+        <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+          worktree
         </Badge>
       ) : null}
       <span className="flex min-w-0 items-center gap-1.5 truncate">

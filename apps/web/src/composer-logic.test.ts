@@ -8,6 +8,7 @@ import {
   isCollapsedCursorAdjacentToInlineToken,
   normalizeReasoningCommandAlias,
   normalizeReasoningValue,
+  parseComposerMenuSlashCommandQuery,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "./composer-logic";
@@ -93,6 +94,54 @@ describe("detectComposerTrigger", () => {
     expect(trigger).toEqual({
       kind: "slash-command",
       query: "r",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("detects /branch while typing", () => {
+    const text = "/branch";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "branch",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("keeps the /branch trigger open after a trailing space", () => {
+    const text = "/branch ";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "branch ",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("detects /worktree while typing", () => {
+    const text = "/worktree";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "worktree",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("keeps the /worktree trigger open after a trailing space", () => {
+    const text = "/worktree ";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "worktree ",
       rangeStart: 0,
       rangeEnd: text.length,
     });
@@ -210,6 +259,44 @@ describe("parseStandaloneComposerSlashCommand", () => {
 
   it("does not parse /r xh as a standalone slash command", () => {
     expect(parseStandaloneComposerSlashCommand("/r xh")).toBeNull();
+  });
+
+  it("does not parse /branch as a standalone slash command", () => {
+    expect(parseStandaloneComposerSlashCommand("/branch")).toBeNull();
+  });
+
+  it("does not parse /worktree as a standalone slash command", () => {
+    expect(parseStandaloneComposerSlashCommand("/worktree")).toBeNull();
+  });
+});
+
+describe("parseComposerMenuSlashCommandQuery", () => {
+  it("parses /branch query text", () => {
+    expect(parseComposerMenuSlashCommandQuery("branch feat")).toEqual({
+      command: "branch",
+      valueQuery: "feat",
+    });
+  });
+
+  it("parses bare /branch", () => {
+    expect(parseComposerMenuSlashCommandQuery("branch")).toEqual({
+      command: "branch",
+      valueQuery: "",
+    });
+  });
+
+  it("parses /worktree query text", () => {
+    expect(parseComposerMenuSlashCommandQuery("worktree loc")).toEqual({
+      command: "worktree",
+      valueQuery: "loc",
+    });
+  });
+
+  it("parses bare /worktree", () => {
+    expect(parseComposerMenuSlashCommandQuery("worktree")).toEqual({
+      command: "worktree",
+      valueQuery: "",
+    });
   });
 });
 

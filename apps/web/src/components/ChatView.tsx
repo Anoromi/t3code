@@ -3,6 +3,7 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   type ClaudeCodeEffort,
   type CodexReasoningEffort,
+  type GitBranch,
   type MessageId,
   type ModelSelection,
   type ProjectScript,
@@ -32,7 +33,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { useQuery } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import { gitStatusQueryOptions } from "~/lib/gitReactQuery";
+import { gitBranchesQueryOptions, gitStatusQueryOptions } from "~/lib/gitReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { isElectron } from "../env";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
@@ -42,6 +43,7 @@ import {
   collapseExpandedComposerCursor,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
+  parseComposerMenuSlashCommandQuery,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "../composer-logic";
@@ -206,6 +208,11 @@ import {
   useServerConfig,
   useServerKeybindings,
 } from "~/rpc/serverState";
+import { applyGitBranchSelection } from "~/lib/gitBranchSelection";
+import {
+  dedupeRemoteBranchesWithLocalMatches,
+  resolveDraftEnvModeAfterBranchChange,
+} from "./BranchToolbar.logic";
 
 const ATTACHMENT_PREVIEW_HANDOFF_TTL_MS = 5000;
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
@@ -355,22 +362,23 @@ const terminalContextIdListsEqual = (
 ): boolean =>
   contexts.length === ids.length && contexts.every((context, index) => context.id === ids[index]);
 
-function parseReasoningSlashCommandQuery(query: string): {
-  command: "reasoning";
-  valueQuery: string;
-} | null {
-  const trimmed = query.trim().toLowerCase();
-  if (!trimmed) {
-    return null;
+function describeBranchCommandItem(branch: GitBranch, activeProjectCwd: string): string {
+  if (branch.current) {
+    return "Current branch";
   }
-  const match = /^reasoning(?:\s+(.*))?$/.exec(query.trimStart());
-  if (!match) {
-    return null;
+  if (branch.worktreePath && branch.worktreePath !== activeProjectCwd) {
+    return "Reuse existing worktree";
   }
-  return {
-    command: "reasoning",
-    valueQuery: (match[1] ?? "").trim().toLowerCase(),
-  };
+  if (branch.worktreePath === activeProjectCwd) {
+    return "Checked out in the project root";
+  }
+  if (branch.isRemote) {
+    return "Checkout remote branch";
+  }
+  if (branch.isDefault) {
+    return "Switch to default branch";
+  }
+  return "Switch branch";
 }
 
 interface ChatViewProps {
@@ -1487,6 +1495,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     : null;
   const composerTriggerKind = composerTrigger?.kind ?? null;
   const pathTriggerQuery = composerTrigger?.kind === "path" ? composerTrigger.query : "";
+  const composerMenuSlashCommand =
+    composerTrigger?.kind === "slash-command"
+      ? parseComposerMenuSlashCommandQuery(composerTrigger.query)
+      : null;
   const isPathTrigger = composerTriggerKind === "path";
   const [debouncedPathQuery, composerPathQueryDebouncer] = useDebouncedValue(
     pathTriggerQuery,
@@ -1495,6 +1507,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
   const gitStatusQuery = useQuery(gitStatusQueryOptions(gitCwd));
+  const envLocked = Boolean(
+    activeThread &&
+    (activeThread.messages.length > 0 ||
+      (activeThread.session !== null && activeThread.session.status !== "closed")),
+  );
+  const branchesQuery = useQuery(gitBranchesQueryOptions(gitCwd));
+  const gitBranches = useMemo(
+    () => dedupeRemoteBranchesWithLocalMatches(branchesQuery.data?.branches ?? []),
+    [branchesQuery.data?.branches],
+  );
+  const canShowWorktreeSlashCommand =
+    isLocalDraftThread && !envLocked && (activeThread?.worktreePath ?? null) === null;
   const keybindings = useServerKeybindings();
   const availableEditors = useServerAvailableEditors();
   const modelOptionsByProvider = useMemo(
@@ -1551,20 +1575,16 @@ export default function ChatView({ threadId }: ChatViewProps) {
     }
 
     if (composerTrigger.kind === "slash-command") {
-      const reasoningQuery =
-        selectedProvider === "codex"
-          ? parseReasoningSlashCommandQuery(composerTrigger.query)
-          : null;
-      if (reasoningQuery) {
+      if (composerMenuSlashCommand?.command === "reasoning" && selectedProvider === "codex") {
         return reasoningOptions
           .filter((effort) => {
-            if (!reasoningQuery.valueQuery) {
+            if (!composerMenuSlashCommand.valueQuery) {
               return true;
             }
             const shortAlias = REASONING_SHORT_ALIAS_BY_OPTION[effort];
             return (
-              effort.startsWith(reasoningQuery.valueQuery) ||
-              shortAlias === reasoningQuery.valueQuery
+              effort.startsWith(composerMenuSlashCommand.valueQuery) ||
+              shortAlias === composerMenuSlashCommand.valueQuery
             );
           })
           .map((effort) => ({
@@ -1573,6 +1593,48 @@ export default function ChatView({ threadId }: ChatViewProps) {
             effort,
             label: `/reasoning ${effort}`,
             description: `${REASONING_LABEL_BY_OPTION[effort]} · alias: /r ${REASONING_SHORT_ALIAS_BY_OPTION[effort]}`,
+          }));
+      }
+
+      if (composerMenuSlashCommand?.command === "worktree") {
+        return (
+          [
+            {
+              id: "worktree-mode:local",
+              type: "worktree-mode",
+              mode: "local",
+              label: "/worktree local",
+              description: "Run in the project root",
+            },
+            {
+              id: "worktree-mode:worktree",
+              type: "worktree-mode",
+              mode: "worktree",
+              label: "/worktree worktree",
+              description: "Create and run in a new worktree",
+            },
+          ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "worktree-mode" }>>
+        ).filter((item) => {
+          const query = composerMenuSlashCommand.valueQuery;
+          return query.length === 0 || item.mode.startsWith(query);
+        });
+      }
+
+      if (composerMenuSlashCommand?.command === "branch") {
+        const query = composerMenuSlashCommand.valueQuery;
+        return gitBranches
+          .filter((branch) => {
+            if (query.length === 0) {
+              return true;
+            }
+            return branch.name.toLowerCase().includes(query);
+          })
+          .map((branch) => ({
+            id: `branch:${branch.name}:${branch.worktreePath ?? ""}`,
+            type: "branch",
+            branch,
+            label: branch.name,
+            description: describeBranchCommandItem(branch, activeProject?.cwd ?? ""),
           }));
       }
 
@@ -1606,6 +1668,24 @@ export default function ChatView({ threadId }: ChatViewProps) {
                 command: "fork",
                 label: "/fork",
                 description: "Fork this thread from its current settled state",
+              } as const,
+            ]
+          : []),
+        {
+          id: "slash:branch",
+          type: "slash-command",
+          command: "branch",
+          label: "/branch",
+          description: "Select branch or worktree base for this thread",
+        },
+        ...(canShowWorktreeSlashCommand
+          ? [
+              {
+                id: "slash:worktree",
+                type: "slash-command",
+                command: "worktree",
+                label: "/worktree",
+                description: "Choose local repo or a new worktree",
               } as const,
             ]
           : []),
@@ -1654,7 +1734,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
         description: `${providerLabel} · ${slug}`,
       }));
   }, [
+    activeProject?.cwd,
+    canShowWorktreeSlashCommand,
+    composerMenuSlashCommand,
     composerTrigger,
+    gitBranches,
     searchableModelOptions,
     selectedProvider,
     threadForkReady,
@@ -1737,11 +1821,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
     });
   }, [diffOpen, navigate, threadId]);
 
-  const envLocked = Boolean(
-    activeThread &&
-    (activeThread.messages.length > 0 ||
-      (activeThread.session !== null && activeThread.session.status !== "closed")),
-  );
   const activeTerminalGroup =
     terminalState.terminalGroups.find(
       (group) => group.id === terminalState.activeTerminalGroupId,
@@ -3064,6 +3143,20 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
       return;
     }
+    if (composerImages.length === 0 && sendableComposerTerminalContexts.length === 0) {
+      const menuSlashCommand = parseComposerMenuSlashCommandQuery(trimmed);
+      if (menuSlashCommand?.command === "branch" || menuSlashCommand?.command === "worktree") {
+        const selectedConfigItem = (activeComposerMenuItemRef.current ??
+          composerMenuItemsRef.current[0]) as ComposerCommandItem | undefined;
+        if (selectedConfigItem?.type === "branch" || selectedConfigItem?.type === "worktree-mode") {
+          const applied = await applyComposerConfigCommandItem(selectedConfigItem);
+          if (applied) {
+            return;
+          }
+        }
+        return;
+      }
+    }
     if (!hasSendableContent) {
       if (expiredTerminalContextCount > 0) {
         const toastCopy = buildExpiredTerminalContextToastCopy(
@@ -4054,6 +4147,114 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [isLocalDraftThread, scheduleComposerFocus, setDraftThreadContext, threadId],
   );
+  const setThreadBranchFromComposer = useCallback(
+    (branch: string | null, worktreePath: string | null) => {
+      const api = readNativeApi();
+      if (activeThread?.session && worktreePath !== activeWorktreePath && api) {
+        void api.orchestration
+          .dispatchCommand({
+            type: "thread.session.stop",
+            commandId: newCommandId(),
+            threadId,
+            createdAt: new Date().toISOString(),
+          })
+          .catch(() => undefined);
+      }
+      if (api && isServerThread) {
+        void api.orchestration.dispatchCommand({
+          type: "thread.meta.update",
+          commandId: newCommandId(),
+          threadId,
+          branch,
+          worktreePath,
+        });
+      }
+      if (isServerThread) {
+        setStoreThreadBranch(threadId, branch, worktreePath);
+        return;
+      }
+      const nextDraftEnvMode = resolveDraftEnvModeAfterBranchChange({
+        nextWorktreePath: worktreePath,
+        currentWorktreePath: activeWorktreePath ?? null,
+        effectiveEnvMode: envMode,
+      });
+      setDraftThreadContext(threadId, {
+        branch,
+        worktreePath,
+        envMode: nextDraftEnvMode,
+      });
+    },
+    [
+      activeThread?.session,
+      activeWorktreePath,
+      envMode,
+      isServerThread,
+      setDraftThreadContext,
+      setStoreThreadBranch,
+      threadId,
+    ],
+  );
+  const clearComposerConfigCommand = useCallback(() => {
+    promptRef.current = "";
+    clearComposerDraftContent(threadId);
+    setComposerHighlightedItemId(null);
+    setComposerCursor(0);
+    setComposerTrigger(null);
+    scheduleComposerFocus();
+  }, [clearComposerDraftContent, scheduleComposerFocus, threadId]);
+  const applyComposerConfigCommandItem = useCallback(
+    async (item: ComposerCommandItem): Promise<boolean> => {
+      if (item.type === "worktree-mode") {
+        if (!canShowWorktreeSlashCommand) {
+          return false;
+        }
+        onEnvModeChange(item.mode);
+        clearComposerConfigCommand();
+        return true;
+      }
+      if (item.type !== "branch") {
+        return false;
+      }
+      const api = readNativeApi();
+      if (!api || !activeProject || !gitCwd) {
+        return false;
+      }
+      const applied = await applyGitBranchSelection({
+        activeProjectCwd: activeProject.cwd,
+        activeWorktreePath: activeWorktreePath ?? null,
+        api,
+        branch: item.branch,
+        branchCwd: gitCwd,
+        effectiveEnvMode: envMode,
+        envLocked,
+        onSetThreadBranch: setThreadBranchFromComposer,
+        onBranchActionError: (title, description) => {
+          toastManager.add({
+            type: "error",
+            title,
+            description,
+          });
+        },
+        queryClient,
+      });
+      if (applied) {
+        clearComposerConfigCommand();
+      }
+      return applied;
+    },
+    [
+      activeProject,
+      activeWorktreePath,
+      canShowWorktreeSlashCommand,
+      clearComposerConfigCommand,
+      envLocked,
+      envMode,
+      gitCwd,
+      onEnvModeChange,
+      queryClient,
+      setThreadBranchFromComposer,
+    ],
+  );
 
   const applyPromptReplacement = useCallback(
     (
@@ -4176,11 +4377,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
           }
           return;
         }
-        if (item.command === "reasoning") {
-          if (selectedProvider !== "codex") {
+        if (
+          item.command === "reasoning" ||
+          item.command === "branch" ||
+          item.command === "worktree"
+        ) {
+          if (item.command === "reasoning" && selectedProvider !== "codex") {
             return;
           }
-          const replacement = "/reasoning ";
+          const replacement = `/${item.command} `;
           const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
             snapshot.value,
             trigger.rangeEnd,
@@ -4228,6 +4433,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
         }
         return;
       }
+      if (item.type === "worktree-mode" || item.type === "branch") {
+        void applyComposerConfigCommandItem(item).then((applied) => {
+          if (applied) {
+            setComposerHighlightedItemId(null);
+          }
+        });
+        return;
+      }
       onProviderModelSelect(item.provider, item.model);
       const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
         expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -4237,6 +4450,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
     },
     [
+      applyComposerConfigCommandItem,
       applyReasoningEffort,
       applyPromptReplacement,
       handleInteractionModeChange,
@@ -4269,10 +4483,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [composerHighlightedItemId, composerMenuItems],
   );
   const isComposerMenuLoading =
-    composerTriggerKind === "path" &&
-    ((pathTriggerQuery.length > 0 && composerPathQueryDebouncer.state.isPending) ||
-      workspaceEntriesQuery.isLoading ||
-      workspaceEntriesQuery.isFetching);
+    (composerTriggerKind === "path" &&
+      ((pathTriggerQuery.length > 0 && composerPathQueryDebouncer.state.isPending) ||
+        workspaceEntriesQuery.isLoading ||
+        workspaceEntriesQuery.isFetching)) ||
+    (composerMenuSlashCommand?.command === "branch" &&
+      (branchesQuery.isLoading || branchesQuery.isFetching));
 
   const onPromptChange = useCallback(
     (
