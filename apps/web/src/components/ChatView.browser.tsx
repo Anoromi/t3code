@@ -36,11 +36,16 @@ import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { CLIENT_SETTINGS_STORAGE_KEY } from "../hooks/useSettings";
 
 const THREAD_ID = "thread-browser-test" as ThreadId;
+const MIDDLE_THREAD_ID = "thread-browser-test-middle" as ThreadId;
+const OLDER_THREAD_ID = "thread-browser-test-older" as ThreadId;
 const UUID_ROUTE_RE = /^\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PROJECT_ID = "project-1" as ProjectId;
 const NOW_ISO = "2026-03-04T12:00:00.000Z";
 const BASE_TIME_MS = Date.parse(NOW_ISO);
 const ATTACHMENT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='120' height='300'></svg>";
+const NEWEST_THREAD_TITLE = "Newest browser thread";
+const MIDDLE_THREAD_TITLE = "Middle browser thread";
+const OLDER_THREAD_TITLE = "Older browser thread";
 
 interface WsRequestEnvelope {
   id: string;
@@ -373,6 +378,68 @@ function createDraftOnlySnapshot(): OrchestrationReadModel {
   };
 }
 
+function createSnapshotWithRecentThreads(): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-navigation-command-target" as MessageId,
+    targetText: "navigation command target",
+  });
+  const baseThread = snapshot.threads[0];
+  if (!baseThread) {
+    throw new Error("Expected the base snapshot to include a thread.");
+  }
+  const baseSession = baseThread.session;
+  if (!baseSession) {
+    throw new Error("Expected the base snapshot thread to include a session.");
+  }
+  const middleSession: OrchestrationReadModel["threads"][number]["session"] = {
+    ...baseSession,
+    threadId: MIDDLE_THREAD_ID,
+    updatedAt: "2026-03-04T10:55:00.000Z",
+  };
+  const olderSession: OrchestrationReadModel["threads"][number]["session"] = {
+    ...baseSession,
+    threadId: OLDER_THREAD_ID,
+    updatedAt: "2026-03-04T09:55:00.000Z",
+  };
+
+  const newestThread: OrchestrationReadModel["threads"][number] = {
+    ...baseThread,
+    title: NEWEST_THREAD_TITLE,
+    createdAt: "2026-03-04T11:45:00.000Z",
+    updatedAt: "2026-03-04T11:55:00.000Z",
+  };
+  const middleThread: OrchestrationReadModel["threads"][number] = {
+    ...baseThread,
+    id: MIDDLE_THREAD_ID,
+    title: MIDDLE_THREAD_TITLE,
+    createdAt: "2026-03-04T10:45:00.000Z",
+    updatedAt: "2026-03-04T10:55:00.000Z",
+    messages: [],
+    activities: [],
+    proposedPlans: [],
+    checkpoints: [],
+    session: middleSession,
+  };
+  const olderThread: OrchestrationReadModel["threads"][number] = {
+    ...baseThread,
+    id: OLDER_THREAD_ID,
+    title: OLDER_THREAD_TITLE,
+    createdAt: "2026-03-04T09:45:00.000Z",
+    updatedAt: "2026-03-04T09:55:00.000Z",
+    messages: [],
+    activities: [],
+    proposedPlans: [],
+    checkpoints: [],
+    session: olderSession,
+  };
+
+  return {
+    ...snapshot,
+    threads: [newestThread, middleThread, olderThread],
+    updatedAt: "2026-03-04T11:55:00.000Z",
+  };
+}
+
 function withProjectScripts(
   snapshot: OrchestrationReadModel,
   scripts: OrchestrationReadModel["projects"][number]["scripts"],
@@ -660,6 +727,29 @@ function dispatchChatNewShortcut(): void {
   );
 }
 
+function dispatchNavigationCommandMenuShortcut(): void {
+  const useMetaForMod = isMacPlatform(navigator.platform);
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "k",
+      metaKey: useMetaForMod,
+      ctrlKey: !useMetaForMod,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
+function dispatchKey(target: EventTarget, key: string): void {
+  target.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
 async function triggerChatNewShortcutUntilPath(
   router: ReturnType<typeof getRouter>,
   predicate: (pathname: string) => boolean,
@@ -686,6 +776,71 @@ async function waitForNewThreadShortcutLabel(): Promise<void> {
     ? "New thread (⇧⌘O)"
     : "New thread (Ctrl+Shift+O)";
   await expect.element(page.getByText(shortcutLabel)).toBeInTheDocument();
+}
+
+async function openNavigationCommandMenu(): Promise<HTMLInputElement> {
+  dispatchNavigationCommandMenuShortcut();
+  return waitForElement(
+    () => document.querySelector<HTMLInputElement>('input[placeholder="Search threads..."]'),
+    "Unable to find the navigation command menu input.",
+  );
+}
+
+async function waitForHighlightedCommandItem(expectedText: string): Promise<HTMLElement> {
+  return waitForElement(() => {
+    const highlighted = document.querySelector<HTMLElement>(
+      '[data-slot="command-item"][data-highlighted]',
+    );
+    if (!highlighted?.textContent?.includes(expectedText)) {
+      return null;
+    }
+    return highlighted;
+  }, `Unable to find highlighted command item containing "${expectedText}".`);
+}
+
+async function moveCommandHighlightTo(
+  input: HTMLInputElement,
+  expectedText: string,
+  maxArrowDownPresses = 4,
+): Promise<HTMLElement> {
+  for (let pressCount = 0; pressCount < maxArrowDownPresses; pressCount += 1) {
+    dispatchKey(input, "ArrowDown");
+    await waitForLayout();
+    const highlighted = document.querySelector<HTMLElement>(
+      '[data-slot="command-item"][data-highlighted]',
+    );
+    if (highlighted?.textContent?.includes(expectedText)) {
+      return highlighted;
+    }
+  }
+
+  return waitForHighlightedCommandItem(expectedText);
+}
+
+async function waitForCommandItem(expectedText: string): Promise<HTMLElement> {
+  return waitForElement(
+    () =>
+      Array.from(document.querySelectorAll<HTMLElement>('[data-slot="command-item"]')).find(
+        (item) => item.textContent?.includes(expectedText),
+      ) ?? null,
+    `Unable to find command item containing "${expectedText}".`,
+  );
+}
+
+function dispatchHover(target: HTMLElement): void {
+  target.dispatchEvent(
+    new PointerEvent("pointermove", {
+      bubbles: true,
+      cancelable: true,
+      pointerType: "mouse",
+    }),
+  );
+  target.dispatchEvent(
+    new MouseEvent("mousemove", {
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
 }
 
 function findDispatchCommand(commandType: string) {
@@ -2493,6 +2648,63 @@ describe("ChatView timeline estimator parity (full app)", () => {
         "Shortcut should create a fresh draft instead of reusing the promoted thread.",
       );
       expect(freshThreadPath).not.toBe(promotedThreadPath);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps command menu selection stable on hover while preserving keyboard and click selection", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithRecentThreads(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "navigation.commandMenu",
+              shortcut: {
+                key: "k",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                modKey: true,
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+
+      const menuInput = await openNavigationCommandMenu();
+      await moveCommandHighlightTo(menuInput, MIDDLE_THREAD_TITLE);
+      const olderThreadItem = await waitForCommandItem(OLDER_THREAD_TITLE);
+
+      dispatchHover(olderThreadItem);
+      await waitForHighlightedCommandItem(MIDDLE_THREAD_TITLE);
+
+      dispatchKey(menuInput, "Enter");
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${MIDDLE_THREAD_ID}`,
+        "Enter should open the keyboard-selected thread.",
+      );
+
+      await openNavigationCommandMenu();
+      const olderThreadItemAgain = await waitForCommandItem(OLDER_THREAD_TITLE);
+
+      dispatchHover(olderThreadItemAgain);
+
+      olderThreadItemAgain.click();
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${OLDER_THREAD_ID}`,
+        "Click should open the clicked thread even after hover stops changing selection.",
+      );
     } finally {
       await mounted.cleanup();
     }
