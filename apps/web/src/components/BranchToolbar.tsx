@@ -45,6 +45,7 @@ export default function BranchToolbar({
   const activeProject = projects.find((project) => project.id === activeProjectId);
   const activeThreadId = serverThread?.id ?? (draftThread ? threadId : undefined);
   const activeThreadBranch = serverThread?.branch ?? draftThread?.branch ?? null;
+  const pendingWorktreeBranch = draftThread?.pendingWorktreeBranch ?? null;
   const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
   const branchCwd = activeWorktreePath ?? activeProject?.cwd ?? null;
   const hasServerThread = serverThread !== undefined;
@@ -53,6 +54,12 @@ export default function BranchToolbar({
     hasServerThread,
     draftThreadEnvMode: draftThread?.envMode,
   });
+  const envModeTriggerLabel =
+    effectiveEnvMode === "worktree" && !activeWorktreePath && pendingWorktreeBranch
+      ? pendingWorktreeBranch
+      : effectiveEnvMode === "worktree"
+        ? "New worktree"
+        : "Local";
 
   const setThreadBranch = useCallback(
     (branch: string | null, worktreePath: string | null) => {
@@ -136,7 +143,7 @@ export default function BranchToolbar({
             ) : (
               <FolderIcon className="size-3" />
             )}
-            <SelectValue />
+            <SelectValue>{envModeTriggerLabel}</SelectValue>
           </SelectTrigger>
           <SelectPopup>
             <SelectItem value="local">

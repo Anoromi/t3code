@@ -95,7 +95,7 @@ export function parseComposerMenuSlashCommandQuery(
 
   return {
     command,
-    valueQuery: (match[2] ?? "").trim().toLowerCase(),
+    valueQuery: (match[2] ?? "").trim(),
   };
 }
 

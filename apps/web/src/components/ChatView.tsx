@@ -183,7 +183,6 @@ import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
   buildLocalDraftThread,
-  buildTemporaryWorktreeBranchName,
   cloneComposerImageForRetry,
   collectUserMessageBlobPreviewUrls,
   createLocalDispatchSnapshot,
@@ -197,6 +196,7 @@ import {
   PullRequestDialogState,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
+  resolvePendingWorktreeAction,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   threadHasStarted,
@@ -345,6 +345,15 @@ const extendReplacementRangeForTrailingSpace = (
   }
   return text[rangeEnd] === " " ? rangeEnd + 1 : rangeEnd;
 };
+
+function isWorktreeModeQuery(query: string): boolean {
+  const normalizedQuery = query.trim().toLowerCase();
+  return (
+    normalizedQuery.length === 0 ||
+    "local".startsWith(normalizedQuery) ||
+    "worktree".startsWith(normalizedQuery)
+  );
+}
 
 const syncTerminalContextsByIds = (
   contexts: ReadonlyArray<TerminalContextDraft>,
@@ -1580,16 +1589,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
     if (composerTrigger.kind === "slash-command") {
       if (composerMenuSlashCommand?.command === "reasoning" && selectedProvider === "codex") {
+        const query = composerMenuSlashCommand.valueQuery.toLowerCase();
         return reasoningOptions
           .filter((effort) => {
-            if (!composerMenuSlashCommand.valueQuery) {
+            if (!query) {
               return true;
             }
             const shortAlias = REASONING_SHORT_ALIAS_BY_OPTION[effort];
-            return (
-              effort.startsWith(composerMenuSlashCommand.valueQuery) ||
-              shortAlias === composerMenuSlashCommand.valueQuery
-            );
+            return effort.startsWith(query) || shortAlias === query;
           })
           .map((effort) => ({
             id: `reasoning:${effort}`,
@@ -1601,31 +1608,55 @@ export default function ChatView({ threadId }: ChatViewProps) {
       }
 
       if (composerMenuSlashCommand?.command === "worktree") {
-        return (
-          [
-            {
-              id: "worktree-mode:local",
-              type: "worktree-mode",
-              mode: "local",
-              label: "/worktree local",
-              description: "Run in the project root",
-            },
-            {
-              id: "worktree-mode:worktree",
-              type: "worktree-mode",
-              mode: "worktree",
-              label: "/worktree worktree",
-              description: "Create and run in a new worktree",
-            },
-          ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "worktree-mode" }>>
-        ).filter((item) => {
-          const query = composerMenuSlashCommand.valueQuery;
-          return query.length === 0 || item.mode.startsWith(query);
-        });
+        const rawQuery = composerMenuSlashCommand.valueQuery.trim();
+        const query = rawQuery.toLowerCase();
+        if (isWorktreeModeQuery(rawQuery)) {
+          return (
+            [
+              {
+                id: "worktree-mode:local",
+                type: "worktree-mode",
+                mode: "local",
+                label: "/worktree local",
+                description: "Run in the project root",
+              },
+              {
+                id: "worktree-mode:worktree",
+                type: "worktree-mode",
+                mode: "worktree",
+                label: "/worktree worktree",
+                description: "Create and run in a new worktree",
+              },
+            ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "worktree-mode" }>>
+          ).filter((item) => query.length === 0 || item.mode.startsWith(query));
+        }
+
+        const matchingBranches = gitBranches
+          .filter((branch) => branch.name.toLowerCase().includes(query))
+          .map((branch) => ({
+            id: `branch:${branch.name}:${branch.worktreePath ?? ""}`,
+            type: "branch" as const,
+            branch,
+            label: branch.name,
+            description: describeBranchCommandItem(branch, activeProject?.cwd ?? ""),
+          }));
+        const hasExactMatch = gitBranches.some((branch) => branch.name.toLowerCase() === query);
+        const syntheticItem = hasExactMatch
+          ? []
+          : [
+              {
+                id: `named-worktree:${rawQuery}`,
+                type: "named-worktree-target" as const,
+                branchName: rawQuery,
+                label: `/worktree ${rawQuery}`,
+                description: `Set ${rawQuery} as the new worktree branch name`,
+              },
+            ];
+        return [...syntheticItem, ...matchingBranches];
       }
 
       if (composerMenuSlashCommand?.command === "branch") {
-        const query = composerMenuSlashCommand.valueQuery;
+        const query = composerMenuSlashCommand.valueQuery.toLowerCase();
         return gitBranches
           .filter((branch) => {
             if (query.length === 0) {
@@ -1754,6 +1785,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
       composerMenuItems.find((item) => item.id === composerHighlightedItemId) ??
       composerMenuItems[0] ??
       null,
+    [composerHighlightedItemId, composerMenuItems],
+  );
+  const firstComposerMenuItemId = composerMenuItems[0]?.id ?? null;
+  const highlightedComposerMenuItemExists = useMemo(
+    () =>
+      composerHighlightedItemId !== null &&
+      composerMenuItems.some((item) => item.id === composerHighlightedItemId),
     [composerHighlightedItemId, composerMenuItems],
   );
   composerMenuOpenRef.current = composerMenuOpen;
@@ -2548,15 +2586,23 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
   useEffect(() => {
     if (!composerMenuOpen) {
-      setComposerHighlightedItemId(null);
+      if (composerHighlightedItemId !== null) {
+        setComposerHighlightedItemId(null);
+      }
       return;
     }
-    setComposerHighlightedItemId((existing) =>
-      existing && composerMenuItems.some((item) => item.id === existing)
-        ? existing
-        : (composerMenuItems[0]?.id ?? null),
-    );
-  }, [composerMenuItems, composerMenuOpen]);
+    if (
+      !highlightedComposerMenuItemExists &&
+      composerHighlightedItemId !== firstComposerMenuItemId
+    ) {
+      setComposerHighlightedItemId(firstComposerMenuItemId);
+    }
+  }, [
+    composerHighlightedItemId,
+    composerMenuOpen,
+    firstComposerMenuItemId,
+    highlightedComposerMenuItemExists,
+  ]);
 
   useEffect(() => {
     setIsRevertingCheckpoint(false);
@@ -2744,6 +2790,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [closeExpandedImage, expandedImage, navigateExpandedImage]);
 
   const activeWorktreePath = activeThread?.worktreePath;
+  const pendingWorktreeBranch = draftThread?.pendingWorktreeBranch ?? null;
   const envMode: DraftThreadEnvMode = activeWorktreePath
     ? "worktree"
     : isLocalDraftThread
@@ -3152,7 +3199,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
       if (menuSlashCommand?.command === "branch" || menuSlashCommand?.command === "worktree") {
         const selectedConfigItem = (activeComposerMenuItemRef.current ??
           composerMenuItemsRef.current[0]) as ComposerCommandItem | undefined;
-        if (selectedConfigItem?.type === "branch" || selectedConfigItem?.type === "worktree-mode") {
+        if (
+          selectedConfigItem?.type === "branch" ||
+          selectedConfigItem?.type === "worktree-mode" ||
+          selectedConfigItem?.type === "named-worktree-target"
+        ) {
           const applied = await applyComposerConfigCommandItem(selectedConfigItem);
           if (applied) {
             return;
@@ -3178,25 +3229,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
     if (!activeProject) return;
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
-    const baseBranchForWorktree =
-      isFirstMessage && envMode === "worktree" && !activeThread.worktreePath
-        ? activeThread.branch
-        : null;
-
-    // In worktree mode, require an explicit base branch so we don't silently
-    // fall back to local execution when branch selection is missing.
     const shouldCreateWorktree =
       isFirstMessage && envMode === "worktree" && !activeThread.worktreePath;
-    if (shouldCreateWorktree && !activeThread.branch) {
-      setStoreThreadError(
-        threadIdForSend,
-        "Select a base branch before sending in New worktree mode.",
-      );
-      return;
-    }
 
     sendInFlightRef.current = true;
-    beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
+    beginLocalDispatch({ preparingWorktree: shouldCreateWorktree });
 
     const composerImagesSnapshot = [...composerImages];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
@@ -3265,6 +3302,24 @@ export default function ChatView({ threadId }: ChatViewProps) {
 
     let turnStartSucceeded = false;
     await (async () => {
+      let baseBranchForWorktree: string | null = null;
+      let worktreeBranchName: string | null = null;
+      if (shouldCreateWorktree) {
+        const branchResult = await api.git.listBranches({ cwd: activeProject.cwd });
+        if (!branchResult.isRepo) {
+          throw new Error("Git worktree creation is unavailable outside a Git repository.");
+        }
+        const worktreeAction = resolvePendingWorktreeAction({
+          baseBranch: activeThread.branch,
+          pendingWorktreeBranch,
+          gitBranches: branchResult.branches,
+        });
+        if (worktreeAction.kind === "error") {
+          throw new Error(worktreeAction.message);
+        }
+        baseBranchForWorktree = worktreeAction.branch;
+        worktreeBranchName = worktreeAction.newBranch;
+      }
       let firstComposerImageName: string | null = null;
       if (composerImagesSnapshot.length > 0) {
         const firstComposerImage = composerImagesSnapshot[0];
@@ -3335,7 +3390,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
                     prepareWorktree: {
                       projectCwd: activeProject.cwd,
                       baseBranch: baseBranchForWorktree,
-                      branch: buildTemporaryWorktreeBranchName(),
+                      branch: worktreeBranchName ?? buildTemporaryWorktreeBranchName(),
                     },
                     runSetupScript: true,
                   }
@@ -4155,7 +4210,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const onEnvModeChange = useCallback(
     (mode: DraftThreadEnvMode) => {
       if (isLocalDraftThread) {
-        setDraftThreadContext(threadId, { envMode: mode });
+        setDraftThreadContext(threadId, {
+          envMode: mode,
+          ...(mode === "local" ? { pendingWorktreeBranch: null } : {}),
+        });
       }
       scheduleComposerFocus();
     },
@@ -4218,6 +4276,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [clearComposerDraftContent, scheduleComposerFocus, threadId]);
   const applyComposerConfigCommandItem = useCallback(
     async (item: ComposerCommandItem): Promise<boolean> => {
+      if (item.type === "named-worktree-target") {
+        if (!canShowWorktreeSlashCommand) {
+          return false;
+        }
+        setDraftThreadContext(threadId, {
+          pendingWorktreeBranch: item.branchName,
+          worktreePath: null,
+          envMode: "worktree",
+        });
+        clearComposerConfigCommand();
+        return true;
+      }
       if (item.type === "worktree-mode") {
         if (!canShowWorktreeSlashCommand) {
           return false;
@@ -4266,7 +4336,9 @@ export default function ChatView({ threadId }: ChatViewProps) {
       gitCwd,
       onEnvModeChange,
       queryClient,
+      setDraftThreadContext,
       setThreadBranchFromComposer,
+      threadId,
     ],
   );
 
@@ -4447,7 +4519,11 @@ export default function ChatView({ threadId }: ChatViewProps) {
         }
         return;
       }
-      if (item.type === "worktree-mode" || item.type === "branch") {
+      if (
+        item.type === "worktree-mode" ||
+        item.type === "branch" ||
+        item.type === "named-worktree-target"
+      ) {
         void applyComposerConfigCommandItem(item).then((applied) => {
           if (applied) {
             setComposerHighlightedItemId(null);

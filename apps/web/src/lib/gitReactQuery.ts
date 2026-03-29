@@ -215,7 +215,7 @@ export function gitCreateWorktreeMutationOptions(input: { queryClient: QueryClie
     }: {
       cwd: string;
       branch: string;
-      newBranch: string;
+      newBranch?: string;
       path?: string | null;
     }) => {
       const api = ensureNativeApi();

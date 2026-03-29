@@ -292,6 +292,13 @@ describe("parseComposerMenuSlashCommandQuery", () => {
     });
   });
 
+  it("preserves named worktree branch casing", () => {
+    expect(parseComposerMenuSlashCommandQuery("worktree Feature/One")).toEqual({
+      command: "worktree",
+      valueQuery: "Feature/One",
+    });
+  });
+
   it("parses bare /worktree", () => {
     expect(parseComposerMenuSlashCommandQuery("worktree")).toEqual({
       command: "worktree",

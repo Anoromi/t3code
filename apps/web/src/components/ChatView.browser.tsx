@@ -786,6 +786,20 @@ function resolveWsRpc(body: NormalizedWsRpcRequestBody): unknown {
   if (tag === WS_METHODS.gitStatus) {
     return fixture.gitStatus;
   }
+  if (tag === WS_METHODS.gitCreateWorktree) {
+    const requestedBranch =
+      typeof body.newBranch === "string"
+        ? body.newBranch
+        : typeof body.branch === "string"
+          ? body.branch
+          : "main";
+    return {
+      worktree: {
+        branch: requestedBranch,
+        path: `/repo/worktrees/${requestedBranch.replaceAll("/", "-")}`,
+      },
+    };
+  }
   if (tag === WS_METHODS.projectsSearchEntries) {
     return {
       entries: [],
@@ -1886,6 +1900,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           interactionMode: "default",
           branch: null,
           worktreePath: null,
+          pendingWorktreeBranch: null,
           envMode: "local",
         },
       },
@@ -1962,6 +1977,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           interactionMode: "default",
           branch: "feature/draft",
           worktreePath: "/repo/worktrees/feature-draft",
+          pendingWorktreeBranch: null,
           envMode: "worktree",
         },
       },
@@ -2663,6 +2679,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           interactionMode: "default",
           branch: null,
           worktreePath: null,
+          pendingWorktreeBranch: null,
           envMode: "local",
         },
       },
@@ -2694,6 +2711,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           interactionMode: "default",
           branch: "main",
           worktreePath: null,
+          pendingWorktreeBranch: null,
           envMode: "local",
         },
       },
@@ -2716,6 +2734,61 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("shows a named worktree action for /worktree feature/new", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "main",
+          worktreePath: null,
+          pendingWorktreeBranch: null,
+          envMode: "local",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/worktree feature/new");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.gitBranches = {
+          isRepo: true,
+          hasOriginRemote: true,
+          branches: [
+            {
+              name: "main",
+              current: true,
+              isDefault: true,
+              worktreePath: null,
+            },
+            {
+              name: "feature/existing",
+              current: false,
+              isDefault: false,
+              worktreePath: null,
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await expect.element(page.getByText("/worktree feature/new")).toBeInTheDocument();
+      await expect
+        .element(page.getByText("Set feature/new as the new worktree branch name"))
+        .toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("updates draft env mode when selecting /worktree worktree", async () => {
     useComposerDraftStore.setState({
       draftThreadsByThreadId: {
@@ -2726,6 +2799,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           interactionMode: "default",
           branch: "main",
           worktreePath: null,
+          pendingWorktreeBranch: null,
           envMode: "local",
         },
       },
@@ -2750,11 +2824,61 @@ describe("ChatView timeline estimator parity (full app)", () => {
           const draftThread = useComposerDraftStore.getState().draftThreadsByThreadId[THREAD_ID];
           expect(draftThread?.envMode).toBe("worktree");
           expect(draftThread?.branch).toBe("main");
+          expect(draftThread?.pendingWorktreeBranch).toBeNull();
           const draft = useComposerDraftStore.getState().draftsByThreadId[THREAD_ID];
           expect(draft?.prompt ?? "").toBe("");
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("stores the named worktree target without changing the base branch", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "main",
+          worktreePath: null,
+          pendingWorktreeBranch: null,
+          envMode: "local",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "/worktree feature/new");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+    });
+
+    try {
+      const worktreeItem = page.getByText("/worktree feature/new");
+      await expect.element(worktreeItem).toBeInTheDocument();
+      await worktreeItem.click();
+
+      await vi.waitFor(
+        () => {
+          const draftThread = useComposerDraftStore.getState().draftThreadsByThreadId[THREAD_ID];
+          expect(draftThread?.envMode).toBe("worktree");
+          expect(draftThread?.branch).toBe("main");
+          expect(draftThread?.pendingWorktreeBranch).toBe("feature/new");
+          expect(draftThread?.worktreePath).toBeNull();
+          const draft = useComposerDraftStore.getState().draftsByThreadId[THREAD_ID];
+          expect(draft?.prompt ?? "").toBe("");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      await expect.element(page.getByText("feature/new")).toBeInTheDocument();
+      await expect.element(page.getByText("From main")).toBeInTheDocument();
     } finally {
       await mounted.cleanup();
     }
@@ -2770,6 +2894,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           interactionMode: "default",
           branch: "feature/base",
           worktreePath: null,
+          pendingWorktreeBranch: null,
           envMode: "worktree",
         },
       },
@@ -2794,6 +2919,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           const draftThread = useComposerDraftStore.getState().draftThreadsByThreadId[THREAD_ID];
           expect(draftThread?.envMode).toBe("local");
           expect(draftThread?.branch).toBe("feature/base");
+          expect(draftThread?.pendingWorktreeBranch).toBeNull();
           const draft = useComposerDraftStore.getState().draftsByThreadId[THREAD_ID];
           expect(draft?.prompt ?? "").toBe("");
         },
@@ -2814,6 +2940,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           interactionMode: "default",
           branch: null,
           worktreePath: null,
+          pendingWorktreeBranch: null,
           envMode: "local",
         },
       },
@@ -2872,6 +2999,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           interactionMode: "default",
           branch: null,
           worktreePath: null,
+          pendingWorktreeBranch: null,
           envMode: "local",
         },
       },
@@ -2930,7 +3058,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("uses /branch to set the base branch in new-worktree mode without checkout", async () => {
+  it("uses /branch to set the base branch in new-worktree mode without clearing the target", async () => {
     useComposerDraftStore.setState({
       draftThreadsByThreadId: {
         [THREAD_ID]: {
@@ -2940,6 +3068,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           interactionMode: "default",
           branch: null,
           worktreePath: null,
+          pendingWorktreeBranch: "feature/target",
           envMode: "worktree",
         },
       },
@@ -2984,6 +3113,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           const draftThread = useComposerDraftStore.getState().draftThreadsByThreadId[THREAD_ID];
           expect(draftThread?.branch).toBe("feature/base");
           expect(draftThread?.worktreePath).toBeNull();
+          expect(draftThread?.pendingWorktreeBranch).toBe("feature/target");
           expect(draftThread?.envMode).toBe("worktree");
         },
         { timeout: 8_000, interval: 16 },
@@ -3004,6 +3134,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           interactionMode: "default",
           branch: null,
           worktreePath: null,
+          pendingWorktreeBranch: "feature/target",
           envMode: "local",
         },
       },
@@ -3047,11 +3178,288 @@ describe("ChatView timeline estimator parity (full app)", () => {
         () => {
           const draftThread = useComposerDraftStore.getState().draftThreadsByThreadId[THREAD_ID];
           expect(draftThread?.branch).toBe("feature/worktree");
+          expect(draftThread?.pendingWorktreeBranch).toBeNull();
           expect(draftThread?.worktreePath).toBe("/repo/worktrees/feature-worktree");
         },
         { timeout: 8_000, interval: 16 },
       );
       expect(wsRequests.some((request) => request._tag === WS_METHODS.gitCheckout)).toBe(false);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("fails clearly when the named worktree branch already exists locally", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "main",
+          worktreePath: null,
+          pendingWorktreeBranch: "feature/new-worktree",
+          envMode: "worktree",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "ship it");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.gitBranches = {
+          isRepo: true,
+          hasOriginRemote: true,
+          branches: [
+            {
+              name: "main",
+              current: true,
+              isDefault: true,
+              worktreePath: null,
+            },
+            {
+              name: "feature/new-worktree",
+              current: false,
+              isDefault: false,
+              worktreePath: null,
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(wsRequests.some((request) => request._tag === WS_METHODS.gitCreateWorktree)).toBe(
+            false,
+          );
+          expect(findDispatchCommand("thread.turn.start")).toBeUndefined();
+          expect(document.body.textContent).toContain(
+            `Branch "feature/new-worktree" already exists locally. Pick a different worktree branch name or use that branch directly.`,
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("fails clearly when the named worktree branch already exists on a remote", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "main",
+          worktreePath: null,
+          pendingWorktreeBranch: "origin/feature/remote-only",
+          envMode: "worktree",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "ship it");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.gitBranches = {
+          isRepo: true,
+          hasOriginRemote: true,
+          branches: [
+            {
+              name: "main",
+              current: true,
+              isDefault: true,
+              worktreePath: null,
+            },
+            {
+              name: "origin/feature/remote-only",
+              current: false,
+              isDefault: false,
+              worktreePath: null,
+              isRemote: true,
+              remoteName: "origin",
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(wsRequests.some((request) => request._tag === WS_METHODS.gitCreateWorktree)).toBe(
+            false,
+          );
+          expect(findDispatchCommand("thread.turn.start")).toBeUndefined();
+          expect(document.body.textContent).toContain(
+            `Branch "origin/feature/remote-only" already exists on a remote. Pick a different worktree branch name or create/check out the branch first.`,
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("creates a named worktree from the selected base branch on first send", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "feature/base",
+          worktreePath: null,
+          pendingWorktreeBranch: "feature/worktree",
+          envMode: "worktree",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "ship it");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.gitBranches = {
+          isRepo: true,
+          hasOriginRemote: true,
+          branches: [
+            {
+              name: "main",
+              current: true,
+              isDefault: true,
+              worktreePath: null,
+            },
+            {
+              name: "feature/base",
+              current: false,
+              isDefault: false,
+              worktreePath: null,
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const worktreeRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.gitCreateWorktree,
+          ) as
+            | {
+                _tag: typeof WS_METHODS.gitCreateWorktree;
+                branch?: string;
+                newBranch?: string;
+              }
+            | undefined;
+          expect(worktreeRequest).toBeTruthy();
+          expect(worktreeRequest?.branch).toBe("feature/base");
+          expect(worktreeRequest?.newBranch).toBe("feature/worktree");
+          const draftThread = useComposerDraftStore.getState().draftThreadsByThreadId[THREAD_ID];
+          expect(draftThread?.pendingWorktreeBranch).toBeNull();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("uses the legacy autogenerated branch name when no named worktree target is set", async () => {
+    useComposerDraftStore.setState({
+      draftThreadsByThreadId: {
+        [THREAD_ID]: {
+          projectId: PROJECT_ID,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "feature/base",
+          worktreePath: null,
+          pendingWorktreeBranch: null,
+          envMode: "worktree",
+        },
+      },
+      projectDraftThreadIdByProjectId: {
+        [PROJECT_ID]: THREAD_ID,
+      },
+    });
+    useComposerDraftStore.getState().setPrompt(THREAD_ID, "ship it");
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: (nextFixture) => {
+        nextFixture.gitBranches = {
+          isRepo: true,
+          hasOriginRemote: true,
+          branches: [
+            {
+              name: "feature/base",
+              current: true,
+              isDefault: false,
+              worktreePath: null,
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const worktreeRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.gitCreateWorktree,
+          ) as
+            | {
+                _tag: typeof WS_METHODS.gitCreateWorktree;
+                branch?: string;
+                newBranch?: string;
+              }
+            | undefined;
+          expect(worktreeRequest).toBeTruthy();
+          expect(worktreeRequest?.branch).toBe("feature/base");
+          expect(worktreeRequest?.newBranch).toMatch(/^t3code\/[0-9a-f]{8}$/);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }
@@ -3067,6 +3475,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           interactionMode: "default",
           branch: "feature/base",
           worktreePath: null,
+          pendingWorktreeBranch: null,
           envMode: "worktree",
         },
       },
@@ -3112,6 +3521,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           interactionMode: "default",
           branch: null,
           worktreePath: null,
+          pendingWorktreeBranch: null,
           envMode: "local",
         },
       },
@@ -4014,6 +4424,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           interactionMode: "default",
           branch: null,
           worktreePath: null,
+          pendingWorktreeBranch: null,
           envMode: "local",
         },
       },

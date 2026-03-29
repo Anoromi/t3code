@@ -134,6 +134,7 @@ const PersistedDraftThreadState = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(Schema.String),
+  pendingWorktreeBranch: Schema.optionalKey(Schema.NullOr(Schema.String)),
   worktreePath: Schema.NullOr(Schema.String),
   envMode: DraftThreadEnvModeSchema,
 });
@@ -173,6 +174,7 @@ export interface DraftThreadState {
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
   branch: string | null;
+  pendingWorktreeBranch: string | null;
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
 }
@@ -194,6 +196,7 @@ interface ComposerDraftStoreState {
     threadId: ThreadId,
     options?: {
       branch?: string | null;
+      pendingWorktreeBranch?: string | null;
       worktreePath?: string | null;
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
@@ -205,6 +208,7 @@ interface ComposerDraftStoreState {
     threadId: ThreadId,
     options: {
       branch?: string | null;
+      pendingWorktreeBranch?: string | null;
       worktreePath?: string | null;
       projectId?: ProjectId;
       createdAt?: string;
@@ -748,6 +752,26 @@ function normalizeDraftThreadEnvMode(
   return fallbackWorktreePath ? "worktree" : "local";
 }
 
+function normalizePendingWorktreeBranch(
+  value: unknown,
+  options?: {
+    worktreePath?: string | null;
+    envMode?: DraftThreadEnvMode;
+  },
+): string | null {
+  if (options?.worktreePath) {
+    return null;
+  }
+  if (options?.envMode === "local") {
+    return null;
+  }
+  if (typeof value !== "string") {
+    return null;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
 function normalizePersistedDraftThreads(
   rawDraftThreadsByThreadId: unknown,
   rawProjectDraftThreadIdByProjectId: unknown,
@@ -792,6 +816,16 @@ function normalizePersistedDraftThreads(
             ? candidateDraftThread.interactionMode
             : DEFAULT_INTERACTION_MODE,
         branch: typeof branch === "string" ? branch : null,
+        pendingWorktreeBranch: normalizePendingWorktreeBranch(
+          candidateDraftThread.pendingWorktreeBranch,
+          {
+            worktreePath: normalizedWorktreePath,
+            envMode: normalizeDraftThreadEnvMode(
+              candidateDraftThread.envMode,
+              normalizedWorktreePath,
+            ),
+          },
+        ),
         worktreePath: normalizedWorktreePath,
         envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
       };
@@ -820,6 +854,7 @@ function normalizePersistedDraftThreads(
             runtimeMode: DEFAULT_RUNTIME_MODE,
             interactionMode: DEFAULT_INTERACTION_MODE,
             branch: null,
+            pendingWorktreeBranch: null,
             worktreePath: null,
             envMode: "local",
           };
@@ -1300,6 +1335,9 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             options?.worktreePath === undefined
               ? (existingThread?.worktreePath ?? null)
               : (options.worktreePath ?? null);
+          const nextEnvMode =
+            options?.envMode ??
+            (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local"));
           const nextDraftThread: DraftThreadState = {
             projectId,
             createdAt: options?.createdAt ?? existingThread?.createdAt ?? new Date().toISOString(),
@@ -1313,10 +1351,17 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
               options?.branch === undefined
                 ? (existingThread?.branch ?? null)
                 : (options.branch ?? null),
+            pendingWorktreeBranch: normalizePendingWorktreeBranch(
+              options?.pendingWorktreeBranch === undefined
+                ? (existingThread?.pendingWorktreeBranch ?? null)
+                : options.pendingWorktreeBranch,
+              {
+                worktreePath: nextWorktreePath,
+                envMode: nextEnvMode,
+              },
+            ),
             worktreePath: nextWorktreePath,
-            envMode:
-              options?.envMode ??
-              (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local")),
+            envMode: nextEnvMode,
           };
           const hasSameProjectMapping = previousThreadIdForProject === threadId;
           const hasSameDraftThread =
@@ -1326,6 +1371,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             existingThread.runtimeMode === nextDraftThread.runtimeMode &&
             existingThread.interactionMode === nextDraftThread.interactionMode &&
             existingThread.branch === nextDraftThread.branch &&
+            existingThread.pendingWorktreeBranch === nextDraftThread.pendingWorktreeBranch &&
             existingThread.worktreePath === nextDraftThread.worktreePath &&
             existingThread.envMode === nextDraftThread.envMode;
           if (hasSameProjectMapping && hasSameDraftThread) {
@@ -1375,6 +1421,8 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             options.worktreePath === undefined
               ? existing.worktreePath
               : (options.worktreePath ?? null);
+          const nextEnvMode =
+            options.envMode ?? (nextWorktreePath ? "worktree" : (existing.envMode ?? "local"));
           const nextDraftThread: DraftThreadState = {
             projectId: nextProjectId,
             createdAt:
@@ -1384,9 +1432,17 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             runtimeMode: options.runtimeMode ?? existing.runtimeMode,
             interactionMode: options.interactionMode ?? existing.interactionMode,
             branch: options.branch === undefined ? existing.branch : (options.branch ?? null),
+            pendingWorktreeBranch: normalizePendingWorktreeBranch(
+              options.pendingWorktreeBranch === undefined
+                ? existing.pendingWorktreeBranch
+                : options.pendingWorktreeBranch,
+              {
+                worktreePath: nextWorktreePath,
+                envMode: nextEnvMode,
+              },
+            ),
             worktreePath: nextWorktreePath,
-            envMode:
-              options.envMode ?? (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
+            envMode: nextEnvMode,
           };
           const isUnchanged =
             nextDraftThread.projectId === existing.projectId &&
@@ -1394,6 +1450,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             nextDraftThread.runtimeMode === existing.runtimeMode &&
             nextDraftThread.interactionMode === existing.interactionMode &&
             nextDraftThread.branch === existing.branch &&
+            nextDraftThread.pendingWorktreeBranch === existing.pendingWorktreeBranch &&
             nextDraftThread.worktreePath === existing.worktreePath &&
             nextDraftThread.envMode === existing.envMode;
           if (isUnchanged) {
@@ -2149,7 +2206,10 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
         return {
           ...currentState,
           draftsByThreadId,
-          draftThreadsByThreadId: normalizedPersisted.draftThreadsByThreadId,
+          draftThreadsByThreadId: normalizedPersisted.draftThreadsByThreadId as Record<
+            ThreadId,
+            DraftThreadState
+          >,
           projectDraftThreadIdByProjectId: normalizedPersisted.projectDraftThreadIdByProjectId,
           stickyModelSelectionByProvider: normalizedPersisted.stickyModelSelectionByProvider ?? {},
           stickyActiveProvider: normalizedPersisted.stickyActiveProvider ?? null,

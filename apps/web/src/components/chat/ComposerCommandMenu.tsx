@@ -56,6 +56,13 @@ export type ComposerCommandItem =
       mode: "local" | "worktree";
       label: string;
       description: string;
+    }
+  | {
+      id: string;
+      type: "named-worktree-target";
+      branchName: string;
+      label: string;
+      description: string;
     };
 
 export const ComposerCommandMenu = memo(function ComposerCommandMenu(props: {
@@ -168,6 +175,11 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
         </Badge>
       ) : null}
       {props.item.type === "worktree-mode" ? (
+        <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+          worktree
+        </Badge>
+      ) : null}
+      {props.item.type === "named-worktree-target" ? (
         <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
           worktree
         </Badge>

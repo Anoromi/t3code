@@ -1,5 +1,6 @@
 import {
   ProjectId,
+  type GitBranch,
   type ModelSelection,
   type OrchestrationLatestTurn,
   type ThreadId,
@@ -206,10 +207,79 @@ export function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
+export type PendingWorktreeAction =
+  | {
+      kind: "create-worktree";
+      branch: string;
+      newBranch: string;
+    }
+  | {
+      kind: "error";
+      message: string;
+    };
+
 export function buildTemporaryWorktreeBranchName(): string {
-  // Keep the 8-hex suffix shape for backend temporary-branch detection.
-  const token = randomUUID().slice(0, 8).toLowerCase();
-  return `${WORKTREE_BRANCH_PREFIX}/${token}`;
+  return `${WORKTREE_BRANCH_PREFIX}/${randomUUID().slice(0, 8).toLowerCase()}`;
+}
+
+function normalizeBranchName(branch: string | null | undefined): string | null {
+  const normalized = branch?.trim() ?? "";
+  return normalized.length > 0 ? normalized : null;
+}
+
+function findCurrentLocalBranch(gitBranches: ReadonlyArray<GitBranch>): string | null {
+  return gitBranches.find((branch) => !branch.isRemote && branch.current)?.name ?? null;
+}
+
+export function resolvePendingWorktreeAction(input: {
+  baseBranch: string | null;
+  pendingWorktreeBranch: string | null;
+  gitBranches: ReadonlyArray<GitBranch>;
+}): PendingWorktreeAction {
+  const baseBranch =
+    normalizeBranchName(input.baseBranch) ??
+    normalizeBranchName(findCurrentLocalBranch(input.gitBranches));
+  if (baseBranch === null) {
+    return {
+      kind: "error",
+      message: "Select a base branch before sending in New worktree mode.",
+    };
+  }
+
+  const pendingWorktreeBranch = normalizeBranchName(input.pendingWorktreeBranch);
+  if (pendingWorktreeBranch !== null) {
+    const localBranch = input.gitBranches.find(
+      (branch) => !branch.isRemote && branch.name === pendingWorktreeBranch,
+    );
+    if (localBranch) {
+      return {
+        kind: "error",
+        message: `Branch "${pendingWorktreeBranch}" already exists locally. Pick a different worktree branch name or use that branch directly.`,
+      };
+    }
+
+    const remoteBranch = input.gitBranches.find(
+      (branch) => branch.isRemote && branch.name === pendingWorktreeBranch,
+    );
+    if (remoteBranch) {
+      return {
+        kind: "error",
+        message: `Branch "${pendingWorktreeBranch}" already exists on a remote. Pick a different worktree branch name or create/check out the branch first.`,
+      };
+    }
+
+    return {
+      kind: "create-worktree",
+      branch: baseBranch,
+      newBranch: pendingWorktreeBranch,
+    };
+  }
+
+  return {
+    kind: "create-worktree",
+    branch: baseBranch,
+    newBranch: buildTemporaryWorktreeBranchName(),
+  };
 }
 
 export function cloneComposerImageForRetry(

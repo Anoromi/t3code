@@ -469,6 +469,7 @@ describe("composerDraftStore project draft thread mapping", () => {
       threadId,
       projectId,
       branch: "feature/test",
+      pendingWorktreeBranch: null,
       worktreePath: "/tmp/worktree-test",
       envMode: "worktree",
       runtimeMode: "full-access",
@@ -478,6 +479,7 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(useComposerDraftStore.getState().getDraftThread(threadId)).toEqual({
       projectId,
       branch: "feature/test",
+      pendingWorktreeBranch: null,
       worktreePath: "/tmp/worktree-test",
       envMode: "worktree",
       runtimeMode: "full-access",
@@ -669,6 +671,46 @@ describe("composerDraftStore project draft thread mapping", () => {
       branch: "feature/base",
       worktreePath: null,
       envMode: "worktree",
+    });
+  });
+
+  it("stores a pending worktree branch separately from the base branch", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectId, threadId, {
+      branch: "feature/base",
+      worktreePath: null,
+      envMode: "worktree",
+      pendingWorktreeBranch: "feature/target",
+    });
+
+    expect(useComposerDraftStore.getState().getDraftThread(threadId)).toMatchObject({
+      projectId,
+      branch: "feature/base",
+      pendingWorktreeBranch: "feature/target",
+      worktreePath: null,
+      envMode: "worktree",
+    });
+  });
+
+  it("clears the pending worktree branch when switching back to local mode", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectId, threadId, {
+      branch: "feature/base",
+      worktreePath: null,
+      envMode: "worktree",
+      pendingWorktreeBranch: "feature/target",
+    });
+
+    store.setDraftThreadContext(threadId, {
+      envMode: "local",
+    });
+
+    expect(useComposerDraftStore.getState().getDraftThread(threadId)).toMatchObject({
+      projectId,
+      branch: "feature/base",
+      pendingWorktreeBranch: null,
+      worktreePath: null,
+      envMode: "local",
     });
   });
 });
