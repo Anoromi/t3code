@@ -18,6 +18,8 @@ import { Effect, Fiber, Layer, Option, Stream } from "effect";
 
 import {
   CodexAppServerManager,
+  type CodexAppServerArchiveThreadInput,
+  type CodexAppServerForkThreadInput,
   type CodexAppServerStartSessionInput,
   type CodexAppServerSendTurnInput,
 } from "../../codexAppServerManager.ts";
@@ -55,6 +57,12 @@ class FakeCodexManager extends CodexAppServerManager {
       turnId: asTurnId("turn-1"),
     }),
   );
+
+  public forkThreadImpl = vi.fn(async (_input: CodexAppServerForkThreadInput) => ({
+    resumeCursor: { threadId: "provider-fork-1" },
+  }));
+
+  public archiveThreadImpl = vi.fn(async (_input: CodexAppServerArchiveThreadInput) => undefined);
 
   public interruptTurnImpl = vi.fn(
     async (_threadId: ThreadId, _turnId?: TurnId): Promise<void> => undefined,
@@ -94,6 +102,14 @@ class FakeCodexManager extends CodexAppServerManager {
 
   override sendTurn(input: CodexAppServerSendTurnInput): Promise<ProviderTurnStartResult> {
     return this.sendTurnImpl(input);
+  }
+
+  override forkThread(input: CodexAppServerForkThreadInput): Promise<{ resumeCursor: unknown }> {
+    return this.forkThreadImpl(input);
+  }
+
+  override archiveThread(input: CodexAppServerArchiveThreadInput): Promise<void> {
+    return this.archiveThreadImpl(input);
   }
 
   override interruptTurn(threadId: ThreadId, turnId?: TurnId): Promise<void> {

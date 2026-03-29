@@ -7,6 +7,8 @@ import type {
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
   ProviderSession,
+  ProviderThreadForkInput,
+  ProviderThreadForkResult,
   ProviderTurnStartResult,
 } from "@t3tools/contracts";
 import {
@@ -168,6 +170,29 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
       Effect.succeed({ threadId, turns: [] }),
   );
 
+  const forkThread = vi.fn(
+    (
+      input: ProviderThreadForkInput,
+    ): Effect.Effect<ProviderThreadForkResult, ProviderAdapterError> =>
+      Effect.succeed({
+        provider,
+        resumeCursor: { opaque: `fork-${String(input.targetThreadId)}` },
+        runtimeMode: "full-access",
+        runtimePayload: {
+          cwd: process.cwd(),
+          modelSelection: {
+            provider,
+            model: provider === "codex" ? "gpt-5.4" : "claude-sonnet-4-5",
+          },
+        },
+      }),
+  );
+
+  const archiveThread = vi.fn(
+    (_threadId: ThreadId, _resumeCursor: unknown): Effect.Effect<void, ProviderAdapterError> =>
+      Effect.void,
+  );
+
   const stopAll = vi.fn(
     (): Effect.Effect<void, ProviderAdapterError> =>
       Effect.sync(() => {
@@ -181,6 +206,7 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
       sessionModelSwitch: "in-session",
     },
     startSession,
+    forkThread,
     sendTurn,
     interruptTurn,
     respondToRequest,
@@ -190,6 +216,7 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
     hasSession,
     readThread,
     rollbackThread,
+    archiveThread,
     stopAll,
     streamEvents: Stream.fromPubSub(runtimeEventPubSub),
   };
@@ -223,6 +250,8 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
     hasSession,
     readThread,
     rollbackThread,
+    forkThread,
+    archiveThread,
     stopAll,
   };
 }
@@ -649,6 +678,61 @@ routing.layer("ProviderServiceLive routing", (it) => {
         assert.equal(startPayload.provider, "claudeAgent");
         assert.equal(startPayload.cwd, "/tmp/project-claude");
       }
+    }),
+  );
+
+  it.effect("routes thread forks through the persisted source provider binding", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+
+      yield* provider.startSession(asThreadId("thread-fork-source"), {
+        provider: "codex",
+        threadId: asThreadId("thread-fork-source"),
+        cwd: "/tmp/project-fork-source",
+        runtimeMode: "full-access",
+      });
+      routing.codex.forkThread.mockClear();
+
+      const result = yield* provider.forkThread({
+        sourceThreadId: asThreadId("thread-fork-source"),
+        targetThreadId: asThreadId("thread-fork-target"),
+      });
+
+      assert.equal(routing.codex.forkThread.mock.calls.length, 1);
+      assert.deepEqual(routing.codex.forkThread.mock.calls[0]?.[0], {
+        sourceThreadId: asThreadId("thread-fork-source"),
+        targetThreadId: asThreadId("thread-fork-target"),
+      });
+      assert.equal(result.provider, "codex");
+      assert.deepEqual(result.resumeCursor, {
+        opaque: "fork-thread-fork-target",
+      });
+    }),
+  );
+
+  it.effect("archives thread forks through the bound provider adapter", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+
+      yield* provider.startSession(asThreadId("thread-archive-source"), {
+        provider: "codex",
+        threadId: asThreadId("thread-archive-source"),
+        cwd: "/tmp/project-archive-source",
+        runtimeMode: "full-access",
+      });
+      routing.codex.archiveThread.mockClear();
+
+      yield* provider.archiveThread({
+        threadId: asThreadId("thread-archive-target"),
+        provider: "codex",
+        resumeCursor: { opaque: "fork-thread-archive-target" },
+      });
+
+      assert.equal(routing.codex.archiveThread.mock.calls.length, 1);
+      assert.deepEqual(routing.codex.archiveThread.mock.calls[0], [
+        asThreadId("thread-archive-target"),
+        { opaque: "fork-thread-archive-target" },
+      ]);
     }),
   );
 

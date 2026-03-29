@@ -14,15 +14,19 @@ import { describe, expect, it } from "vitest";
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
+import { ProviderSessionRuntimeRepositoryLive } from "../../persistence/Layers/ProviderSessionRuntime.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import {
   OrchestrationEventStore,
   type OrchestrationEventStoreShape,
 } from "../../persistence/Services/OrchestrationEventStore.ts";
+import { ProviderSessionDirectoryLive } from "../../provider/Layers/ProviderSessionDirectory.ts";
+import { ProviderSessionDirectory } from "../../provider/Services/ProviderSessionDirectory.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import { ThreadForkServiceLive } from "./ThreadForkService.ts";
+import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
   OrchestrationProjectionPipeline,
@@ -37,25 +41,75 @@ const asMessageId = (value: string): MessageId => MessageId.makeUnsafe(value);
 const asTurnId = (value: string): TurnId => TurnId.makeUnsafe(value);
 const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.makeUnsafe(value);
 
+function makeProviderTestLayers() {
+  const providerServiceLayer = Layer.succeed(ProviderService, {
+    startSession: () => Effect.die("ProviderService.startSession should not be used in test"),
+    forkThread: (input) =>
+      Effect.succeed({
+        provider: "codex" as const,
+        resumeCursor: {
+          threadId: `provider-${String(input.targetThreadId)}`,
+        },
+        runtimeMode: "full-access" as const,
+        runtimePayload: {
+          cwd: "/tmp/project-fork",
+          modelSelection: {
+            provider: "codex" as const,
+            model: "gpt-5-codex",
+          },
+        },
+      }),
+    sendTurn: () => Effect.die("ProviderService.sendTurn should not be used in test"),
+    interruptTurn: () => Effect.die("ProviderService.interruptTurn should not be used in test"),
+    respondToRequest: () =>
+      Effect.die("ProviderService.respondToRequest should not be used in test"),
+    respondToUserInput: () =>
+      Effect.die("ProviderService.respondToUserInput should not be used in test"),
+    stopSession: () => Effect.die("ProviderService.stopSession should not be used in test"),
+    listSessions: () => Effect.succeed([]),
+    getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" as const }),
+    rollbackConversation: () =>
+      Effect.die("ProviderService.rollbackConversation should not be used in test"),
+    archiveThread: () => Effect.void,
+    streamEvents: Stream.empty,
+  });
+  const providerSessionDirectoryLayer = ProviderSessionDirectoryLive.pipe(
+    Layer.provide(ProviderSessionRuntimeRepositoryLive),
+    Layer.provide(SqlitePersistenceMemory),
+  );
+
+  return {
+    providerServiceLayer,
+    providerSessionDirectoryLayer,
+  };
+}
+
 async function createOrchestrationSystem() {
   const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-orchestration-engine-test-",
   });
+  const { providerServiceLayer, providerSessionDirectoryLayer } = makeProviderTestLayers();
   const orchestrationLayer = OrchestrationEngineLive.pipe(
     Layer.provide(OrchestrationProjectionSnapshotQueryLive),
     Layer.provide(OrchestrationProjectionPipelineLive),
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
     Layer.provide(ThreadForkServiceLive),
+    Layer.provide(providerServiceLayer),
+    Layer.provide(providerSessionDirectoryLayer),
     Layer.provide(SqlitePersistenceMemory),
     Layer.provideMerge(ServerConfigLayer),
     Layer.provideMerge(NodeServices.layer),
   );
-  const runtime = ManagedRuntime.make(orchestrationLayer);
+  const runtime = ManagedRuntime.make(
+    Layer.mergeAll(orchestrationLayer, providerSessionDirectoryLayer),
+  );
   const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
   return {
     engine,
-    run: <A, E>(effect: Effect.Effect<A, E>) => runtime.runPromise(effect),
+    run: <A, E>(
+      effect: Effect.Effect<A, E, OrchestrationEngineService | ProviderSessionDirectory>,
+    ) => runtime.runPromise(effect),
     dispose: () => runtime.dispose(),
   };
 }
@@ -501,6 +555,26 @@ describe("OrchestrationEngine", () => {
     ).toBe(false);
     expect(forkedThread?.session).toBeNull();
 
+    const providerSessionDirectory = await system.run(Effect.service(ProviderSessionDirectory));
+    const forkBinding = await system.run(
+      providerSessionDirectory.getBinding(ThreadId.makeUnsafe("thread-forked")),
+    );
+    expect(Option.isSome(forkBinding)).toBe(true);
+    if (Option.isSome(forkBinding)) {
+      expect(forkBinding.value.provider).toBe("codex");
+      expect(forkBinding.value.status).toBe("stopped");
+      expect(forkBinding.value.resumeCursor).toEqual({
+        threadId: "provider-thread-forked",
+      });
+      expect(forkBinding.value.runtimePayload).toEqual({
+        cwd: "/tmp/project-fork",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+      });
+    }
+
     await system.dispose();
   });
 
@@ -831,6 +905,7 @@ describe("OrchestrationEngine", () => {
     const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
       prefix: "t3-orchestration-engine-test-",
     });
+    const { providerServiceLayer, providerSessionDirectoryLayer } = makeProviderTestLayers();
 
     const runtime = ManagedRuntime.make(
       OrchestrationEngineLive.pipe(
@@ -838,6 +913,8 @@ describe("OrchestrationEngine", () => {
         Layer.provide(OrchestrationProjectionPipelineLive),
         Layer.provide(Layer.succeed(OrchestrationEventStore, flakyStore)),
         Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+        Layer.provide(providerServiceLayer),
+        Layer.provide(providerSessionDirectoryLayer),
         Layer.provide(SqlitePersistenceMemory),
         Layer.provideMerge(ServerConfigLayer),
         Layer.provideMerge(NodeServices.layer),
@@ -927,6 +1004,7 @@ describe("OrchestrationEngine", () => {
         return Effect.void;
       },
     };
+    const { providerServiceLayer, providerSessionDirectoryLayer } = makeProviderTestLayers();
 
     const runtime = ManagedRuntime.make(
       OrchestrationEngineLive.pipe(
@@ -934,6 +1012,8 @@ describe("OrchestrationEngine", () => {
         Layer.provide(Layer.succeed(OrchestrationProjectionPipeline, flakyProjectionPipeline)),
         Layer.provide(OrchestrationEventStoreLive),
         Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+        Layer.provide(providerServiceLayer),
+        Layer.provide(providerSessionDirectoryLayer),
         Layer.provide(SqlitePersistenceMemory),
       ),
     );
@@ -1069,6 +1149,7 @@ describe("OrchestrationEngine", () => {
         return Effect.void;
       },
     };
+    const { providerServiceLayer, providerSessionDirectoryLayer } = makeProviderTestLayers();
 
     const runtime = ManagedRuntime.make(
       OrchestrationEngineLive.pipe(
@@ -1076,6 +1157,8 @@ describe("OrchestrationEngine", () => {
         Layer.provide(Layer.succeed(OrchestrationProjectionPipeline, flakyProjectionPipeline)),
         Layer.provide(Layer.succeed(OrchestrationEventStore, nonTransactionalStore)),
         Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+        Layer.provide(providerServiceLayer),
+        Layer.provide(providerSessionDirectoryLayer),
         Layer.provide(SqlitePersistenceMemory),
       ),
     );

@@ -18,6 +18,7 @@ import {
   reconcileMountedTerminalThreadIds,
   isThreadForkReady,
   waitForStartedServerThread,
+  threadSupportsCodexFork,
 } from "./ChatView.logic";
 
 describe("deriveComposerSendState", () => {
@@ -497,6 +498,10 @@ describe("fork readiness", () => {
         proposedPlans: [],
         turnDiffSummaries: [],
         latestTurn: null,
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5.4",
+        },
         session: null,
       }),
     ).toBe(true);
@@ -526,6 +531,10 @@ describe("fork readiness", () => {
           proposedPlans: [],
           turnDiffSummaries: [],
           latestTurn: settledLatestTurn,
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5.4",
+          },
           session: {
             provider: "codex",
             status: "ready",
@@ -564,6 +573,10 @@ describe("fork readiness", () => {
             state: "running",
             completedAt: null,
           },
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5.4",
+          },
           session: {
             provider: "codex",
             status: "running",
@@ -577,6 +590,44 @@ describe("fork readiness", () => {
         isSendBusy: false,
         isConnecting: false,
         isRevertingCheckpoint: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("only allows true fork support for codex-backed threads", () => {
+    expect(
+      threadSupportsCodexFork({
+        messages: [],
+        activities: [],
+        proposedPlans: [],
+        turnDiffSummaries: [],
+        latestTurn: null,
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5.4",
+        },
+        session: null,
+      }),
+    ).toBe(true);
+
+    expect(
+      threadSupportsCodexFork({
+        messages: [],
+        activities: [],
+        proposedPlans: [],
+        turnDiffSummaries: [],
+        latestTurn: null,
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-sonnet-4-5",
+        },
+        session: {
+          provider: "claudeAgent",
+          status: "ready",
+          createdAt: "2026-03-17T12:52:29.000Z",
+          updatedAt: "2026-03-17T12:52:31.000Z",
+          orchestrationStatus: "ready",
+        },
       }),
     ).toBe(false);
   });

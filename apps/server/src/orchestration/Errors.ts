@@ -103,18 +103,38 @@ export type OrchestrationEngineError =
   | OrchestrationCommandJsonParseError
   | OrchestrationCommandDecodeError;
 
-export function toOrchestrationCommandDecodeError(error: Schema.SchemaError) {
+function formatSchemaIssueOrCause(error: unknown, fallback: string): string {
+  const formatIssue = SchemaIssue.makeFormatterDefault() as (issue: unknown) => string;
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "issue" in error &&
+    error.issue !== undefined &&
+    error.issue !== null
+  ) {
+    return formatIssue(error.issue);
+  }
+  if (error instanceof Error && error.message.length > 0) {
+    return error.message;
+  }
+  return fallback;
+}
+
+export function toOrchestrationCommandDecodeError(error: unknown) {
   return new OrchestrationCommandDecodeError({
-    issue: SchemaIssue.makeFormatterDefault()(error.issue),
+    issue: formatSchemaIssueOrCause(error, "Failed to decode orchestration command payload."),
     cause: error,
   });
 }
 
 export function toProjectorDecodeError(eventType: string) {
-  return (error: Schema.SchemaError): OrchestrationProjectorDecodeError =>
+  return (error: unknown): OrchestrationProjectorDecodeError =>
     new OrchestrationProjectorDecodeError({
       eventType,
-      issue: SchemaIssue.makeFormatterDefault()(error.issue),
+      issue: formatSchemaIssueOrCause(
+        error,
+        `Failed to decode projector payload for ${eventType}.`,
+      ),
       cause: error,
     });
 }

@@ -12,15 +12,16 @@
 import {
   ModelSelection,
   NonNegativeInt,
-  ThreadId,
   ProviderInterruptTurnInput,
   ProviderRespondToRequestInput,
   ProviderRespondToUserInputInput,
   ProviderSendTurnInput,
   ProviderSessionStartInput,
+  type ProviderThreadForkResult,
   ProviderStopSessionInput,
-  type ProviderRuntimeEvent,
   type ProviderSession,
+  type ProviderRuntimeEvent,
+  ThreadId,
 } from "@t3tools/contracts";
 import { Effect, Layer, Option, PubSub, Queue, Schema, SchemaIssue, Stream } from "effect";
 
@@ -740,6 +741,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   return {
     startSession,
+    forkThread,
     sendTurn,
     interruptTurn,
     respondToRequest,
@@ -748,6 +750,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     listSessions,
     getCapabilities,
     rollbackConversation,
+    archiveThread,
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each
     // independently receive all runtime events.

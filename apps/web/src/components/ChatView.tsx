@@ -201,6 +201,7 @@ import {
   revokeUserMessagePreviewUrls,
   threadHasStarted,
   waitForStartedServerThread,
+  threadSupportsCodexFork,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import {
@@ -1092,15 +1093,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const isSendBusy = sendPhase !== "idle";
   const isPreparingWorktree = sendPhase === "preparing-worktree";
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const activeThreadSupportsFork = threadSupportsCodexFork(activeThread ?? null);
   const hasActiveThreadForkableHistory = hasForkableThreadHistory(activeThread ?? null);
-  const threadForkReady = isThreadForkReady({
-    thread: activeThread ?? null,
-    isServerThread,
-    phase,
-    isSendBusy,
-    isConnecting,
-    isRevertingCheckpoint,
-  });
+  const threadForkReady =
+    activeThreadSupportsFork &&
+    isThreadForkReady({
+      thread: activeThread ?? null,
+      isServerThread,
+      phase,
+      isSendBusy,
+      isConnecting,
+      isRevertingCheckpoint,
+    });
   const nowIso = new Date(nowTick).toISOString();
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
@@ -3953,6 +3957,15 @@ export default function ChatView({ threadId }: ChatViewProps) {
       return;
     }
 
+    if (!activeThreadSupportsFork) {
+      toastManager.add({
+        type: "error",
+        title: "Could not fork thread",
+        description: "Only Codex-backed threads support true forking.",
+      });
+      return;
+    }
+
     if (!hasActiveThreadForkableHistory) {
       toastManager.add({
         type: "error",
@@ -4014,6 +4027,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   }, [
     activeProject,
     activeThread,
+    activeThreadSupportsFork,
     beginSendPhase,
     clearComposerDraftContent,
     hasActiveThreadForkableHistory,

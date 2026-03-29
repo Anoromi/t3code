@@ -471,6 +471,22 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
       Effect.sync(() => {
         sessions.clear();
       });
+    const forkThread: ProviderAdapterShape<ProviderAdapterError>["forkThread"] = () =>
+      Effect.fail(
+        new ProviderAdapterValidationError({
+          provider,
+          operation: "forkThread",
+          issue: "Test adapter does not implement thread forking.",
+        }),
+      );
+    const archiveThread: ProviderAdapterShape<ProviderAdapterError>["archiveThread"] = () =>
+      Effect.fail(
+        new ProviderAdapterValidationError({
+          provider,
+          operation: "archiveThread",
+          issue: "Test adapter does not implement thread archival.",
+        }),
+      );
 
     const adapter: ProviderAdapterShape<ProviderAdapterError> = {
       provider,
@@ -478,6 +494,7 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
         sessionModelSwitch: "in-session",
       },
       startSession,
+      forkThread,
       sendTurn,
       interruptTurn,
       respondToRequest,
@@ -487,6 +504,7 @@ export const makeTestProviderAdapterHarness = (options?: MakeTestProviderAdapter
       hasSession,
       readThread,
       rollbackThread,
+      archiveThread,
       stopAll,
       streamEvents: Stream.fromQueue(runtimeEvents),
     };

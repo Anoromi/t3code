@@ -304,7 +304,10 @@ export function projectEvent(
             id: payload.threadId,
             projectId: payload.projectId,
             title: payload.title,
-            model: payload.model,
+            modelSelection: {
+              provider: payload.model.toLowerCase().includes("claude") ? "claudeAgent" : "codex",
+              model: payload.model,
+            },
             runtimeMode: payload.runtimeMode,
             interactionMode: payload.interactionMode,
             branch: payload.branch,

@@ -16,6 +16,8 @@ import type {
   ProviderSendTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
+  ProviderThreadForkInput,
+  ProviderThreadForkResult,
   ThreadId,
   ProviderTurnStartResult,
   TurnId,
@@ -55,6 +57,13 @@ export interface ProviderAdapterShape<TError> {
   readonly startSession: (
     input: ProviderSessionStartInput,
   ) => Effect.Effect<ProviderSession, TError>;
+
+  /**
+   * Fork a provider thread into a new provider-backed thread lineage.
+   */
+  readonly forkThread: (
+    input: ProviderThreadForkInput,
+  ) => Effect.Effect<ProviderThreadForkResult, TError>;
 
   /**
    * Send a turn to an active provider session.
@@ -113,6 +122,14 @@ export interface ProviderAdapterShape<TError> {
     threadId: ThreadId,
     numTurns: number,
   ) => Effect.Effect<ProviderThreadSnapshot, TError>;
+
+  /**
+   * Archive a provider thread by resume cursor.
+   */
+  readonly archiveThread: (
+    threadId: ThreadId,
+    resumeCursor: unknown,
+  ) => Effect.Effect<void, TError>;
 
   /**
    * Stop all sessions owned by this adapter.

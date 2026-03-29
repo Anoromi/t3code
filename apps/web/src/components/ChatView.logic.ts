@@ -122,8 +122,21 @@ export interface PullRequestDialogState {
 
 type ForkableThread = Pick<
   Thread,
-  "messages" | "activities" | "proposedPlans" | "turnDiffSummaries" | "latestTurn" | "session"
+  | "messages"
+  | "activities"
+  | "proposedPlans"
+  | "turnDiffSummaries"
+  | "latestTurn"
+  | "session"
+  | "modelSelection"
 >;
+
+export function threadSupportsCodexFork(thread: ForkableThread | null): boolean {
+  if (thread === null) {
+    return false;
+  }
+  return (thread.session?.provider ?? thread.modelSelection.provider) === "codex";
+}
 
 export function hasForkableThreadHistory(thread: ForkableThread | null): boolean {
   if (thread === null) {

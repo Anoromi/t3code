@@ -12,6 +12,7 @@ import {
   OrchestrationEventMetadata,
   OrchestrationEventType,
   ProjectId,
+  ThreadForkedPayload,
   ThreadId,
 } from "@t3tools/contracts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -88,6 +89,14 @@ type OrchestrationEventPersistedRow = typeof OrchestrationEventPersistedRowSchem
 type ReadOrchestrationEventPersistedRow = typeof ReadOrchestrationEventPersistedRowSchema.Type;
 
 function modelSelectionFromLegacyPayload(payload: Record<string, unknown>) {
+  if (
+    Schema.is(Schema.Struct({ provider: Schema.Literal("codex"), model: Schema.String }))(
+      payload.modelSelection,
+    )
+  ) {
+    return payload.modelSelection;
+  }
+
   const legacyModel =
     typeof payload.model === "string" && payload.model.trim().length > 0
       ? payload.model.trim()
@@ -98,6 +107,8 @@ function modelSelectionFromLegacyPayload(payload: Record<string, unknown>) {
     model: legacyModel,
   };
 }
+
+const isCurrentThreadForkedPayload = Schema.is(ThreadForkedPayload);
 
 function normalizePersistedEventRow(
   row: ReadOrchestrationEventPersistedRow,
@@ -138,7 +149,12 @@ function normalizePersistedEventRow(
     };
   }
 
-  if (row.type === "thread.forked" && typeof payload === "object" && payload !== null) {
+  if (
+    row.type === "thread.forked" &&
+    typeof payload === "object" &&
+    payload !== null &&
+    !isCurrentThreadForkedPayload(payload)
+  ) {
     const legacyPayload = payload as Record<string, unknown>;
     const createdAt =
       typeof legacyPayload.createdAt === "string" ? legacyPayload.createdAt : row.occurredAt;
@@ -166,14 +182,6 @@ function normalizePersistedEventRow(
         createdAt,
         updatedAt,
       },
-    };
-  }
-
-  if (row.type === "thread.forked") {
-    return {
-      ...row,
-      type: "thread.created",
-      payload,
     };
   }
 

@@ -15,6 +15,7 @@ const fakeCodexAdapter: CodexAdapterShape = {
   provider: "codex",
   capabilities: { sessionModelSwitch: "in-session" },
   startSession: vi.fn(),
+  forkThread: vi.fn(),
   sendTurn: vi.fn(),
   interruptTurn: vi.fn(),
   respondToRequest: vi.fn(),
@@ -24,6 +25,7 @@ const fakeCodexAdapter: CodexAdapterShape = {
   hasSession: vi.fn(),
   readThread: vi.fn(),
   rollbackThread: vi.fn(),
+  archiveThread: vi.fn(),
   stopAll: vi.fn(),
   streamEvents: Stream.empty,
 };
@@ -32,6 +34,7 @@ const fakeClaudeAdapter: ClaudeAdapterShape = {
   provider: "claudeAgent",
   capabilities: { sessionModelSwitch: "in-session" },
   startSession: vi.fn(),
+  forkThread: vi.fn(),
   sendTurn: vi.fn(),
   interruptTurn: vi.fn(),
   respondToRequest: vi.fn(),
@@ -41,6 +44,7 @@ const fakeClaudeAdapter: ClaudeAdapterShape = {
   hasSession: vi.fn(),
   readThread: vi.fn(),
   rollbackThread: vi.fn(),
+  archiveThread: vi.fn(),
   stopAll: vi.fn(),
   streamEvents: Stream.empty,
 };

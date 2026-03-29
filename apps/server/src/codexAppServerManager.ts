@@ -127,6 +127,21 @@ export interface CodexAppServerStartSessionInput {
   readonly runtimeMode: RuntimeMode;
 }
 
+export interface CodexAppServerForkThreadInput {
+  readonly sourceThreadId: ThreadId;
+  readonly targetThreadId: ThreadId;
+  readonly resumeCursor: unknown;
+  readonly binaryPath: string;
+  readonly homePath?: string;
+}
+
+export interface CodexAppServerArchiveThreadInput {
+  readonly threadId: ThreadId;
+  readonly resumeCursor: unknown;
+  readonly binaryPath: string;
+  readonly homePath?: string;
+}
+
 export interface CodexThreadTurnSnapshot {
   id: TurnId;
   items: unknown[];
@@ -647,6 +662,52 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
     }
   }
 
+  async forkThread(input: CodexAppServerForkThreadInput): Promise<{ resumeCursor: unknown }> {
+    const sourceProviderThreadId = readResumeCursorThreadId(input.resumeCursor);
+    if (!sourceProviderThreadId) {
+      throw new Error("Source thread is missing a provider resume thread id.");
+    }
+
+    return this.withTransientSession(
+      {
+        threadId: input.targetThreadId,
+        binaryPath: input.binaryPath,
+        ...(input.homePath ? { homePath: input.homePath } : {}),
+      },
+      async (context) => {
+        const response = await this.sendRequest(context, "thread/fork", {
+          threadId: sourceProviderThreadId,
+        });
+        const forkedProviderThreadId = this.readThreadIdFromResponse("thread/fork", response);
+        return {
+          resumeCursor: {
+            threadId: forkedProviderThreadId,
+          },
+        };
+      },
+    );
+  }
+
+  async archiveThread(input: CodexAppServerArchiveThreadInput): Promise<void> {
+    const providerThreadId = readResumeCursorThreadId(input.resumeCursor);
+    if (!providerThreadId) {
+      throw new Error("Thread is missing a provider resume thread id.");
+    }
+
+    await this.withTransientSession(
+      {
+        threadId: input.threadId,
+        binaryPath: input.binaryPath,
+        ...(input.homePath ? { homePath: input.homePath } : {}),
+      },
+      async (context) => {
+        await this.sendRequest(context, "thread/archive", {
+          threadId: providerThreadId,
+        });
+      },
+    );
+  }
+
   async sendTurn(input: CodexAppServerSendTurnInput): Promise<ProviderTurnStartResult> {
     const context = this.requireSession(input.threadId);
     context.collabReceiverTurns.clear();
@@ -932,6 +993,71 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
   stopAll(): void {
     for (const threadId of this.sessions.keys()) {
       this.stopSession(threadId);
+    }
+  }
+
+  private async withTransientSession<T>(
+    input: {
+      readonly threadId: ThreadId;
+      readonly binaryPath: string;
+      readonly homePath?: string;
+    },
+    run: (context: CodexSessionContext) => Promise<T>,
+  ): Promise<T> {
+    const now = new Date().toISOString();
+    const resolvedCwd = process.cwd();
+    const session: ProviderSession = {
+      provider: "codex",
+      status: "connecting",
+      runtimeMode: "full-access",
+      threadId: input.threadId,
+      cwd: resolvedCwd,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    this.assertSupportedCodexCliVersion({
+      binaryPath: input.binaryPath,
+      cwd: resolvedCwd,
+      ...(input.homePath ? { homePath: input.homePath } : {}),
+    });
+    const child = spawn(input.binaryPath, ["app-server"], {
+      cwd: resolvedCwd,
+      env: {
+        ...process.env,
+        ...(input.homePath ? { CODEX_HOME: input.homePath } : {}),
+      },
+      stdio: ["pipe", "pipe", "pipe"],
+      shell: process.platform === "win32",
+    });
+    const output = readline.createInterface({ input: child.stdout });
+    const context: CodexSessionContext = {
+      session,
+      account: {
+        type: "unknown",
+        planType: null,
+        sparkEnabled: true,
+      },
+      child,
+      output,
+      pending: new Map(),
+      pendingApprovals: new Map(),
+      pendingUserInputs: new Map(),
+      collabReceiverTurns: new Map(),
+      nextRequestId: 1,
+      stopping: false,
+    };
+
+    this.sessions.set(input.threadId, context);
+    this.attachProcessListeners(context);
+    this.emitLifecycleEvent(context, "session/connecting", "Starting transient codex app-server");
+
+    try {
+      await this.sendRequest(context, "initialize", buildCodexInitializeParams());
+      this.writeMessage(context, { method: "initialized" });
+      return await run(context);
+    } finally {
+      this.stopSession(input.threadId);
     }
   }
 
@@ -1304,6 +1430,17 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
       ...updates,
       updatedAt: new Date().toISOString(),
     };
+  }
+
+  private readThreadIdFromResponse(method: string, response: unknown): string {
+    const record = this.readObject(response);
+    const threadIdRaw =
+      normalizeProviderThreadId(this.readString(this.readObject(record, "thread"), "id")) ??
+      normalizeProviderThreadId(this.readString(record, "threadId"));
+    if (!threadIdRaw) {
+      throw new Error(`${method} response did not include a thread id.`);
+    }
+    return threadIdRaw;
   }
 
   private requestKindForMethod(method: string): ProviderRequestKind | undefined {

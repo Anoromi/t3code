@@ -20,9 +20,8 @@ import {
   ProviderItemId,
   ThreadId,
   TurnId,
-  ProviderSendTurnInput,
 } from "@t3tools/contracts";
-import { Effect, FileSystem, Layer, Queue, Schema, ServiceMap, Stream } from "effect";
+import { Effect, FileSystem, Layer, Option, Queue, Schema, ServiceMap, Stream } from "effect";
 
 import {
   ProviderAdapterProcessError,
@@ -40,6 +39,7 @@ import {
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
 const PROVIDER = "codex" as const;
@@ -1299,7 +1299,6 @@ function mapToRuntimeEvents(
           },
     ];
   }
-
   if (event.method === "windows/worldWritableWarning") {
     return [
       {
@@ -1347,40 +1346,39 @@ function mapToRuntimeEvents(
   return [];
 }
 
-const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
-  options?: CodexAdapterLiveOptions,
-) {
-  const fileSystem = yield* FileSystem.FileSystem;
-  const serverConfig = yield* Effect.service(ServerConfig);
-  const nativeEventLogger =
-    options?.nativeEventLogger ??
-    (options?.nativeEventLogPath !== undefined
-      ? yield* makeEventNdjsonLogger(options.nativeEventLogPath, {
-          stream: "native",
-        })
-      : undefined);
+const makeCodexAdapter = (options?: CodexAdapterLiveOptions) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const serverConfig = yield* Effect.service(ServerConfig);
+    const nativeEventLogger =
+      options?.nativeEventLogger ??
+      (options?.nativeEventLogPath !== undefined
+        ? yield* makeEventNdjsonLogger(options.nativeEventLogPath, {
+            stream: "native",
+          })
+        : undefined);
 
-  const acquireManager = Effect.fn("acquireManager")(function* () {
-    if (options?.manager) {
-      return options.manager;
-    }
-    const services = yield* Effect.services<never>();
-    return options?.makeManager?.(services) ?? new CodexAppServerManager(services);
-  });
+    const manager = yield* Effect.acquireRelease(
+      Effect.gen(function* () {
+        if (options?.manager) {
+          return options.manager;
+        }
+        const services = yield* Effect.services<never>();
+        return options?.makeManager?.(services) ?? new CodexAppServerManager(services);
+      }),
+      (manager) =>
+        Effect.sync(() => {
+          try {
+            manager.stopAll();
+          } catch {
+            // Finalizers should never fail and block shutdown.
+          }
+        }),
+    );
+    const serverSettingsService = yield* ServerSettingsService;
+    const providerSessionDirectory = yield* ProviderSessionDirectory;
 
-  const manager = yield* Effect.acquireRelease(acquireManager(), (manager) =>
-    Effect.sync(() => {
-      try {
-        manager.stopAll();
-      } catch {
-        // Finalizers should never fail and block shutdown.
-      }
-    }),
-  );
-  const serverSettingsService = yield* ServerSettingsService;
-
-  const startSession: CodexAdapterShape["startSession"] = Effect.fn("startSession")(
-    function* (input) {
+    const startSession: CodexAdapterShape["startSession"] = Effect.fn(function* (input) {
       if (input.provider !== undefined && input.provider !== PROVIDER) {
         return yield* new ProviderAdapterValidationError({
           provider: PROVIDER,
@@ -1429,211 +1427,318 @@ const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             cause,
           }),
       });
-    },
-  );
-
-  const resolveAttachment = Effect.fn("resolveAttachment")(function* (
-    input: ProviderSendTurnInput,
-    attachment: NonNullable<ProviderSendTurnInput["attachments"]>[number],
-  ) {
-    const attachmentPath = resolveAttachmentPath({
-      attachmentsDir: serverConfig.attachmentsDir,
-      attachment,
     });
-    if (!attachmentPath) {
-      return yield* toRequestError(
-        input.threadId,
-        "turn/start",
-        new Error(`Invalid attachment id '${attachment.id}'.`),
+
+    const forkThread: CodexAdapterShape["forkThread"] = Effect.fn(function* (input) {
+      const bindingOption = yield* providerSessionDirectory.getBinding(input.sourceThreadId).pipe(
+        Effect.mapError(
+          (error) =>
+            new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "thread/fork",
+              detail: error.message,
+              cause: error,
+            }),
+        ),
       );
-    }
-    const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ProviderAdapterRequestError({
+      const binding = Option.getOrUndefined(bindingOption);
+      if (!binding) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "forkThread",
+          issue: `Source thread '${input.sourceThreadId}' has no persisted provider binding.`,
+        });
+      }
+      if (binding.provider !== PROVIDER) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "forkThread",
+          issue: `Source thread '${input.sourceThreadId}' is bound to provider '${binding.provider}', not '${PROVIDER}'.`,
+        });
+      }
+      if (binding.resumeCursor === null || binding.resumeCursor === undefined) {
+        return yield* new ProviderAdapterValidationError({
+          provider: PROVIDER,
+          operation: "forkThread",
+          issue: `Source thread '${input.sourceThreadId}' has no persisted Codex resume cursor.`,
+        });
+      }
+
+      const codexSettings = yield* serverSettingsService.getSettings.pipe(
+        Effect.map((settings) => settings.providers.codex),
+        Effect.mapError(
+          (error) =>
+            new ProviderAdapterProcessError({
+              provider: PROVIDER,
+              threadId: input.targetThreadId,
+              detail: error.message,
+              cause: error,
+            }),
+        ),
+      );
+
+      const result = yield* Effect.tryPromise({
+        try: () =>
+          manager.forkThread({
+            sourceThreadId: input.sourceThreadId,
+            targetThreadId: input.targetThreadId,
+            resumeCursor: binding.resumeCursor,
+            binaryPath: codexSettings.binaryPath,
+            ...(codexSettings.homePath ? { homePath: codexSettings.homePath } : {}),
+          }),
+        catch: (cause) =>
+          new ProviderAdapterProcessError({
             provider: PROVIDER,
-            method: "turn/start",
-            detail: toMessage(cause, "Failed to read attachment file."),
+            threadId: input.targetThreadId,
+            detail: toMessage(cause, "Failed to fork Codex thread."),
             cause,
           }),
-      ),
-    );
-    return {
-      type: "image" as const,
-      url: `data:${attachment.mimeType};base64,${Buffer.from(bytes).toString("base64")}`,
-    };
-  });
+      });
 
-  const sendTurn: CodexAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
-    const codexAttachments = yield* Effect.forEach(
-      input.attachments ?? [],
-      (attachment) => resolveAttachment(input, attachment),
-      { concurrency: 1 },
-    );
-
-    return yield* Effect.tryPromise({
-      try: () => {
-        const managerInput = {
-          threadId: input.threadId,
-          ...(input.input !== undefined ? { input: input.input } : {}),
-          ...(input.modelSelection?.provider === "codex"
-            ? { model: input.modelSelection.model }
-            : {}),
-          ...(input.modelSelection?.provider === "codex" &&
-          input.modelSelection.options?.reasoningEffort !== undefined
-            ? { effort: input.modelSelection.options.reasoningEffort }
-            : {}),
-          ...(input.modelSelection?.provider === "codex" && input.modelSelection.options?.fastMode
-            ? { serviceTier: "fast" }
-            : {}),
-          ...(input.interactionMode !== undefined
-            ? { interactionMode: input.interactionMode }
-            : {}),
-          ...(codexAttachments.length > 0 ? { attachments: codexAttachments } : {}),
-        };
-        return manager.sendTurn(managerInput);
-      },
-      catch: (cause) => toRequestError(input.threadId, "turn/start", cause),
-    }).pipe(
-      Effect.map((result) => ({
-        ...result,
-        threadId: input.threadId,
-      })),
-    );
-  });
-
-  const interruptTurn: CodexAdapterShape["interruptTurn"] = (threadId, turnId) =>
-    Effect.tryPromise({
-      try: () => manager.interruptTurn(threadId, turnId),
-      catch: (cause) => toRequestError(threadId, "turn/interrupt", cause),
+      return {
+        provider: PROVIDER,
+        resumeCursor: result.resumeCursor,
+        runtimeMode: binding.runtimeMode ?? "full-access",
+        ...(binding.runtimePayload !== undefined ? { runtimePayload: binding.runtimePayload } : {}),
+      };
     });
 
-  const readThread: CodexAdapterShape["readThread"] = (threadId) =>
-    Effect.tryPromise({
-      try: () => manager.readThread(threadId),
-      catch: (cause) => toRequestError(threadId, "thread/read", cause),
-    }).pipe(
-      Effect.map((snapshot) => ({
-        threadId,
-        turns: snapshot.turns,
-      })),
-    );
+    const sendTurn: CodexAdapterShape["sendTurn"] = (input) =>
+      Effect.gen(function* () {
+        const codexAttachments = yield* Effect.forEach(
+          input.attachments ?? [],
+          (attachment) =>
+            Effect.gen(function* () {
+              const attachmentPath = resolveAttachmentPath({
+                attachmentsDir: serverConfig.attachmentsDir,
+                attachment,
+              });
+              if (!attachmentPath) {
+                return yield* toRequestError(
+                  input.threadId,
+                  "turn/start",
+                  new Error(`Invalid attachment id '${attachment.id}'.`),
+                );
+              }
+              const bytes = yield* fileSystem.readFile(attachmentPath).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapterRequestError({
+                      provider: PROVIDER,
+                      method: "turn/start",
+                      detail: toMessage(cause, "Failed to read attachment file."),
+                      cause,
+                    }),
+                ),
+              );
+              return {
+                type: "image" as const,
+                url: `data:${attachment.mimeType};base64,${Buffer.from(bytes).toString("base64")}`,
+              };
+            }),
+          { concurrency: 1 },
+        );
 
-  const rollbackThread: CodexAdapterShape["rollbackThread"] = (threadId, numTurns) => {
-    if (!Number.isInteger(numTurns) || numTurns < 1) {
-      return Effect.fail(
-        new ProviderAdapterValidationError({
-          provider: PROVIDER,
-          operation: "rollbackThread",
-          issue: "numTurns must be an integer >= 1.",
-        }),
+        return yield* Effect.tryPromise({
+          try: () => {
+            const managerInput = {
+              threadId: input.threadId,
+              ...(input.input !== undefined ? { input: input.input } : {}),
+              ...(input.modelSelection?.provider === "codex"
+                ? { model: input.modelSelection.model }
+                : {}),
+              ...(input.modelSelection?.provider === "codex" &&
+              input.modelSelection.options?.reasoningEffort !== undefined
+                ? { effort: input.modelSelection.options.reasoningEffort }
+                : {}),
+              ...(input.modelSelection?.provider === "codex" &&
+              input.modelSelection.options?.fastMode
+                ? { serviceTier: "fast" }
+                : {}),
+              ...(input.interactionMode !== undefined
+                ? { interactionMode: input.interactionMode }
+                : {}),
+              ...(codexAttachments.length > 0 ? { attachments: codexAttachments } : {}),
+            };
+            return manager.sendTurn(managerInput);
+          },
+          catch: (cause) => toRequestError(input.threadId, "turn/start", cause),
+        }).pipe(
+          Effect.map((result) => ({
+            ...result,
+            threadId: input.threadId,
+          })),
+        );
+      });
+
+    const interruptTurn: CodexAdapterShape["interruptTurn"] = (threadId, turnId) =>
+      Effect.tryPromise({
+        try: () => manager.interruptTurn(threadId, turnId),
+        catch: (cause) => toRequestError(threadId, "turn/interrupt", cause),
+      });
+
+    const readThread: CodexAdapterShape["readThread"] = (threadId) =>
+      Effect.tryPromise({
+        try: () => manager.readThread(threadId),
+        catch: (cause) => toRequestError(threadId, "thread/read", cause),
+      }).pipe(
+        Effect.map((snapshot) => ({
+          threadId,
+          turns: snapshot.turns,
+        })),
       );
-    }
 
-    return Effect.tryPromise({
-      try: () => manager.rollbackThread(threadId, numTurns),
-      catch: (cause) => toRequestError(threadId, "thread/rollback", cause),
-    }).pipe(
-      Effect.map((snapshot) => ({
-        threadId,
-        turns: snapshot.turns,
-      })),
-    );
-  };
-
-  const respondToRequest: CodexAdapterShape["respondToRequest"] = (threadId, requestId, decision) =>
-    Effect.tryPromise({
-      try: () => manager.respondToRequest(threadId, requestId, decision),
-      catch: (cause) => toRequestError(threadId, "item/requestApproval/decision", cause),
-    });
-
-  const respondToUserInput: CodexAdapterShape["respondToUserInput"] = (
-    threadId,
-    requestId,
-    answers,
-  ) =>
-    Effect.tryPromise({
-      try: () => manager.respondToUserInput(threadId, requestId, answers),
-      catch: (cause) => toRequestError(threadId, "item/tool/requestUserInput", cause),
-    });
-
-  const stopSession: CodexAdapterShape["stopSession"] = (threadId) =>
-    Effect.sync(() => {
-      manager.stopSession(threadId);
-    });
-
-  const listSessions: CodexAdapterShape["listSessions"] = () =>
-    Effect.sync(() => manager.listSessions());
-
-  const hasSession: CodexAdapterShape["hasSession"] = (threadId) =>
-    Effect.sync(() => manager.hasSession(threadId));
-
-  const stopAll: CodexAdapterShape["stopAll"] = () =>
-    Effect.sync(() => {
-      manager.stopAll();
-    });
-
-  const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
-
-  const writeNativeEvent = Effect.fn("writeNativeEvent")(function* (event: ProviderEvent) {
-    if (!nativeEventLogger) {
-      return;
-    }
-    yield* nativeEventLogger.write(event, event.threadId);
-  });
-
-  const registerListener = Effect.fn("registerListener")(function* () {
-    const services = yield* Effect.services<never>();
-    const listenerEffect = Effect.fn("listener")(function* (event: ProviderEvent) {
-      yield* writeNativeEvent(event);
-      const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
-      if (runtimeEvents.length === 0) {
-        yield* Effect.logDebug("ignoring unhandled Codex provider event", {
-          method: event.method,
-          threadId: event.threadId,
-          turnId: event.turnId,
-          itemId: event.itemId,
-        });
-        return;
+    const rollbackThread: CodexAdapterShape["rollbackThread"] = (threadId, numTurns) => {
+      if (!Number.isInteger(numTurns) || numTurns < 1) {
+        return Effect.fail(
+          new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "rollbackThread",
+            issue: "numTurns must be an integer >= 1.",
+          }),
+        );
       }
-      yield* Queue.offerAll(runtimeEventQueue, runtimeEvents);
-    });
-    const listener = (event: ProviderEvent) =>
-      listenerEffect(event).pipe(Effect.runPromiseWith(services));
-    manager.on("event", listener);
-    return listener;
+
+      return Effect.tryPromise({
+        try: () => manager.rollbackThread(threadId, numTurns),
+        catch: (cause) => toRequestError(threadId, "thread/rollback", cause),
+      }).pipe(
+        Effect.map((snapshot) => ({
+          threadId,
+          turns: snapshot.turns,
+        })),
+      );
+    };
+
+    const archiveThread: CodexAdapterShape["archiveThread"] = (threadId, resumeCursor) =>
+      serverSettingsService.getSettings.pipe(
+        Effect.map((settings) => settings.providers.codex),
+        Effect.mapError(
+          (error) =>
+            new ProviderAdapterProcessError({
+              provider: PROVIDER,
+              threadId,
+              detail: error.message,
+              cause: error,
+            }),
+        ),
+        Effect.flatMap((codexSettings) =>
+          Effect.tryPromise({
+            try: () =>
+              manager.archiveThread({
+                threadId,
+                resumeCursor,
+                binaryPath: codexSettings.binaryPath,
+                ...(codexSettings.homePath ? { homePath: codexSettings.homePath } : {}),
+              }),
+            catch: (cause) =>
+              new ProviderAdapterProcessError({
+                provider: PROVIDER,
+                threadId,
+                detail: toMessage(cause, "Failed to archive Codex thread."),
+                cause,
+              }),
+          }),
+        ),
+      );
+
+    const respondToRequest: CodexAdapterShape["respondToRequest"] = (
+      threadId,
+      requestId,
+      decision,
+    ) =>
+      Effect.tryPromise({
+        try: () => manager.respondToRequest(threadId, requestId, decision),
+        catch: (cause) => toRequestError(threadId, "item/requestApproval/decision", cause),
+      });
+
+    const respondToUserInput: CodexAdapterShape["respondToUserInput"] = (
+      threadId,
+      requestId,
+      answers,
+    ) =>
+      Effect.tryPromise({
+        try: () => manager.respondToUserInput(threadId, requestId, answers),
+        catch: (cause) => toRequestError(threadId, "item/tool/requestUserInput", cause),
+      });
+
+    const stopSession: CodexAdapterShape["stopSession"] = (threadId) =>
+      Effect.sync(() => {
+        manager.stopSession(threadId);
+      });
+
+    const listSessions: CodexAdapterShape["listSessions"] = () =>
+      Effect.sync(() => manager.listSessions());
+
+    const hasSession: CodexAdapterShape["hasSession"] = (threadId) =>
+      Effect.sync(() => manager.hasSession(threadId));
+
+    const stopAll: CodexAdapterShape["stopAll"] = () =>
+      Effect.sync(() => {
+        manager.stopAll();
+      });
+
+    const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
+
+    yield* Effect.acquireRelease(
+      Effect.gen(function* () {
+        const writeNativeEvent = (event: ProviderEvent) =>
+          Effect.gen(function* () {
+            if (!nativeEventLogger) {
+              return;
+            }
+            yield* nativeEventLogger.write(event, event.threadId);
+          });
+
+        const services = yield* Effect.services<never>();
+        const listener = (event: ProviderEvent) =>
+          Effect.gen(function* () {
+            yield* writeNativeEvent(event);
+            const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
+            if (runtimeEvents.length === 0) {
+              yield* Effect.logDebug("ignoring unhandled Codex provider event", {
+                method: event.method,
+                threadId: event.threadId,
+                turnId: event.turnId,
+                itemId: event.itemId,
+              });
+              return;
+            }
+            yield* Queue.offerAll(runtimeEventQueue, runtimeEvents);
+          }).pipe(Effect.runPromiseWith(services));
+        manager.on("event", listener);
+        return listener;
+      }),
+      (listener) =>
+        Effect.gen(function* () {
+          yield* Effect.sync(() => {
+            manager.off("event", listener);
+          });
+          yield* Queue.shutdown(runtimeEventQueue);
+        }),
+    );
+
+    return {
+      provider: PROVIDER,
+      capabilities: {
+        sessionModelSwitch: "in-session",
+      },
+      startSession,
+      forkThread,
+      sendTurn,
+      interruptTurn,
+      readThread,
+      rollbackThread,
+      archiveThread,
+      respondToRequest,
+      respondToUserInput,
+      stopSession,
+      listSessions,
+      hasSession,
+      stopAll,
+      streamEvents: Stream.fromQueue(runtimeEventQueue),
+    } satisfies CodexAdapterShape;
   });
-
-  const unregisterListener = Effect.fn("unregisterListener")(function* (
-    listener: (event: ProviderEvent) => Promise<void>,
-  ) {
-    yield* Effect.sync(() => {
-      manager.off("event", listener);
-    });
-    yield* Queue.shutdown(runtimeEventQueue);
-  });
-
-  yield* Effect.acquireRelease(registerListener(), unregisterListener);
-
-  return {
-    provider: PROVIDER,
-    capabilities: {
-      sessionModelSwitch: "in-session",
-    },
-    startSession,
-    sendTurn,
-    interruptTurn,
-    readThread,
-    rollbackThread,
-    respondToRequest,
-    respondToUserInput,
-    stopSession,
-    listSessions,
-    hasSession,
-    stopAll,
-    streamEvents: Stream.fromQueue(runtimeEventQueue),
-  } satisfies CodexAdapterShape;
-});
 
 export const CodexAdapterLive = Layer.effect(CodexAdapter, makeCodexAdapter());
 
