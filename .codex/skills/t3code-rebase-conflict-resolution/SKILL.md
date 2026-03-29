@@ -21,8 +21,15 @@ Rebase T3 Code onto upstream behavior without breaking persisted state, desktop 
 3. Audit compatibility surfaces explicitly.
    Check migrations for numbering drift versus upstream.
    Compare the intended migration order against `upstream/main`, not only the current branch.
+   Diff the actual `migrationEntries` list against `upstream/main` before resolving any migration conflict.
+   Treat "upstream had migration A at id N, branch had migration B at id N" as a release-blocking problem, not a normal conflict.
+   Never drop an upstream migration from the active chain just because the branch reused that numeric slot for something else.
    Inspect a copied real database's `effect_sql_migrations` ledger and actual schema together.
    If a forked database already used a migration ID for a different migration than `upstream/main`, restore canonical upstream numbering in code for fresh databases and add a new repair migration after the canonical tip for already-affected databases.
+   Explicitly model both upgrade directions when persistence changed:
+   1. a database created from canonical `upstream/main`
+   2. a database created from the branch or another fork that reused migration IDs
+   Prove both can reach the rebased schema without manual intervention.
    Check orchestration event types and payload shapes for legacy rows.
    Check projection tables and snapshot queries for mixed old/new schemas.
    Check settings and local storage migrations when web state models changed.
@@ -37,8 +44,13 @@ Rebase T3 Code onto upstream behavior without breaking persisted state, desktop 
 5. Validate on real state, not only clean fixtures.
    Run `bun fmt`, `bun lint`, and `bun typecheck`.
    Run focused `bun run test ...` regressions for every compatibility patch.
+   If migrations changed, add or update tests that seed:
+   1. an `upstream/main`-shaped migration ledger and schema
+   2. a branch/fork-shaped migration ledger and schema
+   Do not declare the rebase done until both pass.
    If persistence or startup was touched, smoke boot the desktop app.
    If available, use an isolated copy of a real database snapshot rather than only an empty dev DB.
+   Treat a successful boot on an empty database as insufficient evidence when the rebase touched migrations, projections, or startup persistence.
 
 ## T3 Code Hotspots
 
@@ -55,8 +67,10 @@ Rebase T3 Code onto upstream behavior without breaking persisted state, desktop 
 
 - Do not treat a clean git index as proof that the rebase is finished.
 - Do not renumber or reuse migrations without checking upstream IDs first.
+- Do not replace upstream migration IDs with branch-specific ones in `migrationEntries`; preserve canonical upstream history and repair branch-specific drift additively after it.
 - Do not trust `effect_sql_migrations` alone when forked databases may have recorded the wrong migration under a reused ID.
 - Do not repair shipped databases by rewriting old migration IDs in place; prefer additive repair migrations after the canonical upstream sequence.
+- Do not sign off a persistence-related rebase until you have validated both fresh-database behavior and upgraded-database behavior.
 - Do not assume production snapshots match the newest projection schema.
 - Do not reintroduce old settings or state modules if upstream already replaced them.
 - Do add regression tests immediately when a copied real database exposes a bug.
