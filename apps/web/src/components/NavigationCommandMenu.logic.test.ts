@@ -46,6 +46,7 @@ function makeThread(
     proposedPlans: overrides.proposedPlans ?? [],
     error: overrides.error ?? null,
     createdAt: overrides.createdAt,
+    archivedAt: overrides.archivedAt ?? null,
     updatedAt: overrides.updatedAt,
     latestTurn: overrides.latestTurn ?? null,
     lastVisitedAt: overrides.lastVisitedAt,

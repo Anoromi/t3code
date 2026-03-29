@@ -942,7 +942,12 @@ export function GeneralSettingsPanel() {
             <Select
               value={settings.defaultCodexReasoningEffort}
               onValueChange={(value) => {
-                if (value === "xhigh" || value === "high" || value === "medium" || value === "low") {
+                if (
+                  value === "xhigh" ||
+                  value === "high" ||
+                  value === "medium" ||
+                  value === "low"
+                ) {
                   updateSettings({ defaultCodexReasoningEffort: value });
                 }
               }}

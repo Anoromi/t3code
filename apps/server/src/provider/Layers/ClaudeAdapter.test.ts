@@ -17,7 +17,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Fiber, Layer, Random, Stream } from "effect";
+import { Effect, Fiber, Layer, Random, Scope, Stream } from "effect";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
@@ -1103,7 +1103,7 @@ describe("ClaudeAdapterLive", () => {
   it.effect("closes the session when the Claude stream aborts after a turn starts", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
-      const services = yield* Effect.services();
+      const services = yield* Effect.services<Scope.Scope>();
       const runFork = Effect.runForkWith(services);
 
       const adapter = yield* ClaudeAdapter;
@@ -1203,7 +1203,7 @@ describe("ClaudeAdapterLive", () => {
     );
 
     return Effect.gen(function* () {
-      const services = yield* Effect.services();
+      const services = yield* Effect.services<Scope.Scope>();
       const runFork = Effect.runForkWith(services);
 
       const adapter = yield* ClaudeAdapter;

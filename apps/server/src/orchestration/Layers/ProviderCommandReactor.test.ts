@@ -234,7 +234,7 @@ describe("ProviderCommandReactor", () => {
       Layer.provideMerge(providerServiceLayer),
       Layer.provideMerge(Layer.succeed(GitCore, { renameBranch } as unknown as GitCoreShape)),
       Layer.provideMerge(
-        Layer.mock(TextGeneration, {
+        Layer.mock(TextGeneration)({
           generateBranchName,
           generateThreadTitle,
         }),

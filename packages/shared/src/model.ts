@@ -9,10 +9,11 @@ import {
   type CodexReasoningEffort,
   type ModelCapabilities,
   type ModelSelection,
-  type ModelSlug,
   type ProviderReasoningEffort,
   type ProviderKind,
 } from "@t3tools/contracts";
+
+type ModelSlug = string;
 
 const MODEL_OPTIONS_BY_PROVIDER = {
   codex: [

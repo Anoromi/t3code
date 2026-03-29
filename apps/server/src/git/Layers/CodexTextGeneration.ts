@@ -365,10 +365,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
   const generateThreadTitle: TextGenerationShape["generateThreadTitle"] = Effect.fn(
     "CodexTextGeneration.generateThreadTitle",
   )(function* (input) {
-    const { imagePaths } = yield* materializeImageAttachments(
-      "generateThreadTitle",
-      input.attachments,
-    );
+    const { imagePaths } = yield* materializeImageAttachments(input.attachments);
     const { prompt, outputSchema } = buildThreadTitlePrompt({
       message: input.message,
       attachments: input.attachments,
