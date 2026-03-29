@@ -3,6 +3,7 @@ import {
   ArrowUpDownIcon,
   ChevronRightIcon,
   FolderIcon,
+  GitForkIcon,
   GitPullRequestIcon,
   PlusIcon,
   RocketIcon,
@@ -54,7 +55,7 @@ import {
 import { Schema } from "effect";
 import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
-import { isLinuxPlatform, isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
+import { cn, isLinuxPlatform, isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
 import { useStore } from "../store";
 import { shortcutLabelForCommand } from "../keybindings";
 import { formatRelativeTime } from "../relativeTime";
@@ -146,6 +147,12 @@ const COLLAPSED_WORKTREE_GROUPS_STORAGE_KEY = "sidebar_collapsed_worktree_groups
 const WORKTREE_GROUP_BIRTH_DURATION_MS = 800;
 const WORKTREE_GROUP_FLIP_DURATION_MS = 260;
 const WORKTREE_GROUP_FLIP_EASING = "cubic-bezier(0.22, 1, 0.36, 1)";
+const SIDEBAR_NESTED_CARD_CLASS_NAME =
+  "mt-1.5 ml-2 rounded-xl border border-border/40 bg-sidebar-accent/20 px-1 py-1";
+const SIDEBAR_NESTED_CARD_HEADER_CLASS_NAME =
+  "gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-accent";
+const SIDEBAR_NESTED_CARD_CONTENT_CLASS_NAME =
+  "mx-0 translate-x-0 border-t border-border/50 px-1.5 py-1";
 
 interface ProjectSidebarSection {
   hasHiddenThreadEntries: boolean;
@@ -1680,15 +1687,18 @@ export default function Sidebar() {
                         registerWorktreeGroupElement(entry.worktreeGroup.groupKey, element);
                       }}
                       data-worktree-group-key={entry.worktreeGroup.groupKey}
-                      className={`overflow-hidden rounded-xl border border-border/60 bg-muted/20 ${
+                      className={cn(
+                        "overflow-hidden",
+                        SIDEBAR_NESTED_CARD_CLASS_NAME,
                         animatingGroupKeys.has(entry.worktreeGroup.groupKey)
                           ? "sidebar-worktree-group-born"
-                          : ""
-                      }`}
+                          : "",
+                      )}
                     >
-                      <button
-                        type="button"
-                        className="flex w-full items-center gap-2 px-2.5 py-2 text-left transition-colors hover:bg-accent/60"
+                      <SidebarMenuButton
+                        render={<button type="button" />}
+                        size="sm"
+                        className={SIDEBAR_NESTED_CARD_HEADER_CLASS_NAME}
                         data-thread-selection-safe
                         onContextMenu={(event) => {
                           event.preventDefault();
@@ -1720,13 +1730,14 @@ export default function Sidebar() {
                               : "rotate-90"
                           }`}
                         />
+                        <GitForkIcon className="size-3.5 shrink-0 text-muted-foreground/70" />
                         <Tooltip>
                           <TooltipTrigger
                             render={
                               entry.worktreeGroup.worktreeTitleStatus === "pending" ? (
                                 <Skeleton className="h-3.5 w-28 rounded-full" />
                               ) : (
-                                <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-foreground/85">
+                                <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground/90">
                                   {entry.worktreeGroup.label}
                                 </span>
                               )
@@ -1734,10 +1745,10 @@ export default function Sidebar() {
                           />
                           <TooltipPopup side="top">{entry.worktreeGroup.worktreePath}</TooltipPopup>
                         </Tooltip>
-                      </button>
+                      </SidebarMenuButton>
 
                       <CollapsibleContent keepMounted>
-                        <SidebarMenuSub className="mx-0 translate-x-0 border-t border-border/50 px-1.5 py-1">
+                        <SidebarMenuSub className={SIDEBAR_NESTED_CARD_CONTENT_CLASS_NAME}>
                           {entry.worktreeGroup.threads.map((thread, index) =>
                             renderThreadRow(
                               thread,
@@ -1757,10 +1768,7 @@ export default function Sidebar() {
                   </Collapsible>
                 </SidebarMenuSubItem>
               ) : (
-                <div
-                  key={entry.childProject.project.id}
-                  className="mt-1.5 ml-2 rounded-xl border border-border/40 bg-sidebar-accent/20 px-1 py-1"
-                >
+                <div key={entry.childProject.project.id} className={SIDEBAR_NESTED_CARD_CLASS_NAME}>
                   {renderProjectItem(entry.childProject, null, true)}
                 </div>
               ),
