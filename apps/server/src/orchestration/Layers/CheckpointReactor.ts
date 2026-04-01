@@ -413,6 +413,14 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    // Codex can emit turn.diff.updated before the turn has fully settled. If we
+    // capture immediately while that turn is still active, the checkpoint can
+    // miss later writes. Wait for the session lifecycle to clear the active
+    // turn, then capture from the reliable domain-side session update.
+    if (thread.session?.activeTurnId && sameId(thread.session.activeTurnId, turnId)) {
+      return;
+    }
+
     // If a real checkpoint already exists for this turn, skip.
     if (
       thread.checkpoints.some(
@@ -447,6 +455,56 @@ const make = Effect.gen(function* () {
       createdAt: event.payload.completedAt,
     });
   });
+
+  const ensurePreTurnBaselineFromTurnStart = Effect.fn("ensurePreTurnBaselineFromTurnStart")(
+  const captureCheckpointFromSettledSession = Effect.fn("captureCheckpointFromSettledSession")(
+    function* (
+    event: Extract<OrchestrationEvent, { type: "thread.session-set" }>,
+  ) {
+    if (event.payload.session.activeTurnId !== null) {
+      return;
+    }
+
+    const readModel = yield* orchestrationEngine.getReadModel();
+    const thread = readModel.threads.find((entry) => entry.id === event.payload.threadId);
+    if (!thread) {
+      return;
+    }
+
+    const latestTurnId = thread.latestTurn?.turnId ?? null;
+    if (!latestTurnId) {
+      return;
+    }
+
+    const missingCheckpoint = thread.checkpoints.find(
+      (checkpoint) => checkpoint.turnId === latestTurnId && checkpoint.status === "missing",
+    );
+    if (!missingCheckpoint) {
+      return;
+    }
+
+    const checkpointCwd = yield* resolveCheckpointCwd({
+      threadId: event.payload.threadId,
+      thread,
+      projects: readModel.projects,
+      preferSessionRuntime: true,
+    });
+    if (!checkpointCwd) {
+      return;
+    }
+
+    yield* captureAndDispatchCheckpoint({
+      threadId: event.payload.threadId,
+      turnId: missingCheckpoint.turnId,
+      thread,
+      cwd: checkpointCwd,
+      turnCount: missingCheckpoint.checkpointTurnCount,
+      status: event.payload.session.status === "error" ? "error" : "ready",
+      assistantMessageId: missingCheckpoint.assistantMessageId ?? undefined,
+      createdAt: event.occurredAt,
+    });
+    },
+  );
 
   const ensurePreTurnBaselineFromTurnStart = Effect.fn("ensurePreTurnBaselineFromTurnStart")(
     function* (event: Extract<ProviderRuntimeEvent, { type: "turn.started" }>) {
@@ -707,11 +765,26 @@ const make = Effect.gen(function* () {
       return;
     }
 
+    if (event.type === "thread.session-set") {
+      yield* captureCheckpointFromSettledSession(event).pipe(
+        Effect.catch((error) =>
+          appendCaptureFailureActivity({
+            threadId: event.payload.threadId,
+            turnId: event.payload.session.activeTurnId,
+            detail: error.message,
+            createdAt: new Date().toISOString(),
+          }).pipe(Effect.catch(() => Effect.void)),
+        ),
+      );
+      return;
+    }
+
     // When ProviderRuntimeIngestion creates a placeholder checkpoint (status "missing")
     // from a turn.diff.updated runtime event, capture the real git checkpoint to
-    // replace it. The providerService.streamEvents PubSub does not reliably deliver
-    // turn.completed runtime events to this reactor (shared subscription), so
-    // reacting to the domain event is the reliable path.
+    // replace it once the turn has actually settled. The providerService.streamEvents
+    // PubSub does not reliably deliver turn.completed runtime events to this
+    // reactor (shared subscription), so domain-side session updates are the
+    // reliable signal for final capture.
     if (event.type === "thread.turn-diff-completed") {
       yield* captureCheckpointFromPlaceholder(event).pipe(
         Effect.catch((error) =>
@@ -778,6 +851,7 @@ const make = Effect.gen(function* () {
           event.type !== "thread.turn-start-requested" &&
           event.type !== "thread.message-sent" &&
           event.type !== "thread.checkpoint-revert-requested" &&
+          event.type !== "thread.session-set" &&
           event.type !== "thread.turn-diff-completed"
         ) {
           return Effect.void;
