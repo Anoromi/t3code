@@ -286,7 +286,7 @@ export function buildManagedShellLaunchCommand(input: {
     "sh",
     "-lc",
     quoteShellArg(
-      'cd "$1" && pidfile="$2" && rm -f "$pidfile" && sh -lc "$3" & child=$! && printf "%s\\n" "$child" >"$pidfile" && wait "$child"',
+      'cd "$1"; pidfile="$2"; rm -f "$pidfile"; sh -lc "$3" & child=$!; printf "%s\\n" "$child" >"$pidfile"; wait "$child"',
     ),
     "hypr-worktree",
     quoteShellArg(input.cwd),

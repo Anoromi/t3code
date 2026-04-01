@@ -50,7 +50,9 @@ function cleanupStaleDevApps() {
     return;
   }
 
-  spawnSync("pkill", ["-f", "--", `--t3code-dev-root=${desktopDir}`], { stdio: "ignore" });
+  const processMatch = `--t3code-dev-root=${desktopDir}`;
+  spawnSync("pkill", ["-TERM", "-f", "--", processMatch], { stdio: "ignore" });
+  spawnSync("pkill", ["-KILL", "-f", "--", processMatch], { stdio: "ignore" });
 }
 
 function startApp() {

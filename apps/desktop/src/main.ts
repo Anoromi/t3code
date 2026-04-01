@@ -740,6 +740,11 @@ function resolveIconPath(ext: "ico" | "icns" | "png"): string | null {
  * lose their Chromium profile data (localStorage, cookies, sessions).
  */
 function resolveUserDataPath(): string {
+  const configuredStateDir = process.env.T3CODE_STATE_DIR?.trim();
+  if (isDevelopment && configuredStateDir) {
+    return Path.join(Path.resolve(configuredStateDir), "electron-user-data");
+  }
+
   const appDataBase =
     process.platform === "win32"
       ? process.env.APPDATA || Path.join(OS.homedir(), "AppData", "Roaming")
