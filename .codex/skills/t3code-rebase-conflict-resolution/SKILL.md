@@ -15,10 +15,24 @@ Rebase T3 Code onto upstream behavior without breaking persisted state, desktop 
    Read the surrounding upstream implementation before choosing a side.
 
 2. Rebase onto upstream implementations, not deleted local subsystems.
+   Treat `upstream/main` as the primary source of truth when branch code and upstream differ.
    If upstream replaced a module, route, settings store, or persistence shape, keep the upstream architecture and re-apply the branch feature onto it.
+   If upstream/main already implements the same user-visible capability, adapt the branch to use the upstream implementation or drop the branch-specific version entirely.
+   Do not preserve branch-local implementations just because they exist on `main`; preserve the feature, but realize it through upstream/main when upstream already has a solution.
+   Never drop a feature that exists on `upstream/main`.
    Treat deleted files as suspect until you confirm they were not intentionally superseded.
 
-3. Audit compatibility surfaces explicitly.
+3. Resolve conflicts in validation-sized increments, not just until `git rebase --continue` unblocks.
+   After each substantial conflict resolution, stop and validate before continuing the rebase.
+   Prefer the smallest useful validation first:
+   1. format the touched files
+   2. run lint/typecheck on the affected package or file set
+   3. run focused tests for the code you just reconciled
+   Only move to the next rebase stop once the current resolution is coherent against the live upstream APIs it now targets.
+   Do not defer obvious integration fallout until the end of the full rebase.
+   If a paused rebase commit is known to be incomplete until a later commit in the stack lands, document that explicitly and still run the narrowest checks that are expected to pass.
+
+4. Audit compatibility surfaces explicitly.
    Check migrations for numbering drift versus upstream.
    Compare the intended migration order against `upstream/main`, not only the current branch.
    Diff the actual `migrationEntries` list against `upstream/main` before resolving any migration conflict.
@@ -29,28 +43,28 @@ Rebase T3 Code onto upstream behavior without breaking persisted state, desktop 
    Explicitly model both upgrade directions when persistence changed:
    1. a database created from canonical `upstream/main`
    2. a database created from the branch or another fork that reused migration IDs
-   Prove both can reach the rebased schema without manual intervention.
-   Check orchestration event types and payload shapes for legacy rows.
-   Check projection tables and snapshot queries for mixed old/new schemas.
-   Check settings and local storage migrations when web state models changed.
-   Check sidebar or routing logic when upstream changed grouping, ordering, or thread/project shapes.
+      Prove both can reach the rebased schema without manual intervention.
+      Check orchestration event types and payload shapes for legacy rows.
+      Check projection tables and snapshot queries for mixed old/new schemas.
+      Check settings and local storage migrations when web state models changed.
+      Check sidebar or routing logic when upstream changed grouping, ordering, or thread/project shapes.
 
-4. Preserve mixed-schema compatibility during the transition.
+5. Preserve mixed-schema compatibility during the transition.
    Keep read paths tolerant of old persisted shapes.
    Keep write paths compatible with legacy not-null or still-present scalar columns until migrations are proven on real data.
    Normalize legacy event payloads during replay instead of assuming all rows were rewritten.
    Make repair migrations idempotent and schema-driven: inspect real columns/data, add missing columns, backfill from legacy fields, and normalize old persisted payloads as needed.
 
-5. Validate on real state, not only clean fixtures.
+6. Validate on real state, not only clean fixtures.
    Run `bun fmt`, `bun lint`, and `bun typecheck`.
    Run focused `bun run test ...` regressions for every compatibility patch.
    If migrations changed, add or update tests that seed:
    1. an `upstream/main`-shaped migration ledger and schema
    2. a branch/fork-shaped migration ledger and schema
-   Do not declare the rebase done until both pass.
-   If persistence or startup was touched, smoke boot the desktop app.
-   If available, use an isolated copy of a real database snapshot rather than only an empty dev DB.
-   Treat a successful boot on an empty database as insufficient evidence when the rebase touched migrations, projections, or startup persistence.
+      Do not declare the rebase done until both pass.
+      If persistence or startup was touched, smoke boot the desktop app.
+      If available, use an isolated copy of a real database snapshot rather than only an empty dev DB.
+      Treat a successful boot on an empty database as insufficient evidence when the rebase touched migrations, projections, or startup persistence.
 
 ## T3 Code Hotspots
 
@@ -66,6 +80,12 @@ Rebase T3 Code onto upstream behavior without breaking persisted state, desktop 
 ## Decision Rules
 
 - Do not treat a clean git index as proof that the rebase is finished.
+- Do treat upstream/main feature parity as mandatory: do not drop upstream behavior while resolving conflicts.
+- Do prefer upstream/main implementations over branch-local alternatives when both solve the same problem.
+- Do re-apply branch-only value on top of upstream/main only when upstream does not already provide the capability.
+- Do not use "Git accepted the conflict resolution" as the bar for correctness; use passing validation at each major rebase stop.
+- Do run incremental validation before `git rebase --continue` whenever a conflict changes contracts, state ownership, service wiring, routing, persistence, or tests.
+- Do prefer targeted checks during the paused rebase and reserve full `bun fmt` / `bun lint` / `bun typecheck` for major checkpoints and final sign-off.
 - Do not renumber or reuse migrations without checking upstream IDs first.
 - Do not replace upstream migration IDs with branch-specific ones in `migrationEntries`; preserve canonical upstream history and repair branch-specific drift additively after it.
 - Do not trust `effect_sql_migrations` alone when forked databases may have recorded the wrong migration under a reused ID.
@@ -73,4 +93,5 @@ Rebase T3 Code onto upstream behavior without breaking persisted state, desktop 
 - Do not sign off a persistence-related rebase until you have validated both fresh-database behavior and upgraded-database behavior.
 - Do not assume production snapshots match the newest projection schema.
 - Do not reintroduce old settings or state modules if upstream already replaced them.
+- Do not keep a branch-specific implementation when upstream/main already has an equivalent feature unless the branch version adds intentional, still-needed behavior on top.
 - Do add regression tests immediately when a copied real database exposes a bug.
