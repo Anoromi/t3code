@@ -86,33 +86,35 @@ const makeCodexTextGeneration = Effect.gen(function* () {
 
   const materializeImageAttachments = (
     attachments: BranchNameGenerationInput["attachments"],
-  ): Effect.fn.Return<MaterializedImageAttachments, TextGenerationError> => {
-    if (!attachments || attachments.length === 0) {
-      return { imagePaths: [] };
-    }
-
-    const imagePaths: string[] = [];
-    for (const attachment of attachments) {
-      if (attachment.type !== "image") {
-        continue;
+  ): Effect.Effect<MaterializedImageAttachments, TextGenerationError> =>
+    Effect.gen(function* () {
+      if (!attachments || attachments.length === 0) {
+        return { imagePaths: [] };
       }
 
-      const resolvedPath = resolveAttachmentPath({
-        attachmentsDir: serverConfig.attachmentsDir,
-        attachment,
-      });
-      if (!resolvedPath || !resolvedPath.startsWith("/")) {
-        continue;
+      const imagePaths: string[] = [];
+      for (const attachment of attachments) {
+        if (attachment.type !== "image") {
+          continue;
+        }
+
+        const resolvedPath = resolveAttachmentPath({
+          attachmentsDir: serverConfig.attachmentsDir,
+          attachment,
+        });
+        if (!resolvedPath || !resolvedPath.startsWith("/")) {
+          continue;
+        }
+        const fileInfo = yield* fileSystem
+          .stat(resolvedPath)
+          .pipe(Effect.catch(() => Effect.succeed(null)));
+        if (!fileInfo || fileInfo.type !== "File") {
+          continue;
+        }
+        imagePaths.push(resolvedPath);
       }
-      const fileInfo =
-        yield * fileSystem.stat(resolvedPath).pipe(Effect.catch(() => Effect.succeed(null)));
-      if (!fileInfo || fileInfo.type !== "File") {
-        continue;
-      }
-      imagePaths.push(resolvedPath);
-    }
-    return { imagePaths };
-  };
+      return { imagePaths };
+    });
 
   const runCodexJson = Effect.fn("runCodexJson")(function* <S extends Schema.Top>({
     operation,

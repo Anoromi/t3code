@@ -2507,6 +2507,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
               }
               aborted = true;
               pendingUserInputs.delete(requestId);
+              // @effect-diagnostics-next-line runEffectInsideEffect:off
               Effect.runFork(Deferred.succeed(answersDeferred, {} as ProviderUserInputAnswers));
             };
             callbackOptions.signal.addEventListener("abort", onAbort, { once: true });
@@ -2555,6 +2556,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           });
 
         const canUseTool: CanUseTool = (toolName, toolInput, callbackOptions) =>
+          // @effect-diagnostics-next-line runEffectInsideEffect:off
           Effect.runPromise(
             Effect.gen(function* () {
               const context = yield* Ref.get(contextRef);
@@ -2655,6 +2657,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
                   return;
                 }
                 pendingApprovals.delete(requestId);
+                // @effect-diagnostics-next-line runEffectInsideEffect:off
                 Effect.runFork(Deferred.succeed(decisionDeferred, "cancel"));
               };
 
@@ -2863,6 +2866,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           providerRefs: {},
         });
 
+        // @effect-diagnostics-next-line runEffectInsideEffect:off
         const streamFiber = Effect.runFork(runSdkStream(context));
         context.streamFiber = streamFiber;
         streamFiber.addObserver((exit) => {
@@ -2872,6 +2876,7 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
           if (context.streamFiber === streamFiber) {
             context.streamFiber = undefined;
           }
+          // @effect-diagnostics-next-line runEffectInsideEffect:off
           Effect.runFork(handleStreamExit(context, exit));
         });
 

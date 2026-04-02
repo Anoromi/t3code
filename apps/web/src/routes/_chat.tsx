@@ -1,5 +1,4 @@
-import { type ProjectId, type ResolvedKeybindingsConfig, type ThreadId } from "@t3tools/contracts";
-import { useQuery } from "@tanstack/react-query";
+import { type ProjectId, type ThreadId } from "@t3tools/contracts";
 import { Outlet, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -12,6 +11,7 @@ import { useComposerDraftStore } from "../composerDraftStore";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useStore } from "../store";
+import { useUiStateStore } from "../uiStateStore";
 import { Sidebar, SidebarProvider } from "~/components/ui/sidebar";
 import { SidebarRail } from "~/components/ui/sidebar";
 import { resolveSidebarNewThreadEnvMode } from "~/components/Sidebar.logic";
@@ -122,7 +122,7 @@ function ChatRouteLayout() {
   const navigate = useNavigate();
   const projects = useStore((store) => store.projects);
   const threads = useStore((store) => store.threads);
-  const setProjectExpanded = useStore((store) => store.setProjectExpanded);
+  const setProjectExpanded = useUiStateStore((store) => store.setProjectExpanded);
   const draftProjectThreadIds = useComposerDraftStore(
     (store) => store.projectDraftThreadIdByProjectId,
   );
@@ -160,9 +160,15 @@ function ChatRouteLayout() {
           defaultEnvMode: appSettings.defaultThreadEnvMode,
         }),
         codexFastMode: appSettings.defaultCodexFastMode,
+        codexReasoningEffort: appSettings.defaultCodexReasoningEffort,
       });
     },
-    [appSettings.defaultCodexFastMode, appSettings.defaultThreadEnvMode, handleNewThread],
+    [
+      appSettings.defaultCodexFastMode,
+      appSettings.defaultCodexReasoningEffort,
+      appSettings.defaultThreadEnvMode,
+      handleNewThread,
+    ],
   );
 
   useEffect(() => {

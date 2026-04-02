@@ -639,6 +639,7 @@ function PersistentThreadTerminalDrawer({
 
 export default function ChatView({ threadId }: ChatViewProps) {
   const serverThread = useThreadById(threadId);
+  const syncServerReadModel = useStore((store) => store.syncServerReadModel);
   const setStoreThreadError = useStore((store) => store.setError);
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
   const activeThreadLastVisitedAt = useUiStateStore(
@@ -1099,27 +1100,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
   );
   const selectedModelForPicker = selectedModel;
   const phase = derivePhase(activeThread?.session ?? null);
-  const isSendBusy = sendPhase !== "idle";
-  const isPreparingWorktree = sendPhase === "preparing-worktree";
-  const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
-  const activeThreadSupportsFork = threadSupportsCodexFork(activeThread ?? null);
-  const hasActiveThreadForkableHistory = hasForkableThreadHistory(activeThread ?? null);
-  const threadForkReady =
-    activeThreadSupportsFork &&
-    isThreadForkReady({
-      thread: activeThread ?? null,
-      isServerThread,
-      phase,
-      isSendBusy,
-      isConnecting,
-      isRevertingCheckpoint,
-    });
-  const nowIso = new Date(nowTick).toISOString();
-  const activeWorkStartedAt = deriveActiveWorkStartedAt(
-    activeLatestTurn,
-    activeThread?.session ?? null,
-    sendStartedAt,
-  );
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(
     () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
@@ -1227,6 +1207,18 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activePendingUserInput: activePendingUserInput?.requestId ?? null,
     threadError: activeThread?.error,
   });
+  const activeThreadSupportsFork = threadSupportsCodexFork(activeThread ?? null);
+  const hasActiveThreadForkableHistory = hasForkableThreadHistory(activeThread ?? null);
+  const threadForkReady =
+    activeThreadSupportsFork &&
+    isThreadForkReady({
+      thread: activeThread ?? null,
+      isServerThread,
+      phase,
+      isSendBusy,
+      isConnecting,
+      isRevertingCheckpoint,
+    });
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
   const nowIso = new Date(nowTick).toISOString();
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
@@ -3540,7 +3532,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
         existing.includes(prompt.requestId) ? existing : [...existing, prompt.requestId],
       );
       sendInFlightRef.current = true;
-      beginSendPhase("sending-turn");
+      beginLocalDispatch({ preparingWorktree: false });
       setThreadError(threadIdForSend, null);
       setOptimisticUserMessages((existing) => [
         ...existing,
@@ -3587,7 +3579,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
           threadIdForSend,
           err instanceof Error ? err.message : "Failed to restart from recovered prompt.",
         );
-        resetSendPhase();
+        resetLocalDispatch();
       } finally {
         sendInFlightRef.current = false;
         setRespondingUserInputRequestIds((existing) =>
@@ -3597,13 +3589,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
     },
     [
       activeThread,
-      beginSendPhase,
+      beginLocalDispatch,
       forceStickToBottom,
       interactionMode,
       isConnecting,
       isSendBusy,
       persistThreadSettingsForNextTurn,
-      resetSendPhase,
+      resetLocalDispatch,
       runtimeMode,
       selectedModel,
       selectedModelSelection,
@@ -4043,10 +4035,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     const createdAt = new Date().toISOString();
 
     sendInFlightRef.current = true;
-    beginSendPhase("sending-turn");
+    beginLocalDispatch({ preparingWorktree: false });
     const finish = () => {
       sendInFlightRef.current = false;
-      resetSendPhase();
+      resetLocalDispatch();
     };
 
     await api.orchestration
@@ -4083,14 +4075,14 @@ export default function ChatView({ threadId }: ChatViewProps) {
     activeProject,
     activeThread,
     activeThreadSupportsFork,
-    beginSendPhase,
+    beginLocalDispatch,
     clearComposerDraftContent,
     hasActiveThreadForkableHistory,
     isConnecting,
     isSendBusy,
     isServerThread,
     navigate,
-    resetSendPhase,
+    resetLocalDispatch,
     syncServerReadModel,
     threadForkReady,
   ]);

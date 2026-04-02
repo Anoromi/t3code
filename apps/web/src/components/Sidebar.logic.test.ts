@@ -50,7 +50,6 @@ function makeGroupedProject(
       provider: "codex",
       model: "gpt-5.4",
     },
-    expanded: true,
     scripts: [],
     worktreeGroupTitles,
     ...overrides,

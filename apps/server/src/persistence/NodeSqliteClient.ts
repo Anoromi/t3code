@@ -26,10 +26,7 @@ import * as Statement from "effect/unstable/sql/Statement";
 const ATTR_DB_SYSTEM_NAME = "db.system.name";
 
 const toSqlError = (message: string, cause: unknown): SqlError =>
-  new SqlError({
-    message,
-    cause,
-  });
+  new SqlError({ message, cause } as any);
 
 export const TypeId: TypeId = "~local/sqlite-node/SqliteClient";
 

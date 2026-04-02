@@ -18,7 +18,6 @@ function makeProject(overrides: Partial<Project> & Pick<Project, "id" | "name" |
         provider: "codex",
         model: "gpt-5-codex",
       } satisfies Project["defaultModelSelection"]),
-    expanded: overrides.expanded ?? true,
     scripts: overrides.scripts ?? [],
     worktreeGroupTitles: overrides.worktreeGroupTitles ?? [],
   };
@@ -49,7 +48,6 @@ function makeThread(
     archivedAt: overrides.archivedAt ?? null,
     updatedAt: overrides.updatedAt,
     latestTurn: overrides.latestTurn ?? null,
-    lastVisitedAt: overrides.lastVisitedAt,
     branch: overrides.branch ?? null,
     worktreePath: overrides.worktreePath ?? null,
     forkOrigin: overrides.forkOrigin ?? null,

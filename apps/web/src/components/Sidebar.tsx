@@ -44,9 +44,8 @@ import {
   ProjectId,
   ThreadId,
   type GitStatusResult,
-  type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import {
   type SidebarProjectSortOrder,
@@ -57,11 +56,11 @@ import { isElectron } from "../env";
 import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { cn, isLinuxPlatform, isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
 import { useStore } from "../store";
+import { useUiStateStore } from "../uiStateStore";
 import { shortcutLabelForCommand } from "../keybindings";
 import { formatRelativeTime } from "../relativeTime";
 import { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
 import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
-import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
@@ -113,6 +112,7 @@ import {
   getFallbackThreadIdAfterDelete,
   getProjectSortTimestamp,
   getThreadSortTimestamp,
+  orderItemsByPreferredIds,
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadEnvMode,
   resolveThreadRowClassName,
@@ -126,8 +126,8 @@ import {
 import type { SidebarWorktreeGroupEntry } from "./Sidebar.logic";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
+import { useServerKeybindings } from "~/rpc/serverState";
 
-const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
 const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
   updated_at: "Last user message",
@@ -156,6 +156,7 @@ const SIDEBAR_NESTED_CARD_CONTENT_CLASS_NAME =
 
 interface ProjectSidebarSection {
   hasHiddenThreadEntries: boolean;
+  isProjectExpanded: boolean;
   isThreadListExpanded: boolean;
   orderedProjectThreadIds: ThreadId[];
   project: Project;
@@ -400,9 +401,12 @@ function SortableProjectItem({
 export default function Sidebar() {
   const projects = useStore((store) => store.projects);
   const threads = useStore((store) => store.threads);
-  const markThreadUnread = useStore((store) => store.markThreadUnread);
-  const toggleProject = useStore((store) => store.toggleProject);
-  const reorderProjects = useStore((store) => store.reorderProjects);
+  const threadLastVisitedAtById = useUiStateStore((store) => store.threadLastVisitedAtById);
+  const markThreadUnread = useUiStateStore((store) => store.markThreadUnread);
+  const toggleProject = useUiStateStore((store) => store.toggleProject);
+  const reorderProjects = useUiStateStore((store) => store.reorderProjects);
+  const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
+  const projectOrder = useUiStateStore((store) => store.projectOrder);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
   const getDraftThreadByProjectId = useComposerDraftStore(
     (store) => store.getDraftThreadByProjectId,
@@ -424,10 +428,7 @@ export default function Sidebar() {
     strict: false,
     select: (params) => (params.threadId ? ThreadId.makeUnsafe(params.threadId) : null),
   });
-  const { data: keybindings = EMPTY_KEYBINDINGS } = useQuery({
-    ...serverConfigQueryOptions(),
-    select: (config) => config.keybindings,
-  });
+  const keybindings = useServerKeybindings();
   const queryClient = useQueryClient();
   const removeWorktreeMutation = useMutation(gitRemoveWorktreeMutationOptions({ queryClient }));
   const [addingProject, setAddingProject] = useState(false);
@@ -567,9 +568,24 @@ export default function Sidebar() {
     [],
   );
 
+  const orderedProjects = useMemo(
+    () =>
+      orderItemsByPreferredIds({
+        items: projects,
+        preferredIds: projectOrder,
+        getId: (project) => project.id,
+      }),
+    [projectOrder, projects],
+  );
+
+  const isProjectExpanded = useCallback(
+    (projectId: ProjectId) => projectExpandedById[projectId] ?? true,
+    [projectExpandedById],
+  );
+
   const projectSidebarSections = useMemo<ProjectSidebarSection[]>(
     () =>
-      projects.map((project) => {
+      orderedProjects.map((project) => {
         const projectThreads = threads
           .filter((thread) => thread.projectId === project.id)
           .toSorted((a, b) => {
@@ -577,10 +593,14 @@ export default function Sidebar() {
             if (byDate !== 0) return byDate;
             return b.id.localeCompare(a.id);
           });
+        const projectExpanded = isProjectExpanded(project.id);
         const projectStatus = resolveProjectStatusIndicator(
           projectThreads.map((thread) =>
             resolveThreadStatusPill({
-              thread,
+              thread: {
+                ...thread,
+                lastVisitedAt: threadLastVisitedAtById[thread.id],
+              },
               hasPendingApprovals: derivePendingApprovals(thread.activities).length > 0,
               hasPendingUserInput: derivePendingUserInputs(thread.activities).length > 0,
             }),
@@ -604,6 +624,7 @@ export default function Sidebar() {
 
         return {
           hasHiddenThreadEntries,
+          isProjectExpanded: projectExpanded,
           isThreadListExpanded,
           orderedProjectThreadIds: flattenSidebarProjectThreadIds(visibleSelectableThreadEntries),
           project,
@@ -614,7 +635,14 @@ export default function Sidebar() {
           visibleSelectableThreadEntries,
         } satisfies ProjectSidebarSection;
       }),
-    [collapsedWorktreeGroupKeySet, expandedThreadListsByProject, projects, threads],
+    [
+      collapsedWorktreeGroupKeySet,
+      expandedThreadListsByProject,
+      isProjectExpanded,
+      orderedProjects,
+      threadLastVisitedAtById,
+      threads,
+    ],
   );
 
   useLayoutEffect(() => {
@@ -665,7 +693,7 @@ export default function Sidebar() {
       const previousEntries =
         previousVisibleEntriesByProjectRef.current.get(section.project.id) ?? [];
       const births = detectWorktreeGroupBirths(previousEntries, section.visibleThreadEntries);
-      if (!section.project.expanded || births.length === 0) {
+      if (!section.isProjectExpanded || births.length === 0) {
         continue;
       }
 
@@ -818,6 +846,7 @@ export default function Sidebar() {
         await handleNewThread(projectId, {
           envMode: appSettings.defaultThreadEnvMode,
           codexFastMode: appSettings.defaultCodexFastMode,
+          codexReasoningEffort: appSettings.defaultCodexReasoningEffort,
         }).catch(() => undefined);
       } catch (error) {
         const description =
@@ -841,11 +870,12 @@ export default function Sidebar() {
       handleNewThread,
       isAddingProject,
       projects,
-      shouldBrowseForProjectImmediately,
-      appSettings.defaultCodexFastMode,
-      appSettings.defaultThreadEnvMode,
-    ],
-  );
+        shouldBrowseForProjectImmediately,
+        appSettings.defaultCodexFastMode,
+        appSettings.defaultCodexReasoningEffort,
+        appSettings.defaultThreadEnvMode,
+      ],
+    );
 
   const handleAddProject = () => {
     void addProjectFromPath(newCwd);
@@ -1110,7 +1140,7 @@ export default function Sidebar() {
       }
 
       if (clicked === "mark-unread") {
-        markThreadUnread(threadId);
+        markThreadUnread(threadId, thread.latestTurn?.completedAt);
         return;
       }
       if (clicked === "copy-path") {
@@ -1222,7 +1252,8 @@ export default function Sidebar() {
 
       if (clicked === "mark-unread") {
         for (const id of ids) {
-          markThreadUnread(id);
+          const thread = threads.find((candidate) => candidate.id === id);
+          markThreadUnread(id, thread?.latestTurn?.completedAt);
         }
         clearSelection();
         return;
@@ -1253,6 +1284,7 @@ export default function Sidebar() {
       markThreadUnread,
       removeFromSelection,
       selectedThreadIds,
+      threads,
     ],
   );
 
@@ -1373,12 +1405,12 @@ export default function Sidebar() {
       dragInProgressRef.current = false;
       const { active, over } = event;
       if (!over || active.id === over.id) return;
-      const activeProject = projects.find((project) => project.id === active.id);
-      const overProject = projects.find((project) => project.id === over.id);
+      const activeProject = orderedProjects.find((project) => project.id === active.id);
+      const overProject = orderedProjects.find((project) => project.id === over.id);
       if (!activeProject || !overProject) return;
       reorderProjects(activeProject.id, overProject.id);
     },
-    [appSettings.sidebarProjectSortOrder, projects, reorderProjects],
+    [appSettings.sidebarProjectSortOrder, orderedProjects, reorderProjects],
   );
 
   const handleProjectDragStart = useCallback(
@@ -1438,6 +1470,7 @@ export default function Sidebar() {
     nested = false,
   ) {
     const { childProjects, displayName, project } = projectNode;
+    const projectExpanded = isProjectExpanded(project.id);
     const projectThreads = sortThreadsForSidebar(
       threads.filter((thread) => thread.projectId === project.id),
       appSettings.sidebarThreadSortOrder,
@@ -1445,7 +1478,10 @@ export default function Sidebar() {
     const projectStatus = resolveProjectStatusIndicator(
       projectThreads.map((thread) =>
         resolveThreadStatusPill({
-          thread,
+          thread: {
+            ...thread,
+            lastVisitedAt: threadLastVisitedAtById[thread.id],
+          },
           hasPendingApprovals: derivePendingApprovals(thread.activities).length > 0,
           hasPendingUserInput: derivePendingUserInputs(thread.activities).length > 0,
         }),
@@ -1455,17 +1491,17 @@ export default function Sidebar() {
     const projectThreadEntries = buildSidebarProjectThreadEntries(project, projectThreads);
     const isThreadListExpanded = expandedThreadListsByProject.has(project.id);
     const pinnedCollapsedThread =
-      !project.expanded && activeThreadId
+      !projectExpanded && activeThreadId
         ? (projectThreads.find((thread) => thread.id === activeThreadId) ?? null)
         : null;
-    const hasExpandedChildProject = childProjects.some(
-      (childProject) => childProject.project.expanded,
+    const hasExpandedChildProject = childProjects.some((childProject) =>
+      isProjectExpanded(childProject.project.id),
     );
     const hasActiveChildProject =
       routeThreadProjectId !== null &&
       childProjects.some((childProject) => childProject.project.id === routeThreadProjectId);
     const shouldShowThreadPanel =
-      project.expanded ||
+      projectExpanded ||
       pinnedCollapsedThread !== null ||
       hasExpandedChildProject ||
       hasActiveChildProject;
@@ -1597,7 +1633,7 @@ export default function Sidebar() {
               });
             }}
           >
-            {!project.expanded && projectStatus ? (
+            {!projectExpanded && projectStatus ? (
               <span
                 aria-hidden="true"
                 title={projectStatus.label}
@@ -1615,7 +1651,7 @@ export default function Sidebar() {
             ) : (
               <ChevronRightIcon
                 className={`-ml-0.5 size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150 ${
-                  project.expanded ? "rotate-90" : ""
+                  projectExpanded ? "rotate-90" : ""
                 }`}
               />
             )}
@@ -1774,7 +1810,7 @@ export default function Sidebar() {
               ),
             )}
 
-            {project.expanded && hasHiddenThreadEntries && !isThreadListExpanded && (
+            {projectExpanded && hasHiddenThreadEntries && !isThreadListExpanded && (
               <SidebarMenuSubItem className="w-full">
                 <SidebarMenuSubButton
                   render={<button type="button" />}
@@ -1789,7 +1825,7 @@ export default function Sidebar() {
                 </SidebarMenuSubButton>
               </SidebarMenuSubItem>
             )}
-            {project.expanded && hasHiddenThreadEntries && isThreadListExpanded && (
+            {projectExpanded && hasHiddenThreadEntries && isThreadListExpanded && (
               <SidebarMenuSubItem className="w-full">
                 <SidebarMenuSubButton
                   render={<button type="button" />}
@@ -2028,7 +2064,10 @@ export default function Sidebar() {
       const isSelected = selectedThreadIds.has(thread.id);
       const isHighlighted = isActive || isSelected;
       const threadStatus = resolveThreadStatusPill({
-        thread,
+        thread: {
+          ...thread,
+          lastVisitedAt: threadLastVisitedAtById[thread.id],
+        },
         hasPendingApprovals: derivePendingApprovals(thread.activities).length > 0,
         hasPendingUserInput: derivePendingUserInputs(thread.activities).length > 0,
       });
@@ -2208,6 +2247,7 @@ export default function Sidebar() {
       routeThreadId,
       selectedThreadIds,
       setSelectionAnchor,
+      threadLastVisitedAtById,
       terminalStateByThreadId,
     ],
   );
@@ -2409,12 +2449,13 @@ export default function Sidebar() {
             >
               <SidebarMenu>
                 <SortableContext
-                  items={projects.map((project) => project.id)}
+                  items={orderedProjects.map((project) => project.id)}
                   strategy={verticalListSortingStrategy}
                 >
                   {projectSidebarSections.map((section) => {
                     const {
                       hasHiddenThreadEntries,
+                      isProjectExpanded,
                       isThreadListExpanded,
                       orderedProjectThreadIds,
                       project,
@@ -2424,7 +2465,7 @@ export default function Sidebar() {
                     return (
                       <SortableProjectItem key={project.id} projectId={project.id}>
                         {(dragHandleProps) => (
-                          <Collapsible className="group/collapsible" open={project.expanded}>
+                          <Collapsible className="group/collapsible" open={isProjectExpanded}>
                             <div className="group/project-header relative">
                               <SidebarMenuButton
                                 size="sm"
@@ -2442,7 +2483,7 @@ export default function Sidebar() {
                                   });
                                 }}
                               >
-                                {!project.expanded && projectStatus ? (
+                                {!isProjectExpanded && projectStatus ? (
                                   <span
                                     aria-hidden="true"
                                     title={projectStatus.label}
@@ -2460,7 +2501,7 @@ export default function Sidebar() {
                                 ) : (
                                   <ChevronRightIcon
                                     className={`-ml-0.5 size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150 ${
-                                      project.expanded ? "rotate-90" : ""
+                                      isProjectExpanded ? "rotate-90" : ""
                                     }`}
                                   />
                                 )}

@@ -5,6 +5,7 @@ import { cn } from "~/lib/utils";
 import { formatRelativeTime } from "~/relativeTime";
 import { derivePendingApprovals, derivePendingUserInputs } from "~/session-logic";
 import type { Project, Thread } from "~/types";
+import { useUiStateStore } from "~/uiStateStore";
 import {
   buildNavigationCommandResults,
   getProjectCommandActionLabel,
@@ -33,6 +34,7 @@ export function NavigationCommandMenu(props: {
   onSelectProject: (projectId: ProjectId) => void | Promise<void>;
 }) {
   const [query, setQuery] = useState("");
+  const threadLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
 
   useEffect(() => {
     if (props.open) return;
@@ -86,7 +88,10 @@ export function NavigationCommandMenu(props: {
                     thread === null
                       ? null
                       : resolveThreadStatusPill({
-                          thread,
+                          thread: {
+                            ...thread,
+                            lastVisitedAt: threadLastVisitedAtById[thread.id],
+                          },
                           hasPendingApprovals: derivePendingApprovals(thread.activities).length > 0,
                           hasPendingUserInput:
                             derivePendingUserInputs(thread.activities).length > 0,

@@ -738,7 +738,6 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       Effect.logWarning("failed to stop provider service", { cause }),
     ),
   );
-
   return {
     startSession,
     forkThread,

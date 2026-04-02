@@ -598,6 +598,7 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
     return {
       hasHiddenThreads,
       visibleThreads: [...threads],
+      hiddenThreads: [],
     };
   }
 
@@ -606,6 +607,7 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
     return {
       hasHiddenThreads: true,
       visibleThreads: previewThreads,
+      hiddenThreads: threads.slice(previewLimit),
     };
   }
 
@@ -614,6 +616,7 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
     return {
       hasHiddenThreads: true,
       visibleThreads: previewThreads,
+      hiddenThreads: threads.slice(previewLimit),
     };
   }
 
@@ -622,6 +625,7 @@ export function getVisibleThreadsForProject<T extends Pick<Thread, "id">>(input:
   return {
     hasHiddenThreads: true,
     visibleThreads: threads.filter((thread) => visibleThreadIds.has(thread.id)),
+    hiddenThreads: threads.filter((thread) => !visibleThreadIds.has(thread.id)),
   };
 }
 
