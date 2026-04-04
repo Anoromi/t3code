@@ -28,9 +28,9 @@ Rebase T3 Code onto upstream behavior without breaking persisted state, desktop 
    1. format the touched files
    2. run lint/typecheck on the affected package or file set
    3. run focused tests for the code you just reconciled
-   Only move to the next rebase stop once the current resolution is coherent against the live upstream APIs it now targets.
-   Do not defer obvious integration fallout until the end of the full rebase.
-   If a paused rebase commit is known to be incomplete until a later commit in the stack lands, document that explicitly and still run the narrowest checks that are expected to pass.
+      Only move to the next rebase stop once the current resolution is coherent against the live upstream APIs it now targets.
+      Do not defer obvious integration fallout until the end of the full rebase.
+      If a paused rebase commit is known to be incomplete until a later commit in the stack lands, document that explicitly and still run the narrowest checks that are expected to pass.
 
 4. Audit compatibility surfaces explicitly.
    Check migrations for numbering drift versus upstream.
