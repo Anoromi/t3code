@@ -110,7 +110,10 @@ export function BranchToolbarBranchSelector({
     }),
   );
   const branches = useMemo(
-    () => dedupeRemoteBranchesWithLocalMatches(branchesSearchData?.pages.flatMap((page) => page.branches) ?? []),
+    () =>
+      dedupeRemoteBranchesWithLocalMatches(
+        branchesSearchData?.pages.flatMap((page) => page.branches) ?? [],
+      ),
     [branchesSearchData?.pages],
   );
   const currentGitBranch =

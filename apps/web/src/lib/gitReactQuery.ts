@@ -71,6 +71,22 @@ export function gitStatusQueryOptions(cwd: string | null) {
   });
 }
 
+export function gitBranchesQueryOptions(cwd: string | null) {
+  return queryOptions({
+    queryKey: gitQueryKeys.branches(cwd),
+    queryFn: async () => {
+      const api = ensureNativeApi();
+      if (!cwd) throw new Error("Git branches are unavailable.");
+      return api.git.listBranches({ cwd, limit: GIT_BRANCHES_PAGE_SIZE });
+    },
+    enabled: cwd !== null,
+    staleTime: GIT_BRANCHES_STALE_TIME_MS,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    refetchInterval: GIT_BRANCHES_REFETCH_INTERVAL_MS,
+  });
+}
+
 export function gitBranchSearchInfiniteQueryOptions(input: {
   cwd: string | null;
   query: string;

@@ -180,6 +180,7 @@ describe("OrchestrationEngine", () => {
           runtimeMode: "full-access" as const,
           branch: null,
           worktreePath: null,
+          forkOrigin: null,
           latestTurn: null,
           createdAt: "2026-03-03T00:00:02.000Z",
           updatedAt: "2026-03-03T00:00:03.000Z",
@@ -194,6 +195,7 @@ describe("OrchestrationEngine", () => {
       ],
     };
 
+    const { providerServiceLayer, providerSessionDirectoryLayer } = makeProviderTestLayers();
     const layer = OrchestrationEngineLive.pipe(
       Layer.provide(
         Layer.succeed(ProjectionSnapshotQuery, {
@@ -212,6 +214,8 @@ describe("OrchestrationEngine", () => {
       ),
       Layer.provide(Layer.succeed(OrchestrationEventStore, failOnHistoricalReplayStore)),
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+      Layer.provide(providerServiceLayer),
+      Layer.provide(providerSessionDirectoryLayer),
       Layer.provide(SqlitePersistenceMemory),
     );
 

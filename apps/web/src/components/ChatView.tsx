@@ -30,7 +30,7 @@ import {
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@tanstack/react-pacer";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { gitBranchesQueryOptions, gitStatusQueryOptions } from "~/lib/gitReactQuery";
@@ -194,6 +194,7 @@ import {
   LastInvokedScriptByProjectSchema,
   type LocalDispatchSnapshot,
   PullRequestDialogState,
+  buildTemporaryWorktreeBranchName,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
   resolvePendingWorktreeAction,
@@ -638,9 +639,11 @@ function PersistentThreadTerminalDrawer({
 }
 
 export default function ChatView({ threadId }: ChatViewProps) {
+  const queryClient = useQueryClient();
   const serverThread = useThreadById(threadId);
   const syncServerReadModel = useStore((store) => store.syncServerReadModel);
   const setStoreThreadError = useStore((store) => store.setError);
+  const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
   const activeThreadLastVisitedAt = useUiStateStore(
     (store) => store.threadLastVisitedAtById[threadId],

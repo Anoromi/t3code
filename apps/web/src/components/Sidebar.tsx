@@ -870,12 +870,12 @@ export default function Sidebar() {
       handleNewThread,
       isAddingProject,
       projects,
-        shouldBrowseForProjectImmediately,
-        appSettings.defaultCodexFastMode,
-        appSettings.defaultCodexReasoningEffort,
-        appSettings.defaultThreadEnvMode,
-      ],
-    );
+      shouldBrowseForProjectImmediately,
+      appSettings.defaultCodexFastMode,
+      appSettings.defaultCodexReasoningEffort,
+      appSettings.defaultThreadEnvMode,
+    ],
+  );
 
   const handleAddProject = () => {
     void addProjectFromPath(newCwd);

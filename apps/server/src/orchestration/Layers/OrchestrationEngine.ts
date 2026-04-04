@@ -91,11 +91,6 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const commandQueue = yield* Queue.unbounded<CommandEnvelope>();
   const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
 
-  const publishCommittedEvents = (events: ReadonlyArray<OrchestrationEvent>) =>
-    Effect.forEach(events, (event) => PubSub.publish(eventPubSub, event), {
-      discard: true,
-    });
-
   const processThreadFork = (
     command: ThreadForkCommand,
   ): Effect.Effect<

@@ -385,6 +385,41 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
+  const forkThread: ProviderServiceShape["forkThread"] = Effect.fn("forkThread")(function* (input) {
+    const bindingOption = yield* directory.getBinding(input.sourceThreadId);
+    const binding = Option.getOrUndefined(bindingOption);
+    if (!binding) {
+      return yield* toValidationError(
+        "ProviderService.forkThread",
+        `Cannot fork thread '${input.sourceThreadId}' because no persisted provider binding exists.`,
+      );
+    }
+
+    const adapter = yield* registry.getByProvider(binding.provider);
+    const result = yield* adapter.forkThread(input);
+    if (result.provider !== adapter.provider) {
+      return yield* toValidationError(
+        "ProviderService.forkThread",
+        `Adapter/provider mismatch: requested '${adapter.provider}', received '${result.provider}'.`,
+      );
+    }
+
+    yield* analytics.record("provider.thread.forked", {
+      provider: result.provider,
+      runtimeMode: result.runtimeMode,
+      hasResumeCursor: result.resumeCursor !== undefined,
+    });
+
+    return result satisfies ProviderThreadForkResult;
+  });
+
+  const archiveThread: ProviderServiceShape["archiveThread"] = Effect.fn("archiveThread")(
+    function* (input) {
+      const adapter = yield* registry.getByProvider(input.provider);
+      yield* adapter.archiveThread(input.threadId, input.resumeCursor);
+    },
+  );
+
   const sendTurn: ProviderServiceShape["sendTurn"] = Effect.fn("sendTurn")(function* (rawInput) {
     const parsed = yield* decodeInputOrValidationError({
       operation: "ProviderService.sendTurn",

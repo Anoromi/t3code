@@ -456,53 +456,50 @@ const make = Effect.gen(function* () {
     });
   });
 
-  const ensurePreTurnBaselineFromTurnStart = Effect.fn("ensurePreTurnBaselineFromTurnStart")(
   const captureCheckpointFromSettledSession = Effect.fn("captureCheckpointFromSettledSession")(
-    function* (
-    event: Extract<OrchestrationEvent, { type: "thread.session-set" }>,
-  ) {
-    if (event.payload.session.activeTurnId !== null) {
-      return;
-    }
+    function* (event: Extract<OrchestrationEvent, { type: "thread.session-set" }>) {
+      if (event.payload.session.activeTurnId !== null) {
+        return;
+      }
 
-    const readModel = yield* orchestrationEngine.getReadModel();
-    const thread = readModel.threads.find((entry) => entry.id === event.payload.threadId);
-    if (!thread) {
-      return;
-    }
+      const readModel = yield* orchestrationEngine.getReadModel();
+      const thread = readModel.threads.find((entry) => entry.id === event.payload.threadId);
+      if (!thread) {
+        return;
+      }
 
-    const latestTurnId = thread.latestTurn?.turnId ?? null;
-    if (!latestTurnId) {
-      return;
-    }
+      const latestTurnId = thread.latestTurn?.turnId ?? null;
+      if (!latestTurnId) {
+        return;
+      }
 
-    const missingCheckpoint = thread.checkpoints.find(
-      (checkpoint) => checkpoint.turnId === latestTurnId && checkpoint.status === "missing",
-    );
-    if (!missingCheckpoint) {
-      return;
-    }
+      const missingCheckpoint = thread.checkpoints.find(
+        (checkpoint) => checkpoint.turnId === latestTurnId && checkpoint.status === "missing",
+      );
+      if (!missingCheckpoint) {
+        return;
+      }
 
-    const checkpointCwd = yield* resolveCheckpointCwd({
-      threadId: event.payload.threadId,
-      thread,
-      projects: readModel.projects,
-      preferSessionRuntime: true,
-    });
-    if (!checkpointCwd) {
-      return;
-    }
+      const checkpointCwd = yield* resolveCheckpointCwd({
+        threadId: event.payload.threadId,
+        thread,
+        projects: readModel.projects,
+        preferSessionRuntime: true,
+      });
+      if (!checkpointCwd) {
+        return;
+      }
 
-    yield* captureAndDispatchCheckpoint({
-      threadId: event.payload.threadId,
-      turnId: missingCheckpoint.turnId,
-      thread,
-      cwd: checkpointCwd,
-      turnCount: missingCheckpoint.checkpointTurnCount,
-      status: event.payload.session.status === "error" ? "error" : "ready",
-      assistantMessageId: missingCheckpoint.assistantMessageId ?? undefined,
-      createdAt: event.occurredAt,
-    });
+      yield* captureAndDispatchCheckpoint({
+        threadId: event.payload.threadId,
+        turnId: missingCheckpoint.turnId,
+        thread,
+        cwd: checkpointCwd,
+        turnCount: missingCheckpoint.checkpointTurnCount,
+        status: event.payload.session.status === "error" ? "error" : "ready",
+        assistantMessageId: missingCheckpoint.assistantMessageId ?? undefined,
+        createdAt: event.occurredAt,
+      });
     },
   );
 
