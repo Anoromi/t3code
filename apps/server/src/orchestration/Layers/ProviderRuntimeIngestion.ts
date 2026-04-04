@@ -121,6 +121,15 @@ function normalizeRuntimeTurnState(
   }
 }
 
+function shouldBackfillRunningSessionFromTurnScopedEvent(event: ProviderRuntimeEvent): boolean {
+  return (
+    event.turnId !== undefined &&
+    event.type === "content.delta" &&
+    event.payload.streamKind === "assistant_text" &&
+    event.payload.delta.length > 0
+  );
+}
+
 function orchestrationSessionStatusFromRuntimeState(
   state: "starting" | "running" | "waiting" | "ready" | "interrupted" | "stopped" | "error",
 ): "starting" | "running" | "ready" | "interrupted" | "stopped" | "error" {
@@ -918,6 +927,29 @@ const make = Effect.fn("make")(function* () {
         ? yield* getSourceProposedPlanReferenceForAcceptedTurnStart(thread.id, eventTurnId)
         : null;
 
+    const shouldImplicitlyStartTurn =
+      eventTurnId !== undefined &&
+      shouldBackfillRunningSessionFromTurnScopedEvent(event) &&
+      (thread.session?.status !== "running" || !sameId(activeTurnId, eventTurnId));
+
+    if (shouldImplicitlyStartTurn) {
+      yield* orchestrationEngine.dispatch({
+        type: "thread.session.set",
+        commandId: providerCommandId(event, "thread-session-set-implicit-turn-start"),
+        threadId: thread.id,
+        session: {
+          threadId: thread.id,
+          status: "running",
+          providerName: event.provider,
+          runtimeMode: thread.session?.runtimeMode ?? "full-access",
+          activeTurnId: eventTurnId,
+          lastError: thread.session?.lastError ?? null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      });
+    }
+
     if (
       event.type === "session.started" ||
       event.type === "session.state.changed" ||
@@ -931,7 +963,12 @@ const make = Effect.fn("make")(function* () {
           ? (eventTurnId ?? null)
           : event.type === "turn.completed" || event.type === "session.exited"
             ? null
-            : activeTurnId;
+            : event.type === "session.state.changed" &&
+                (event.payload.state === "ready" ||
+                  event.payload.state === "stopped" ||
+                  event.payload.state === "error")
+              ? null
+              : activeTurnId;
       const status = (() => {
         switch (event.type) {
           case "session.state.changed":

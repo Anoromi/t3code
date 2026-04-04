@@ -427,6 +427,44 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread.session?.lastError).toBeNull();
   });
 
+  it("clears a stale active turn when provider reports session.state.changed ready", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-session-ready-stale-turn-started"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-stale"),
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) =>
+        thread.session?.status === "running" && thread.session?.activeTurnId === "turn-stale",
+    );
+
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-session-ready-stale-turn-cleared"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: new Date().toISOString(),
+      payload: {
+        state: "ready",
+      },
+    });
+
+    const thread = await waitForThread(
+      harness.engine,
+      (entry) => entry.session?.status === "ready" && entry.session?.activeTurnId === null,
+    );
+    expect(thread.session?.status).toBe("ready");
+    expect(thread.session?.activeTurnId).toBeNull();
+  });
+
   it("does not clear active turn when session/thread started arrives mid-turn", async () => {
     const harness = await createHarness();
     const now = new Date().toISOString();
@@ -1558,6 +1596,68 @@ describe("ProviderRuntimeIngestion", () => {
     expect(message?.text.length).toBe(oversizedText.length);
     expect(message?.text).toBe(oversizedText);
     expect(message?.streaming).toBe(false);
+  });
+
+  it("backfills a running session from turn-scoped content when turn.started is missing", async () => {
+    const harness = await createHarness();
+    const now = new Date().toISOString();
+
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-implicit-turn-session-ready"),
+      provider: "codex",
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      payload: {
+        state: "ready",
+      },
+    });
+
+    await waitForThread(
+      harness.engine,
+      (thread) => thread.session?.status === "ready" && thread.session?.activeTurnId === null,
+    );
+
+    harness.emit({
+      type: "content.delta",
+      eventId: asEventId("evt-implicit-turn-delta"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-implicit"),
+      itemId: asItemId("item-implicit"),
+      payload: {
+        streamKind: "assistant_text",
+        delta: "implicit",
+      },
+    });
+
+    let thread = await waitForThread(
+      harness.engine,
+      (entry) =>
+        entry.session?.status === "running" && entry.session?.activeTurnId === "turn-implicit",
+    );
+    expect(thread.session?.status).toBe("running");
+    expect(thread.session?.activeTurnId).toBe("turn-implicit");
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-implicit-turn-completed"),
+      provider: "codex",
+      createdAt: new Date().toISOString(),
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-implicit"),
+      payload: {
+        state: "completed",
+      },
+    });
+
+    thread = await waitForThread(
+      harness.engine,
+      (entry) => entry.session?.status === "ready" && entry.session?.activeTurnId === null,
+    );
+    expect(thread.session?.status).toBe("ready");
+    expect(thread.session?.activeTurnId).toBeNull();
   });
 
   it("does not duplicate assistant completion when item.completed is followed by turn.completed", async () => {
