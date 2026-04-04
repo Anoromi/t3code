@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { desktopDir, resolveElectronPath } from "./electron-launcher.mjs";
 import { waitForResources } from "./wait-for-resources.mjs";
+import { movePidToHyprWorkspace, parseHyprWorkspaceEnv } from "./hypr-workspace.mjs";
 import { resolveDesktopOzoneArgs } from "./runtime-args.mjs";
 
 const port = Number(process.env.ELECTRON_RENDERER_PORT ?? 5733);
@@ -29,6 +30,7 @@ await waitForResources({
 
 const childEnv = { ...process.env };
 delete childEnv.ELECTRON_RUN_AS_NODE;
+const hyprWorkspace = parseHyprWorkspaceEnv(childEnv);
 
 let shuttingDown = false;
 let restartTimer = null;
@@ -78,6 +80,14 @@ function startApp() {
   );
 
   currentApp = app;
+
+  if (hyprWorkspace !== null) {
+    // Hypr may register the new Electron window slightly after the child process spawns.
+    void movePidToHyprWorkspace({
+      workspace: hyprWorkspace,
+      pid: app.pid,
+    });
+  }
 
   app.once("error", () => {
     if (currentApp === app) {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildManagedShellLaunchCommand,
   buildShellLaunchCommand,
   buildSpawnDispatch,
   createAssignmentKey,
@@ -342,12 +343,38 @@ describe("hypr-worktree", () => {
   it("parses spawn options and strips --silent", () => {
     expect(resolveSpawnOptions(["--silent", "--", "echo hi"])).toEqual({
       silent: true,
+      workspace: null,
       remainingArgs: ["--", "echo hi"],
     });
   });
 
+  it("parses an explicit spawn workspace override", () => {
+    expect(resolveSpawnOptions(["--workspace", "23", "--silent", "--", "echo hi"])).toEqual({
+      silent: true,
+      workspace: 23,
+      remainingArgs: ["--", "echo hi"],
+    });
+  });
+
+  it("rejects an invalid explicit spawn workspace override", () => {
+    expect(() => resolveSpawnOptions(["--workspace", "0", "--", "echo hi"])).toThrow(
+      "expected a positive integer",
+    );
+  });
+
   it("requires a command string for spawn", () => {
     expect(() => resolveCommandString(["--"])).toThrow("Missing command");
+  });
+
+  it("detaches managed Hypr launches from the caller tty", () => {
+    const command = buildManagedShellLaunchCommand({
+      cwd: "/repos/sample",
+      command: "bun run dev:desktop:wayland",
+      pidFilePath: "/state/hypr-workspaces/pid.txt",
+    });
+
+    expect(command).toContain("setsid sh -lc");
+    expect(command).toContain("</dev/null >/dev/null 2>&1");
   });
 
   it("where ensures an assignment and prints only the workspace number", async () => {
@@ -449,6 +476,33 @@ describe("hypr-worktree", () => {
     expect(result.exitCode).toBe(0);
     expect(dispatches).toHaveLength(1);
     expect(dispatches[0]).toContain("exec:[workspace 11 silent]");
+  });
+
+  it("spawn --workspace launches on the explicit workspace without mutating the assignment", async () => {
+    const worktree = createWorktree();
+    const registry: WorkspaceRegistry = {
+      version: 2,
+      workspaceStart: 11,
+      assignments: {
+        [worktree.key]: createAssignment(worktree, { workspace: 14, pid: 0 }),
+      },
+    };
+    const { deps, dispatches, outputs, fs, stateFilePath } = createCliDeps({
+      argvWorktree: worktree,
+      registry,
+      nextSpawnPid: 9100,
+    });
+
+    const result = await runCli(["spawn", "--workspace", "23", "--silent", "--", "echo hi"], deps);
+
+    expect(result.exitCode).toBe(0);
+    expect(dispatches).toHaveLength(1);
+    expect(dispatches[0]).toContain("exec:[workspace 23 silent]");
+    expect(outputs.stdout).toEqual([`pid=9100 workspace=23 worktree=${worktree.worktreeRoot}`]);
+
+    const storedRegistry = parseRegistry(fs.files.get(stateFilePath) ?? "");
+    expect(storedRegistry.assignments[worktree.key]?.workspace).toBe(14);
+    expect(storedRegistry.assignments[worktree.key]?.pid).toBe(9100);
   });
 
   it("fails clearly outside Hyprland", async () => {

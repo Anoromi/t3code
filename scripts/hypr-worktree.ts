@@ -286,7 +286,7 @@ export function buildManagedShellLaunchCommand(input: {
     "sh",
     "-lc",
     quoteShellArg(
-      'cd "$1"; pidfile="$2"; rm -f "$pidfile"; sh -lc "$3" & child=$!; printf "%s\\n" "$child" >"$pidfile"; wait "$child"',
+      'cd "$1"; pidfile="$2"; rm -f "$pidfile"; setsid sh -lc "$3" </dev/null >/dev/null 2>&1 & child=$!; printf "%s\\n" "$child" >"$pidfile"; wait "$child"',
     ),
     "hypr-worktree",
     quoteShellArg(input.cwd),
@@ -327,21 +327,46 @@ export function resolveCommandString(args: ReadonlyArray<string>): string {
 
 export function resolveSpawnOptions(args: ReadonlyArray<string>): {
   readonly silent: boolean;
+  readonly workspace: number | null;
   readonly remainingArgs: ReadonlyArray<string>;
 } {
   let silent = false;
+  let workspace: number | null = null;
   const remaining: Array<string> = [];
 
-  for (const arg of args) {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === undefined) {
+      continue;
+    }
+
     if (arg === "--silent") {
       silent = true;
+      continue;
+    }
+
+    if (arg === "--workspace") {
+      const rawWorkspace = args[index + 1];
+      if (rawWorkspace === undefined || rawWorkspace === "--") {
+        throw new Error("Missing value for '--workspace'.");
+      }
+
+      const parsedWorkspace = Number(rawWorkspace);
+      if (!Number.isInteger(parsedWorkspace) || parsedWorkspace <= 0) {
+        throw new Error(
+          `Invalid '--workspace' value '${rawWorkspace}': expected a positive integer.`,
+        );
+      }
+
+      workspace = parsedWorkspace;
+      index += 1;
       continue;
     }
 
     remaining.push(arg);
   }
 
-  return { silent, remainingArgs: remaining };
+  return { silent, workspace, remainingArgs: remaining };
 }
 
 function defaultFileSystem(): FileSystemLike {
@@ -767,8 +792,9 @@ export async function runCli(argv: ReadonlyArray<string>, deps: CliDeps): Promis
       return { exitCode: 0, stdout, stderr };
     }
 
-    const { silent, remainingArgs } = resolveSpawnOptions(rest);
+    const { silent, workspace, remainingArgs } = resolveSpawnOptions(rest);
     const shellCommand = resolveCommandString(remainingArgs);
+    const targetWorkspace = workspace ?? assignment.workspace;
 
     if (assignment.pid > 0 && deps.isProcessAlive(assignment.pid)) {
       await killProcessTree({
@@ -798,12 +824,12 @@ export async function runCli(argv: ReadonlyArray<string>, deps: CliDeps): Promis
     assignment = clearedAssignment;
 
     if (!silent) {
-      deps.dispatchWorkspace(assignment.workspace);
+      deps.dispatchWorkspace(targetWorkspace);
     }
 
     deps.dispatchExec(
       buildSpawnDispatch({
-        workspace: assignment.workspace,
+        workspace: targetWorkspace,
         cwd: worktree.cwd,
         command: shellCommand,
         silent,
@@ -830,7 +856,7 @@ export async function runCli(argv: ReadonlyArray<string>, deps: CliDeps): Promis
     };
     saveRegistry(stateFilePath, nextRegistry, deps.fileSystem);
 
-    writeStdout(formatAssignmentLine(pid, assignment.workspace, worktree.worktreeRoot));
+    writeStdout(formatAssignmentLine(pid, targetWorkspace, worktree.worktreeRoot));
     return { exitCode: 0, stdout, stderr };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
