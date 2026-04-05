@@ -875,6 +875,10 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
       setEnv("T3CODE_PORT", "3773");
       setEnv("VITE_DEV_SERVER_URL", "http://localhost:5173");
       setEnv("TEST_TERMINAL_KEEP", "keep-me");
+      setEnv("PS1", "\\[\\e[32m\\]broken\\[\\e[0m\\] ");
+      setEnv("PROMPT_COMMAND", "history -a");
+      setEnv("RPROMPT", "%~");
+      setEnv("TERM", "dumb");
 
       try {
         const { manager, ptyAdapter } = yield* createManager();
@@ -886,7 +890,13 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
         expect(spawnInput.env.PORT).toBeUndefined();
         expect(spawnInput.env.T3CODE_PORT).toBeUndefined();
         expect(spawnInput.env.VITE_DEV_SERVER_URL).toBeUndefined();
+        expect(spawnInput.env.PS1).toBeUndefined();
+        expect(spawnInput.env.PROMPT_COMMAND).toBeUndefined();
+        expect(spawnInput.env.RPROMPT).toBeUndefined();
         expect(spawnInput.env.TEST_TERMINAL_KEEP).toBe("keep-me");
+        expect(spawnInput.env.TERM).toBe(
+          process.platform === "win32" ? "xterm-color" : "xterm-256color",
+        );
       } finally {
         restoreEnv();
       }

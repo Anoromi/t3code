@@ -53,6 +53,14 @@ const DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS = 128;
 const DEFAULT_OPEN_COLS = 120;
 const DEFAULT_OPEN_ROWS = 30;
 const TERMINAL_ENV_BLOCKLIST = new Set(["PORT", "ELECTRON_RENDERER_PORT", "ELECTRON_RUN_AS_NODE"]);
+const TERMINAL_PROMPT_ENV_BLOCKLIST = new Set([
+  "PROMPT",
+  "PROMPT_COMMAND",
+  "PROMPT_DIRTRIM",
+  "RPS1",
+  "RPROMPT",
+  "SPROMPT",
+]);
 
 type TerminalSubprocessChecker = (
   terminalPid: number,
@@ -605,6 +613,12 @@ function toSessionKey(threadId: string, terminalId: string): string {
 
 function shouldExcludeTerminalEnvKey(key: string): boolean {
   const normalizedKey = key.toUpperCase();
+  if (/^PS[0-4]$/.test(normalizedKey)) {
+    return true;
+  }
+  if (TERMINAL_PROMPT_ENV_BLOCKLIST.has(normalizedKey)) {
+    return true;
+  }
   if (normalizedKey.startsWith("T3CODE_")) {
     return true;
   }
@@ -628,6 +642,9 @@ function createTerminalSpawnEnv(
     for (const [key, value] of Object.entries(runtimeEnv)) {
       spawnEnv[key] = value;
     }
+  }
+  if (!spawnEnv.TERM || spawnEnv.TERM === "dumb") {
+    spawnEnv.TERM = process.platform === "win32" ? "xterm-color" : "xterm-256color";
   }
   return spawnEnv;
 }
