@@ -50,7 +50,6 @@ pkgs.stdenv.mkDerivation (finalAttrs: {
   buildInputs = runtimeLibraries;
 
   env = {
-    ELECTRON_SKIP_BINARY_DOWNLOAD = "1";
     npm_config_nodedir = pkgs.nodejs_24;
   };
 
