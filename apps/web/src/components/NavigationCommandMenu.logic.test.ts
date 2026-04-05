@@ -74,6 +74,15 @@ describe("buildNavigationCommandResults", () => {
     createdAt: "2026-03-20T10:00:00.000Z",
     updatedAt: "2026-03-20T11:00:00.000Z",
     branch: "fix/auth-redirect",
+    messages: [
+      {
+        id: "message-newest-user" as Thread["messages"][number]["id"],
+        role: "user",
+        text: "Please fix auth redirect",
+        createdAt: "2026-03-20T10:55:00.000Z",
+        streaming: false,
+      },
+    ],
   });
   const threadOlder = makeThread({
     id: ThreadId.makeUnsafe("thread-older"),
@@ -82,6 +91,15 @@ describe("buildNavigationCommandResults", () => {
     createdAt: "2026-03-19T10:00:00.000Z",
     updatedAt: "2026-03-19T11:00:00.000Z",
     worktreePath: "/repo/beta-service-worktree",
+    messages: [
+      {
+        id: "message-older-user" as Thread["messages"][number]["id"],
+        role: "user",
+        text: "Investigate the flaky queue",
+        createdAt: "2026-03-19T10:30:00.000Z",
+        streaming: false,
+      },
+    ],
   });
 
   it("returns recent threads only when the query is empty", () => {
@@ -93,6 +111,60 @@ describe("buildNavigationCommandResults", () => {
     });
 
     expect(results.items.map((item) => item.id)).toEqual([threadNewest.id, threadOlder.id]);
+  });
+
+  it("sorts recent threads by last user message instead of later assistant activity", () => {
+    const threadWithLaterAssistantUpdate = makeThread({
+      id: ThreadId.makeUnsafe("thread-later-assistant"),
+      projectId: projectAlpha.id,
+      title: "Long running task",
+      createdAt: "2026-03-21T09:00:00.000Z",
+      updatedAt: "2026-03-21T12:00:00.000Z",
+      messages: [
+        {
+          id: "message-later-assistant-user" as Thread["messages"][number]["id"],
+          role: "user",
+          text: "Start the task",
+          createdAt: "2026-03-21T09:05:00.000Z",
+          streaming: false,
+        },
+        {
+          id: "message-later-assistant" as Thread["messages"][number]["id"],
+          role: "assistant",
+          text: "Still working",
+          createdAt: "2026-03-21T11:59:00.000Z",
+          streaming: false,
+        },
+      ],
+    });
+    const threadWithNewerUserMessage = makeThread({
+      id: ThreadId.makeUnsafe("thread-newer-user"),
+      projectId: projectAlpha.id,
+      title: "Fresh request",
+      createdAt: "2026-03-21T08:00:00.000Z",
+      updatedAt: "2026-03-21T10:00:00.000Z",
+      messages: [
+        {
+          id: "message-newer-user" as Thread["messages"][number]["id"],
+          role: "user",
+          text: "Here is the latest request",
+          createdAt: "2026-03-21T11:00:00.000Z",
+          streaming: false,
+        },
+      ],
+    });
+
+    const results = buildNavigationCommandResults({
+      query: "",
+      projects: [projectAlpha],
+      threads: [threadWithLaterAssistantUpdate, threadWithNewerUserMessage],
+      draftProjectIds: new Set(),
+    });
+
+    expect(results.items.map((item) => item.id)).toEqual([
+      threadWithNewerUserMessage.id,
+      threadWithLaterAssistantUpdate.id,
+    ]);
   });
 
   it("intersperses project and thread matches by fuzzy score", () => {
@@ -159,7 +231,7 @@ describe("buildNavigationCommandResults", () => {
     expect(projectResult).toMatchObject({
       id: projectBeta.id,
       hasDraft: true,
-      latestThreadUpdatedAt: threadOlder.updatedAt,
+      latestThreadRecencyAt: "2026-03-19T10:30:00.000Z",
     });
   });
 });

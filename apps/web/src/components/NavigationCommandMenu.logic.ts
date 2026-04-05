@@ -1,5 +1,6 @@
 import fuzzysort from "fuzzysort";
 import type { ProjectId, ThreadId } from "@t3tools/contracts";
+import { getThreadRecencyAt } from "../threadRecency";
 import type { Project, Thread } from "../types";
 
 export const RECENT_THREAD_LIMIT = 12;
@@ -16,6 +17,7 @@ export interface NavigationCommandThreadItem {
   worktreePath: string | null;
   createdAt: string;
   updatedAt: string;
+  recencyAt: string;
 }
 
 export interface NavigationCommandProjectItem {
@@ -24,7 +26,7 @@ export interface NavigationCommandProjectItem {
   name: string;
   cwd: string;
   hasDraft: boolean;
-  latestThreadUpdatedAt: string | null;
+  latestThreadRecencyAt: string | null;
 }
 
 export type NavigationCommandItem = NavigationCommandThreadItem | NavigationCommandProjectItem;
@@ -68,11 +70,11 @@ function compareIsoDesc(a: string | null, b: string | null): number {
 }
 
 function compareThreadRecency(
-  a: Pick<NavigationCommandThreadItem, "updatedAt" | "createdAt" | "id">,
-  b: Pick<NavigationCommandThreadItem, "updatedAt" | "createdAt" | "id">,
+  a: Pick<NavigationCommandThreadItem, "recencyAt" | "createdAt" | "id">,
+  b: Pick<NavigationCommandThreadItem, "recencyAt" | "createdAt" | "id">,
 ): number {
-  const byUpdatedAt = compareIsoDesc(a.updatedAt, b.updatedAt);
-  if (byUpdatedAt !== 0) return byUpdatedAt;
+  const byRecencyAt = compareIsoDesc(a.recencyAt, b.recencyAt);
+  if (byRecencyAt !== 0) return byRecencyAt;
 
   const byCreatedAt = compareIsoDesc(a.createdAt, b.createdAt);
   if (byCreatedAt !== 0) return byCreatedAt;
@@ -81,7 +83,7 @@ function compareThreadRecency(
 }
 
 function candidateUpdatedAt(candidate: NavigationCommandItem): string | null {
-  return candidate.type === "thread" ? candidate.updatedAt : candidate.latestThreadUpdatedAt;
+  return candidate.type === "thread" ? candidate.recencyAt : candidate.latestThreadRecencyAt;
 }
 
 function candidateSearchPrimary(candidate: SearchCandidate): string {
@@ -139,15 +141,15 @@ export function buildNavigationCommandResults(
 ): NavigationCommandResults {
   const query = input.query.trim();
   const projectById = new Map(input.projects.map((project) => [project.id, project] as const));
-  const latestThreadUpdatedAtByProjectId = new Map<ProjectId, string>();
+  const latestThreadRecencyAtByProjectId = new Map<ProjectId, string>();
 
   for (const thread of input.threads) {
-    const threadUpdatedAt = thread.updatedAt ?? thread.createdAt;
-    const current = latestThreadUpdatedAtByProjectId.get(thread.projectId) ?? null;
-    if (compareIsoDesc(threadUpdatedAt, current) >= 0) {
+    const threadRecencyAt = getThreadRecencyAt(thread);
+    const current = latestThreadRecencyAtByProjectId.get(thread.projectId) ?? null;
+    if (compareIsoDesc(threadRecencyAt, current) >= 0) {
       continue;
     }
-    latestThreadUpdatedAtByProjectId.set(thread.projectId, threadUpdatedAt);
+    latestThreadRecencyAtByProjectId.set(thread.projectId, threadRecencyAt);
   }
 
   const threadItems = input.threads
@@ -166,6 +168,7 @@ export function buildNavigationCommandResults(
         worktreePath: thread.worktreePath,
         createdAt: thread.createdAt,
         updatedAt: thread.updatedAt ?? thread.createdAt,
+        recencyAt: getThreadRecencyAt(thread),
       };
     })
     .filter((thread): thread is NavigationCommandThreadItem => thread !== null);
@@ -192,7 +195,7 @@ export function buildNavigationCommandResults(
         name: project.name,
         cwd: project.cwd,
         hasDraft: input.draftProjectIds.has(project.id),
-        latestThreadUpdatedAt: latestThreadUpdatedAtByProjectId.get(project.id) ?? null,
+        latestThreadRecencyAt: latestThreadRecencyAtByProjectId.get(project.id) ?? null,
       },
       searchableName: project.name,
       searchableCwd: project.cwd,

@@ -2,6 +2,7 @@ import * as React from "react";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import type { Project, Thread, WorktreeGroupTitle } from "../types";
 import { cn } from "../lib/utils";
+import { getThreadRecencyAt } from "../threadRecency";
 import { formatWorktreePathForDisplay, normalizeWorktreePath } from "../worktreeCleanup";
 import {
   findLatestProposedPlan,
@@ -636,27 +637,7 @@ function toSortableTimestamp(iso: string | undefined): number | null {
 }
 
 function getLatestUserMessageTimestamp(thread: SidebarThreadSortInput): number {
-  if (thread.latestUserMessageAt) {
-    return toSortableTimestamp(thread.latestUserMessageAt) ?? Number.NEGATIVE_INFINITY;
-  }
-
-  let latestUserMessageTimestamp: number | null = null;
-
-  for (const message of thread.messages ?? []) {
-    if (message.role !== "user") continue;
-    const messageTimestamp = toSortableTimestamp(message.createdAt);
-    if (messageTimestamp === null) continue;
-    latestUserMessageTimestamp =
-      latestUserMessageTimestamp === null
-        ? messageTimestamp
-        : Math.max(latestUserMessageTimestamp, messageTimestamp);
-  }
-
-  if (latestUserMessageTimestamp !== null) {
-    return latestUserMessageTimestamp;
-  }
-
-  return toSortableTimestamp(thread.updatedAt ?? thread.createdAt) ?? Number.NEGATIVE_INFINITY;
+  return toSortableTimestamp(getThreadRecencyAt(thread)) ?? Number.NEGATIVE_INFINITY;
 }
 
 export function getThreadSortTimestamp(

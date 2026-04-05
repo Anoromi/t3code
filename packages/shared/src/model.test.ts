@@ -69,8 +69,10 @@ describe("resolveModelSlug", () => {
     );
   });
 
-  it("preserves normalized unknown models", () => {
-    expect(resolveModelSlug("custom/internal-model", "codex")).toBe("custom/internal-model");
+  it("falls back to the provider default for unknown models", () => {
+    expect(resolveModelSlug("custom/internal-model", "codex")).toBe(
+      DEFAULT_MODEL_BY_PROVIDER.codex,
+    );
   });
 });
 

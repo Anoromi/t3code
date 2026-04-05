@@ -207,21 +207,23 @@ describe("desktop update UI helpers", () => {
   });
 
   it("includes the downloaded version in the install confirmation copy", () => {
-    expect(
-      getDesktopUpdateInstallConfirmationMessage({
-        availableVersion: "1.1.0",
-        downloadedVersion: "1.1.1",
-      }),
-    ).toContain("Install update 1.1.1 and restart T3 Code?");
+    const message = getDesktopUpdateInstallConfirmationMessage({
+      availableVersion: "1.1.0",
+      downloadedVersion: "1.1.1",
+    });
+
+    expect(message).toContain("Install update 1.1.1 and restart T3 Cork?");
+    expect(message).toContain("Any running tasks will be interrupted.");
   });
 
   it("falls back to generic install confirmation copy when no version is available", () => {
-    expect(
-      getDesktopUpdateInstallConfirmationMessage({
-        availableVersion: null,
-        downloadedVersion: null,
-      }),
-    ).toContain("Install update and restart T3 Code?");
+    const message = getDesktopUpdateInstallConfirmationMessage({
+      availableVersion: null,
+      downloadedVersion: null,
+    });
+
+    expect(message).toContain("Install update and restart T3 Cork?");
+    expect(message).toContain("Any running tasks will be interrupted.");
   });
 });
 

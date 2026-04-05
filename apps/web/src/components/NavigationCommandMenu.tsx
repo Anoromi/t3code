@@ -148,7 +148,7 @@ export function NavigationCommandMenu(props: {
                       {item.type === "thread" ? (
                         <span className="flex shrink-0 items-start self-stretch pt-0.5">
                           <CommandShortcut className="tracking-normal">
-                            {formatRelativeTime(item.updatedAt)}
+                            {formatRelativeTime(item.recencyAt)}
                           </CommandShortcut>
                         </span>
                       ) : (

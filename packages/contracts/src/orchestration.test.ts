@@ -516,7 +516,10 @@ it.effect("defaults forkOrigin to null on historical thread snapshots", () =>
       id: "thread-1",
       projectId: "project-1",
       title: "Thread title",
-      model: "gpt-5.4",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.4",
+      },
       runtimeMode: "full-access",
       interactionMode: "default",
       branch: null,

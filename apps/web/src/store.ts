@@ -19,6 +19,7 @@ import {
   derivePendingApprovals,
   derivePendingUserInputs,
 } from "./session-logic";
+import { getLatestUserMessageAt } from "./threadRecency";
 import { type ChatMessage, type Project, type SidebarThreadSummary, type Thread } from "./types";
 
 // ── State ────────────────────────────────────────────────────────────
@@ -192,23 +193,6 @@ function mapProject(project: OrchestrationReadModel["projects"][number]): Projec
     scripts: mapProjectScripts(project.scripts),
     worktreeGroupTitles: Array.from(project.worktreeGroupTitles ?? []),
   };
-}
-
-function getLatestUserMessageAt(
-  messages: ReadonlyArray<Thread["messages"][number]>,
-): string | null {
-  let latestUserMessageAt: string | null = null;
-
-  for (const message of messages) {
-    if (message.role !== "user") {
-      continue;
-    }
-    if (latestUserMessageAt === null || message.createdAt > latestUserMessageAt) {
-      latestUserMessageAt = message.createdAt;
-    }
-  }
-
-  return latestUserMessageAt;
 }
 
 function buildSidebarThreadSummary(thread: Thread): SidebarThreadSummary {

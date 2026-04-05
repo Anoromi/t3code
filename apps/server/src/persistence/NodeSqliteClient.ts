@@ -20,13 +20,18 @@ import * as Stream from "effect/Stream";
 import * as Reactivity from "effect/unstable/reactivity/Reactivity";
 import * as Client from "effect/unstable/sql/SqlClient";
 import type { Connection } from "effect/unstable/sql/SqlConnection";
-import { SqlError } from "effect/unstable/sql/SqlError";
+import { classifySqliteError, SqlError } from "effect/unstable/sql/SqlError";
 import * as Statement from "effect/unstable/sql/Statement";
 
 const ATTR_DB_SYSTEM_NAME = "db.system.name";
 
 const toSqlError = (message: string, cause: unknown): SqlError =>
-  new SqlError({ message, cause } as any);
+  new SqlError({
+    reason: classifySqliteError(cause, {
+      message,
+      operation: "sqlite",
+    }),
+  });
 
 export const TypeId: TypeId = "~local/sqlite-node/SqliteClient";
 
