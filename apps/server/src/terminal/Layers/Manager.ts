@@ -209,10 +209,15 @@ function normalizeShellCommand(value: string | undefined): string | null {
   return firstToken.replace(/^['"]|['"]$/g, "");
 }
 
+function shellName(command: string | null): string | null {
+  if (!command || command.length === 0) return null;
+  return path.basename(command).toLowerCase();
+}
+
 function shellCandidateFromCommand(command: string | null): ShellCandidate | null {
   if (!command || command.length === 0) return null;
-  const shellName = path.basename(command).toLowerCase();
-  if (process.platform !== "win32" && shellName === "zsh") {
+  const normalizedShellName = shellName(command);
+  if (process.platform !== "win32" && normalizedShellName === "zsh") {
     return { shell: command, args: ["-o", "nopromptsp"] };
   }
   return { shell: command };
@@ -237,7 +242,10 @@ function uniqueShellCandidates(candidates: Array<ShellCandidate | null>): ShellC
 }
 
 function resolveShellCandidates(shellResolver: () => string): ShellCandidate[] {
-  const requested = shellCandidateFromCommand(normalizeShellCommand(shellResolver()));
+  const requestedCommand = normalizeShellCommand(shellResolver());
+  const requested = shellCandidateFromCommand(requestedCommand);
+  const envShellCommand = normalizeShellCommand(process.env.SHELL);
+  const envShell = shellCandidateFromCommand(envShellCommand);
 
   if (process.platform === "win32") {
     return uniqueShellCandidates([
@@ -248,14 +256,16 @@ function resolveShellCandidates(shellResolver: () => string): ShellCandidate[] {
     ]);
   }
 
+  const preferPathBash = shellName(requestedCommand) === "bash";
+
   return uniqueShellCandidates([
-    requested,
-    shellCandidateFromCommand(normalizeShellCommand(process.env.SHELL)),
+    ...(preferPathBash
+      ? [shellCandidateFromCommand("bash"), requested, envShell]
+      : [requested, envShell]),
     shellCandidateFromCommand("/bin/zsh"),
     shellCandidateFromCommand("/bin/bash"),
     shellCandidateFromCommand("/bin/sh"),
     shellCandidateFromCommand("zsh"),
-    shellCandidateFromCommand("bash"),
     shellCandidateFromCommand("sh"),
   ]);
 }

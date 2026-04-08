@@ -821,29 +821,40 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
 
   it.effect("retries with fallback shells when preferred shell spawn fails", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager(5, {
-        shellResolver: () => "/definitely/missing-shell -l",
-      });
-      ptyAdapter.spawnFailures.push(new Error("posix_spawnp failed."));
+      const originalShell = process.env.SHELL;
+      process.env.SHELL = "/bin/sh";
 
-      const snapshot = yield* manager.open(openInput());
+      try {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          shellResolver: () => "/definitely/missing-shell -l",
+        });
+        ptyAdapter.spawnFailures.push(new Error("posix_spawnp failed."));
 
-      assert.equal(snapshot.status, "running");
-      expect(ptyAdapter.spawnInputs.length).toBeGreaterThanOrEqual(2);
-      expect(ptyAdapter.spawnInputs[0]?.shell).toBe("/definitely/missing-shell");
+        const snapshot = yield* manager.open(openInput());
 
-      if (process.platform === "win32") {
-        expect(
-          ptyAdapter.spawnInputs.some(
-            (input) => input.shell === "cmd.exe" || input.shell === "powershell.exe",
-          ),
-        ).toBe(true);
-      } else {
-        expect(
-          ptyAdapter.spawnInputs
-            .slice(1)
-            .some((input) => input.shell !== "/definitely/missing-shell"),
-        ).toBe(true);
+        assert.equal(snapshot.status, "running");
+        expect(ptyAdapter.spawnInputs.length).toBeGreaterThanOrEqual(2);
+        expect(ptyAdapter.spawnInputs[0]?.shell).toBe("/definitely/missing-shell");
+
+        if (process.platform === "win32") {
+          expect(
+            ptyAdapter.spawnInputs.some(
+              (input) => input.shell === "cmd.exe" || input.shell === "powershell.exe",
+            ),
+          ).toBe(true);
+        } else {
+          expect(
+            ptyAdapter.spawnInputs
+              .slice(1)
+              .some((input) => input.shell !== "/definitely/missing-shell"),
+          ).toBe(true);
+        }
+      } finally {
+        if (originalShell === undefined) {
+          delete process.env.SHELL;
+        } else {
+          process.env.SHELL = originalShell;
+        }
       }
     }),
   );
@@ -937,6 +948,33 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
       if (!spawnInput) return;
 
       expect(spawnInput.args).toEqual(["-o", "nopromptsp"]);
+    }),
+  );
+
+  it.effect("prefers PATH bash over a non-interactive SHELL bash path", () =>
+    Effect.gen(function* () {
+      if (process.platform === "win32") return;
+
+      const originalShell = process.env.SHELL;
+      process.env.SHELL = "/nix/store/fake-bash/bin/bash";
+
+      try {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          shellResolver: () => "/nix/store/fake-bash/bin/bash",
+        });
+        yield* manager.open(openInput());
+        const spawnInput = ptyAdapter.spawnInputs[0];
+        expect(spawnInput).toBeDefined();
+        if (!spawnInput) return;
+
+        expect(spawnInput.shell).toBe("bash");
+      } finally {
+        if (originalShell === undefined) {
+          delete process.env.SHELL;
+        } else {
+          process.env.SHELL = originalShell;
+        }
+      }
     }),
   );
 
