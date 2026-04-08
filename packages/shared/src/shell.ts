@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import path from "node:path";
 
 const PATH_CAPTURE_START = "__T3CODE_PATH_START__";
 const PATH_CAPTURE_END = "__T3CODE_PATH_END__";
@@ -16,7 +17,7 @@ export function resolveLoginShell(
 ): string | undefined {
   const trimmedShell = shell?.trim();
   if (trimmedShell) {
-    return trimmedShell;
+    return normalizeLoginShell(platform, trimmedShell);
   }
 
   if (platform === "darwin") {
@@ -24,10 +25,31 @@ export function resolveLoginShell(
   }
 
   if (platform === "linux") {
-    return "/bin/bash";
+    return normalizeLoginShell(platform, "/bin/bash");
   }
 
   return undefined;
+}
+
+function normalizeLoginShell(platform: NodeJS.Platform, shell: string): string {
+  if (platform !== "linux") {
+    return shell;
+  }
+
+  if (!shell.startsWith("/nix/store/")) {
+    return shell;
+  }
+
+  if (shell.includes("bash-interactive")) {
+    return shell;
+  }
+
+  const shellBasename = path.basename(shell);
+  if (shellBasename === "bash" || shellBasename === "sh") {
+    return `/run/current-system/sw/bin/${shellBasename}`;
+  }
+
+  return shell;
 }
 
 export function extractPathFromShellOutput(output: string): string | null {

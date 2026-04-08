@@ -5,7 +5,7 @@ import { fixPath } from "./os-jank";
 describe("fixPath", () => {
   it("hydrates PATH on linux using the resolved login shell", () => {
     const env: NodeJS.ProcessEnv = {
-      SHELL: "/bin/zsh",
+      SHELL: "/nix/store/hash-bash-5.3/bin/bash",
       PATH: "/usr/bin",
     };
     const readPath = vi.fn(() => "/opt/homebrew/bin:/usr/bin");
@@ -16,7 +16,8 @@ describe("fixPath", () => {
       readPath,
     });
 
-    expect(readPath).toHaveBeenCalledWith("/bin/zsh");
+    expect(readPath).toHaveBeenCalledWith("/run/current-system/sw/bin/bash");
+    expect(env.SHELL).toBe("/run/current-system/sw/bin/bash");
     expect(env.PATH).toBe("/opt/homebrew/bin:/usr/bin");
   });
 

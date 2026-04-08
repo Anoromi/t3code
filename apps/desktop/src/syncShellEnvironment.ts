@@ -17,6 +17,7 @@ export function syncShellEnvironment(
   try {
     const shell = resolveLoginShell(platform, env.SHELL);
     if (!shell) return;
+    env.SHELL = shell;
 
     const shellEnvironment = (options.readEnvironment ?? readEnvironmentFromLoginShell)(shell, [
       "PATH",

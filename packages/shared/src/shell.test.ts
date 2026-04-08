@@ -4,6 +4,7 @@ import {
   extractPathFromShellOutput,
   readEnvironmentFromLoginShell,
   readPathFromLoginShell,
+  resolveLoginShell,
 } from "./shell";
 
 describe("extractPathFromShellOutput", () => {
@@ -57,6 +58,27 @@ describe("readPathFromLoginShell", () => {
     expect(args?.[1]).toContain("__T3CODE_ENV_PATH_START__");
     expect(args?.[1]).toContain("__T3CODE_ENV_PATH_END__");
     expect(options).toEqual({ encoding: "utf8", timeout: 5000 });
+  });
+});
+
+describe("resolveLoginShell", () => {
+  it("keeps explicit non-nix shell paths", () => {
+    expect(resolveLoginShell("linux", "/bin/zsh")).toBe("/bin/zsh");
+  });
+
+  it("rewrites non-interactive nix bash paths to the system bash on linux", () => {
+    expect(resolveLoginShell("linux", "/nix/store/hash-bash-5.3/bin/bash")).toBe(
+      "/run/current-system/sw/bin/bash",
+    );
+    expect(resolveLoginShell("linux", "/nix/store/hash-bash-5.3/bin/sh")).toBe(
+      "/run/current-system/sw/bin/sh",
+    );
+  });
+
+  it("keeps nix bash-interactive paths unchanged on linux", () => {
+    expect(resolveLoginShell("linux", "/nix/store/hash-bash-interactive-5.3/bin/bash")).toBe(
+      "/nix/store/hash-bash-interactive-5.3/bin/bash",
+    );
   });
 });
 

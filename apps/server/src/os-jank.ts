@@ -17,6 +17,7 @@ export function fixPath(
   try {
     const shell = resolveLoginShell(platform, env.SHELL);
     if (!shell) return;
+    env.SHELL = shell;
     const result = (options.readPath ?? readPathFromLoginShell)(shell);
     if (result) {
       env.PATH = result;
