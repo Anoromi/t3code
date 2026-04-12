@@ -8,6 +8,7 @@
 import { ThreadId, type TerminalEvent } from "@t3tools/contracts";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import { CORKDIFF_TERMINAL_ID } from "./lib/corkdiffTerminal";
 import { resolveStorage } from "./lib/storage";
 import { terminalRunningSubprocessFromEvent } from "./terminalActivity";
 import {
@@ -38,6 +39,7 @@ export interface TerminalEventEntry {
 }
 
 const TERMINAL_STATE_STORAGE_KEY = "t3code:terminal-state:v1";
+const TERMINAL_STATE_STORAGE_VERSION = 2;
 const EMPTY_TERMINAL_EVENT_ENTRIES: ReadonlyArray<TerminalEventEntry> = [];
 const MAX_TERMINAL_EVENT_BUFFER = 200;
 
@@ -461,6 +463,17 @@ function closeThreadTerminal(state: ThreadTerminalState, terminalId: string): Th
   });
 }
 
+function removeTerminalIdFromThreadTerminalState(
+  state: ThreadTerminalState,
+  terminalId: string,
+): ThreadTerminalState {
+  const normalized = normalizeThreadTerminalState(state);
+  if (!normalized.terminalIds.includes(terminalId)) {
+    return normalized;
+  }
+  return closeThreadTerminal(normalized, terminalId);
+}
+
 function setThreadTerminalActivity(
   state: ThreadTerminalState,
   terminalId: string,
@@ -536,6 +549,43 @@ export function selectTerminalEventEntries(
   );
 }
 
+interface PersistedTerminalStateStoreState {
+  terminalStateByThreadId?: Record<ThreadId, ThreadTerminalState>;
+}
+
+export function migratePersistedTerminalStateStoreState(
+  persistedState: unknown,
+  version: number,
+): PersistedTerminalStateStoreState {
+  if (typeof persistedState !== "object" || persistedState === null) {
+    return { terminalStateByThreadId: {} };
+  }
+
+  const current = persistedState as PersistedTerminalStateStoreState;
+  const terminalStateByThreadId = current.terminalStateByThreadId ?? {};
+  if (version >= TERMINAL_STATE_STORAGE_VERSION) {
+    return { terminalStateByThreadId };
+  }
+
+  const nextTerminalStateByThreadId = Object.fromEntries(
+    Object.entries(terminalStateByThreadId).flatMap(([threadId, threadState]) => {
+      if (!threadState) {
+        return [];
+      }
+      const cleaned = removeTerminalIdFromThreadTerminalState(threadState, CORKDIFF_TERMINAL_ID);
+      const normalized = normalizeThreadTerminalState(cleaned);
+      if (isDefaultThreadTerminalState(normalized)) {
+        return [];
+      }
+      return [[threadId, normalized]];
+    }),
+  ) as Record<ThreadId, ThreadTerminalState>;
+
+  return {
+    terminalStateByThreadId: nextTerminalStateByThreadId,
+  };
+}
+
 interface TerminalStateStoreState {
   terminalStateByThreadId: Record<ThreadId, ThreadTerminalState>;
   terminalLaunchContextByThreadId: Record<ThreadId, ThreadTerminalLaunchContext>;
@@ -564,6 +614,7 @@ interface TerminalStateStoreState {
   clearTerminalState: (threadId: ThreadId) => void;
   removeTerminalState: (threadId: ThreadId) => void;
   removeOrphanedTerminalStates: (activeThreadIds: Set<ThreadId>) => void;
+  removeTerminalIdEverywhere: (terminalId: string) => void;
 }
 
 export const useTerminalStateStore = create<TerminalStateStoreState>()(
@@ -795,12 +846,57 @@ export const useTerminalStateStore = create<TerminalStateStoreState>()(
               terminalEventEntriesByKey: nextTerminalEventEntriesByKey,
             };
           }),
+        removeTerminalIdEverywhere: (terminalId) =>
+          set((state) => {
+            if (terminalId.trim().length === 0) {
+              return state;
+            }
+
+            let changed = false;
+            const nextTerminalStateByThreadId = Object.fromEntries(
+              Object.entries(state.terminalStateByThreadId).flatMap(([threadId, threadState]) => {
+                if (!threadState) {
+                  return [];
+                }
+                const cleaned = removeTerminalIdFromThreadTerminalState(threadState, terminalId);
+                const normalized = normalizeThreadTerminalState(cleaned);
+                if (normalized !== threadState) {
+                  changed = true;
+                }
+                if (isDefaultThreadTerminalState(normalized)) {
+                  return [];
+                }
+                return [[threadId, normalized]];
+              }),
+            ) as Record<ThreadId, ThreadTerminalState>;
+
+            const nextTerminalEventEntriesByKey = Object.fromEntries(
+              Object.entries(state.terminalEventEntriesByKey).filter(([key]) => {
+                const [, nextTerminalId = ""] = key.split("\u0000");
+                const shouldKeep = nextTerminalId !== terminalId;
+                if (!shouldKeep) {
+                  changed = true;
+                }
+                return shouldKeep;
+              }),
+            ) as Record<string, ReadonlyArray<TerminalEventEntry>>;
+
+            if (!changed) {
+              return state;
+            }
+
+            return {
+              terminalStateByThreadId: nextTerminalStateByThreadId,
+              terminalEventEntriesByKey: nextTerminalEventEntriesByKey,
+            };
+          }),
       };
     },
     {
       name: TERMINAL_STATE_STORAGE_KEY,
-      version: 1,
+      version: TERMINAL_STATE_STORAGE_VERSION,
       storage: createJSONStorage(createTerminalStateStorage),
+      migrate: migratePersistedTerminalStateStoreState,
       partialize: (state) => ({
         terminalStateByThreadId: state.terminalStateByThreadId,
       }),

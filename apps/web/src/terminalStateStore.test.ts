@@ -1,7 +1,9 @@
 import { ThreadId, type TerminalEvent } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vitest";
 
+import { CORKDIFF_TERMINAL_ID } from "./lib/corkdiffTerminal";
 import {
+  migratePersistedTerminalStateStoreState,
   selectTerminalEventEntries,
   selectThreadTerminalState,
   useTerminalStateStore,
@@ -337,5 +339,111 @@ describe("terminalStateStore actions", () => {
     store.clearTerminalState(THREAD_ID);
 
     expect(useTerminalStateStore.getState()).toBe(before);
+  });
+
+  it("removes a terminal id everywhere from runtime drawer state and buffered events", () => {
+    const store = useTerminalStateStore.getState();
+    store.applyTerminalEvent(
+      makeTerminalEvent("started", {
+        terminalId: CORKDIFF_TERMINAL_ID,
+        snapshot: {
+          threadId: THREAD_ID,
+          terminalId: CORKDIFF_TERMINAL_ID,
+          cwd: "/tmp/worktree",
+          worktreePath: "/tmp/worktree",
+          status: "running",
+          pid: 123,
+          history: "",
+          exitCode: null,
+          exitSignal: null,
+          updatedAt: "2026-04-02T20:00:00.000Z",
+        },
+      }),
+    );
+
+    store.removeTerminalIdEverywhere(CORKDIFF_TERMINAL_ID);
+
+    expect(
+      selectThreadTerminalState(useTerminalStateStore.getState().terminalStateByThreadId, THREAD_ID)
+        .terminalIds,
+    ).toEqual(["default"]);
+    expect(
+      selectTerminalEventEntries(
+        useTerminalStateStore.getState().terminalEventEntriesByKey,
+        THREAD_ID,
+        CORKDIFF_TERMINAL_ID,
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("migratePersistedTerminalStateStoreState", () => {
+  it("removes persisted Corkdiff terminals from drawer state", () => {
+    expect(
+      migratePersistedTerminalStateStoreState(
+        {
+          terminalStateByThreadId: {
+            [THREAD_ID]: {
+              terminalOpen: true,
+              terminalHeight: 280,
+              terminalIds: ["default", CORKDIFF_TERMINAL_ID],
+              runningTerminalIds: [CORKDIFF_TERMINAL_ID],
+              activeTerminalId: CORKDIFF_TERMINAL_ID,
+              terminalGroups: [
+                { id: "group-default", terminalIds: ["default"] },
+                { id: `group-${CORKDIFF_TERMINAL_ID}`, terminalIds: [CORKDIFF_TERMINAL_ID] },
+              ],
+              activeTerminalGroupId: `group-${CORKDIFF_TERMINAL_ID}`,
+            },
+          },
+        },
+        1,
+      ),
+    ).toEqual({
+      terminalStateByThreadId: {
+        [THREAD_ID]: {
+          terminalOpen: true,
+          terminalHeight: 280,
+          terminalIds: ["default"],
+          runningTerminalIds: [],
+          activeTerminalId: "default",
+          terminalGroups: [{ id: "group-default", terminalIds: ["default"] }],
+          activeTerminalGroupId: "group-default",
+        },
+      },
+    });
+  });
+
+  it("preserves non-Corkdiff terminal ids during migration", () => {
+    expect(
+      migratePersistedTerminalStateStoreState(
+        {
+          terminalStateByThreadId: {
+            [THREAD_ID]: {
+              terminalOpen: true,
+              terminalHeight: 280,
+              terminalIds: ["default", "terminal-2"],
+              runningTerminalIds: ["terminal-2"],
+              activeTerminalId: "terminal-2",
+              terminalGroups: [{ id: "group-default", terminalIds: ["default", "terminal-2"] }],
+              activeTerminalGroupId: "group-default",
+            },
+          },
+        },
+        1,
+      ),
+    ).toEqual({
+      terminalStateByThreadId: {
+        [THREAD_ID]: {
+          terminalOpen: true,
+          terminalHeight: 280,
+          terminalIds: ["default", "terminal-2"],
+          runningTerminalIds: ["terminal-2"],
+          activeTerminalId: "terminal-2",
+          terminalGroups: [{ id: "group-default", terminalIds: ["default", "terminal-2"] }],
+          activeTerminalGroupId: "group-default",
+        },
+      },
+    });
   });
 });

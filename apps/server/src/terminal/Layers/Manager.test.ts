@@ -323,6 +323,29 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
     }),
   );
 
+  it.effect("spawns direct command terminals without shell resolution", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+
+      const snapshot = yield* manager.open(
+        openInput({
+          terminalId: "corkdiff",
+          command: {
+            file: "nvim",
+            args: ["-c", "CorkDiff t3code thread-1"],
+          },
+        }),
+      );
+
+      assert.equal(snapshot.status, "running");
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+      expect(ptyAdapter.spawnInputs[0]).toMatchObject({
+        file: "nvim",
+        args: ["-c", "CorkDiff t3code thread-1"],
+      });
+    }),
+  );
+
   it.effect("forwards write and resize to active pty process", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
@@ -360,6 +383,34 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
 
       assert.equal(reopened.status, "running");
       expect(process.resizeCalls).toEqual([{ cols: 120, rows: 30 }]);
+    }),
+  );
+
+  it.effect("restarts an existing session when the launch command changes", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+
+      const firstProcess = ptyAdapter.processes[0];
+      expect(firstProcess).toBeDefined();
+      if (!firstProcess) return;
+
+      const reopened = yield* manager.open(
+        openInput({
+          command: {
+            file: "nvim",
+            args: ["-c", "CorkDiff t3code thread-1"],
+          },
+        }),
+      );
+
+      assert.equal(reopened.status, "running");
+      expect(firstProcess.killed).toBe(true);
+      expect(ptyAdapter.spawnInputs).toHaveLength(2);
+      expect(ptyAdapter.spawnInputs[1]).toMatchObject({
+        file: "nvim",
+        args: ["-c", "CorkDiff t3code thread-1"],
+      });
     }),
   );
 
@@ -834,19 +885,19 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
 
         assert.equal(snapshot.status, "running");
         expect(ptyAdapter.spawnInputs.length).toBeGreaterThanOrEqual(2);
-        expect(ptyAdapter.spawnInputs[0]?.shell).toBe("/definitely/missing-shell");
+        expect(ptyAdapter.spawnInputs[0]?.file).toBe("/definitely/missing-shell");
 
         if (process.platform === "win32") {
           expect(
             ptyAdapter.spawnInputs.some(
-              (input) => input.shell === "cmd.exe" || input.shell === "powershell.exe",
+              (input) => input.file === "cmd.exe" || input.file === "powershell.exe",
             ),
           ).toBe(true);
         } else {
           expect(
             ptyAdapter.spawnInputs
               .slice(1)
-              .some((input) => input.shell !== "/definitely/missing-shell"),
+              .some((input) => input.file !== "/definitely/missing-shell"),
           ).toBe(true);
         }
       } finally {
@@ -967,7 +1018,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
         expect(spawnInput).toBeDefined();
         if (!spawnInput) return;
 
-        expect(spawnInput.shell).toBe("bash");
+        expect(spawnInput.file).toBe("bash");
       } finally {
         if (originalShell === undefined) {
           delete process.env.SHELL;
@@ -1032,9 +1083,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
 
   it.effect("preserves queued PTY output ordering through exit callbacks", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter, getEvents } = yield* createManager(5, {
-        ptyAdapter: new FakePtyAdapter("async"),
-      });
+      const { manager, ptyAdapter, getEvents } = yield* createManager();
 
       yield* manager.open(openInput());
       const process = ptyAdapter.processes[0];
@@ -1063,6 +1112,58 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
         expect.objectContaining({ type: "output", data: "second\n" }),
         expect.objectContaining({ type: "exited", exitCode: 0, exitSignal: 0 }),
       ]);
+    }),
+  );
+
+  it.effect("preserves combined history when adjacent output chunks are coalesced", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      process.emitData("first line\n");
+      process.emitData("second line\n");
+
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      assert.equal(reopened.history, "first line\nsecond line\n");
+    }),
+  );
+
+  it.effect("respects the maximum coalesced output size", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, getEvents } = yield* createManager();
+
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      const firstChunk = "a".repeat(40_000);
+      const secondChunk = "b".repeat(40_000);
+      process.emitData(firstChunk);
+      process.emitData(secondChunk);
+      process.emitExit({ exitCode: 0, signal: 0 });
+
+      yield* waitFor(
+        Effect.map(getEvents, (events) => {
+          const relevant = events.filter(
+            (event) => event.type === "output" || event.type === "exited",
+          );
+          return relevant.length >= 3;
+        }),
+        "1200 millis",
+      );
+
+      const outputEvents = (yield* getEvents).filter(
+        (event): event is Extract<TerminalEvent, { type: "output" }> => event.type === "output",
+      );
+      expect(outputEvents).toHaveLength(2);
+      expect(outputEvents[0]?.data).toBe(firstChunk);
+      expect(outputEvents[1]?.data).toBe(secondChunk);
     }),
   );
 

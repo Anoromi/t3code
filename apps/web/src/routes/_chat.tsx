@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { NavigationCommandMenu } from "../components/NavigationCommandMenu";
 import ThreadSidebar from "../components/Sidebar";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
-import { isTerminalFocused } from "../lib/terminalFocus";
+import { isTerminalFocused, shouldBypassGlobalTerminalShortcuts } from "../lib/terminalFocus";
 import { resolveShortcutCommand } from "../keybindings";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
@@ -42,6 +42,7 @@ function ChatRouteGlobalShortcuts(props: {
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
+      if (shouldBypassGlobalTerminalShortcuts()) return;
 
       if (event.key === "Escape" && selectedThreadIdsSize > 0 && !props.navigationCommandMenuOpen) {
         event.preventDefault();

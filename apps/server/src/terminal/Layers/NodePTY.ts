@@ -103,7 +103,7 @@ export const layer = Layer.effect(
     return {
       spawn: Effect.fn(function* (input) {
         yield* ensureNodePtySpawnHelperExecutableCached;
-        const ptyProcess = nodePty.spawn(input.shell, input.args ?? [], {
+        const ptyProcess = nodePty.spawn(input.file, [...(input.args ?? [])], {
           cwd: input.cwd,
           cols: input.cols,
           rows: input.rows,

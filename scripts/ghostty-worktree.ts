@@ -71,6 +71,10 @@ interface CliDeps {
   readonly stderr: (line: string) => void;
 }
 
+export interface ParsedCliArgs {
+  readonly execCommand: string | null;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -288,19 +292,40 @@ export function buildGhosttyLaunchCommand(input: {
   readonly cwd: string;
   readonly title: string;
   readonly workspace: number;
+  readonly execCommand?: string | null;
 }): string {
+  const execCommand = input.execCommand?.trim();
+  const launcherScript =
+    execCommand && execCommand.length > 0
+      ? 'exec ghostty --gtk-single-instance=false --class="$1" --title="$2" --working-directory="$3" -e sh -lc "$4"'
+      : 'exec ghostty --gtk-single-instance=false --class="$1" --title="$2" --working-directory="$3"';
   return [
     `[workspace ${String(input.workspace)} silent]`,
     "sh",
     "-lc",
-    quoteShellArg(
-      'exec ghostty --gtk-single-instance=false --class="$1" --title="$2" --working-directory="$3"',
-    ),
+    quoteShellArg(launcherScript),
     "ghostty-worktree",
     quoteShellArg(input.className),
     quoteShellArg(input.title),
     quoteShellArg(input.cwd),
+    ...(execCommand && execCommand.length > 0 ? [quoteShellArg(execCommand)] : []),
   ].join(" ");
+}
+
+export function parseCliArgs(argv: ReadonlyArray<string>): ParsedCliArgs {
+  if (argv.length === 0) {
+    return { execCommand: null };
+  }
+
+  if (argv.length === 2 && argv[0] === "--exec") {
+    const execCommand = argv[1]?.trim();
+    if (!execCommand) {
+      throw new Error("ghostty-worktree requires a non-empty command after --exec.");
+    }
+    return { execCommand };
+  }
+
+  throw new Error("ghostty-worktree only accepts an optional --exec <command> argument.");
 }
 
 function assertSupportedEnvironment(env: NodeJS.ProcessEnv): void {
@@ -448,9 +473,7 @@ export async function runCli(argv: ReadonlyArray<string>, deps: CliDeps): Promis
   };
 
   try {
-    if (argv.length > 0) {
-      throw new Error("ghostty-worktree does not accept subcommands or arguments.");
-    }
+    const parsedArgs = parseCliArgs(argv);
 
     assertSupportedEnvironment(deps.env);
     deps.assertGhosttyAvailable();
@@ -532,6 +555,7 @@ export async function runCli(argv: ReadonlyArray<string>, deps: CliDeps): Promis
         cwd: worktree.cwd,
         title,
         workspace: MANAGED_WORKSPACE,
+        execCommand: parsedArgs.execCommand,
       }),
     );
 

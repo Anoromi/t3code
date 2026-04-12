@@ -45,6 +45,7 @@ import {
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine";
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
+import { createExternalCorkdiffManager } from "./externalCorkdiff";
 
 syncShellEnvironment();
 
@@ -53,6 +54,8 @@ const CONFIRM_CHANNEL = "desktop:confirm";
 const SET_THEME_CHANNEL = "desktop:set-theme";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
+const TOGGLE_EXTERNAL_CORKDIFF_CHANNEL = "desktop:toggle-external-corkdiff";
+const FOCUS_APP_WINDOW_CHANNEL = "desktop:focus-app-window";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
 const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
@@ -103,6 +106,9 @@ let desktopLogSink: RotatingFileSink | null = null;
 let backendLogSink: RotatingFileSink | null = null;
 let restoreStdIoCapture: (() => void) | null = null;
 let backendObservabilitySettings = readPersistedBackendObservabilitySettings();
+const externalCorkdiffManager = createExternalCorkdiffManager({
+  getMainWindow: () => mainWindow,
+});
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
 const expectedBackendExitChildren = new WeakSet<ChildProcess.ChildProcess>();
@@ -197,6 +203,21 @@ function getSafeTheme(rawTheme: unknown): DesktopTheme | null {
   }
 
   return null;
+}
+
+function getSafeNonEmptyString(rawValue: unknown): string | null {
+  if (typeof rawValue !== "string") {
+    return null;
+  }
+  const normalized = rawValue.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function getSafeNullableString(rawValue: unknown): string | null {
+  if (rawValue === null || rawValue === undefined) {
+    return null;
+  }
+  return getSafeNonEmptyString(rawValue);
 }
 
 function writeDesktopStreamChunk(
@@ -1313,6 +1334,32 @@ function registerIpcHandlers(): void {
     } catch {
       return false;
     }
+  });
+
+  ipcMain.removeHandler(TOGGLE_EXTERNAL_CORKDIFF_CHANNEL);
+  ipcMain.handle(TOGGLE_EXTERNAL_CORKDIFF_CHANNEL, async (_event, rawInput: unknown) => {
+    if (typeof rawInput !== "object" || rawInput === null) {
+      throw new Error("Invalid external Corkdiff launch request.");
+    }
+
+    const record = rawInput as {
+      cwd?: unknown;
+      serverUrl?: unknown;
+      token?: unknown;
+      threadId?: unknown;
+    };
+
+    return externalCorkdiffManager.toggle({
+      cwd: getSafeNonEmptyString(record.cwd) ?? "",
+      serverUrl: getSafeNonEmptyString(record.serverUrl) ?? "",
+      token: getSafeNullableString(record.token),
+      threadId: getSafeNonEmptyString(record.threadId) ?? "",
+    });
+  });
+
+  ipcMain.removeHandler(FOCUS_APP_WINDOW_CHANNEL);
+  ipcMain.handle(FOCUS_APP_WINDOW_CHANNEL, async () => {
+    externalCorkdiffManager.focusAppWindow();
   });
 
   ipcMain.removeHandler(UPDATE_GET_STATE_CHANNEL);

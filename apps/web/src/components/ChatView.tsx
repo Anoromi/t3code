@@ -118,6 +118,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
+import { toggleExternalCorkdiffForThread } from "../lib/externalCorkdiff";
 import {
   commandForProjectScript,
   nextProjectScriptId,
@@ -133,7 +134,7 @@ import {
 } from "../providerModels";
 import { useSettings } from "../hooks/useSettings";
 import { resolveAppModelSelection } from "../modelSelection";
-import { isTerminalFocused } from "../lib/terminalFocus";
+import { isTerminalFocused, shouldBypassGlobalTerminalShortcuts } from "../lib/terminalFocus";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -913,7 +914,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const isServerThread = serverThread !== undefined;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
-  const diffOpen = rawSearch.diff === "1";
+  const diffOpen = !isElectron && rawSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
   const existingOpenTerminalThreadIds = useMemo(() => {
     const existingThreadIds = new Set<ThreadId>([...serverThreadIds, ...draftThreadIds]);
@@ -1847,6 +1848,10 @@ export default function ChatView({ threadId }: ChatViewProps) {
     [keybindings, nonTerminalShortcutLabelOptions],
   );
   const onToggleDiff = useCallback(() => {
+    if (isElectron) {
+      void toggleExternalCorkdiffForThread(threadId);
+      return;
+    }
     void navigate({
       to: "/$threadId",
       params: { threadId },
@@ -1857,7 +1862,6 @@ export default function ChatView({ threadId }: ChatViewProps) {
       },
     });
   }, [diffOpen, navigate, threadId]);
-
   const activeTerminalGroup =
     terminalState.terminalGroups.find(
       (group) => group.id === terminalState.activeTerminalGroupId,
@@ -2895,9 +2899,25 @@ export default function ChatView({ threadId }: ChatViewProps) {
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
       if (!activeThreadId || event.defaultPrevented) return;
+      const terminalOpen = Boolean(terminalState.terminalOpen);
+      const bypassGlobalShortcuts = shouldBypassGlobalTerminalShortcuts();
+      if (bypassGlobalShortcuts) {
+        const command = resolveShortcutCommand(event, keybindings, {
+          context: {
+            terminalFocus: false,
+            terminalOpen,
+          },
+        });
+        if (command === "diff.toggle") {
+          event.preventDefault();
+          event.stopPropagation();
+          onToggleDiff();
+        }
+        return;
+      }
       const shortcutContext = {
         terminalFocus: isTerminalFocused(),
-        terminalOpen: Boolean(terminalState.terminalOpen),
+        terminalOpen,
       };
 
       const command = resolveShortcutCommand(event, keybindings, {
@@ -4666,6 +4686,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const expandedImageItem = expandedImage ? expandedImage.images[expandedImage.index] : null;
   const onOpenTurnDiff = useCallback(
     (turnId: TurnId, filePath?: string) => {
+      if (isElectron) {
+        void turnId;
+        void filePath;
+        void toggleExternalCorkdiffForThread(threadId);
+        return;
+      }
       void navigate({
         to: "/$threadId",
         params: { threadId },

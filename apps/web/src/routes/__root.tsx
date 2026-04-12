@@ -72,6 +72,7 @@ function RootRouteView() {
     <ToastProvider>
       <AnchoredToastProvider>
         <ServerStateBootstrap />
+        <DesktopControlRouter />
         <EventRouter />
         <AppSidebarLayout>
           <Outlet />
@@ -194,6 +195,27 @@ const MAX_NO_PROGRESS_REPLAY_RETRIES = 3;
 
 function ServerStateBootstrap() {
   useEffect(() => startServerStateSync(getWsRpcClient().server), []);
+
+  return null;
+}
+
+function DesktopControlRouter() {
+  useEffect(() => {
+    if (!window.desktopBridge?.focusAppWindow) {
+      return;
+    }
+
+    return getWsRpcClient().desktop.onControlEvent((event) => {
+      if (event.type !== "corkdiff.focusAppRequested") {
+        return;
+      }
+      const focusAppWindow = window.desktopBridge?.focusAppWindow;
+      if (!focusAppWindow) {
+        return;
+      }
+      void focusAppWindow().catch(() => undefined);
+    });
+  }, []);
 
   return null;
 }

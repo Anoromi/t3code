@@ -74,6 +74,10 @@ const rpcClientMock = {
     subscribeConfig: vi.fn(),
     subscribeLifecycle: vi.fn(),
   },
+  desktop: {
+    requestCorkdiffAppFocus: vi.fn(),
+    onControlEvent: vi.fn(),
+  },
   orchestration: {
     getSnapshot: vi.fn(),
     dispatchCommand: vi.fn(),
@@ -121,6 +125,8 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
     setTheme: async () => undefined,
     showContextMenu: async () => null,
     openExternal: async () => true,
+    toggleExternalCorkdiff: async () => ({ workspaceId: 101, reused: false }),
+    focusAppWindow: async () => undefined,
     onMenuAction: () => () => undefined,
     getUpdateState: async () => {
       throw new Error("getUpdateState not implemented in test");

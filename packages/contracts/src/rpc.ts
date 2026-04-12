@@ -2,6 +2,7 @@ import { Schema } from "effect";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
+import { PositiveInt, ThreadId } from "./baseSchemas";
 import { OpenError, OpenInEditorInput } from "./editor";
 import {
   GitActionProgressEvent,
@@ -114,7 +115,24 @@ export const WS_METHODS = {
   subscribeTerminalEvents: "subscribeTerminalEvents",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
+  subscribeDesktopControl: "subscribeDesktopControl",
+  desktopRequestCorkdiffAppFocus: "desktop.requestCorkdiffAppFocus",
 } as const;
+
+export const DesktopRequestCorkdiffAppFocusInput = Schema.Struct({
+  threadId: ThreadId,
+});
+
+export const DesktopRequestCorkdiffAppFocusResult = Schema.Struct({
+  accepted: Schema.Literal(true),
+});
+
+export const DesktopControlEvent = Schema.Struct({
+  type: Schema.Literal("corkdiff.focusAppRequested"),
+  threadId: ThreadId,
+  workspaceId: Schema.optional(PositiveInt),
+});
+export type DesktopControlEvent = typeof DesktopControlEvent.Type;
 
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
   payload: ServerUpsertKeybindingInput,
@@ -321,6 +339,20 @@ export const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServer
   stream: true,
 });
 
+export const WsDesktopRequestCorkdiffAppFocusRpc = Rpc.make(
+  WS_METHODS.desktopRequestCorkdiffAppFocus,
+  {
+    payload: DesktopRequestCorkdiffAppFocusInput,
+    success: DesktopRequestCorkdiffAppFocusResult,
+  },
+);
+
+export const WsSubscribeDesktopControlRpc = Rpc.make(WS_METHODS.subscribeDesktopControl, {
+  payload: Schema.Struct({}),
+  success: DesktopControlEvent,
+  stream: true,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -351,6 +383,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeTerminalEventsRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
+  WsDesktopRequestCorkdiffAppFocusRpc,
+  WsSubscribeDesktopControlRpc,
   WsOrchestrationGetSnapshotRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetTurnDiffRpc,

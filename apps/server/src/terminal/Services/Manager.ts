@@ -55,8 +55,8 @@ export interface TerminalSessionState {
 }
 
 export interface ShellCandidate {
-  shell: string;
-  args?: string[];
+  file: string;
+  args?: readonly string[];
 }
 
 export interface TerminalStartInput extends TerminalOpenInput {

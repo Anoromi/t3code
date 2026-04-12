@@ -6,6 +6,7 @@ import {
   TerminalClearInput,
   TerminalCloseInput,
   TerminalEvent,
+  TerminalLaunchCommand,
   TerminalOpenInput,
   TerminalResizeInput,
   TerminalSessionSnapshot,
@@ -78,6 +79,23 @@ describe("TerminalOpenInput", () => {
     expect(parsed.worktreePath).toBe("/tmp/project/.t3/worktrees/feature-a");
   });
 
+  it("accepts direct command launch input", () => {
+    const parsed = decodeSync(TerminalOpenInput, {
+      threadId: "thread-1",
+      cwd: "/tmp/project",
+      cols: 100,
+      rows: 24,
+      command: {
+        file: "nvim",
+        args: ["-c", "CorkDiff t3code thread-1"],
+      },
+    });
+    expect(parsed.command).toEqual({
+      file: "nvim",
+      args: ["-c", "CorkDiff t3code thread-1"],
+    });
+  });
+
   it("rejects invalid env keys", () => {
     expect(
       decodes(TerminalOpenInput, {
@@ -88,6 +106,17 @@ describe("TerminalOpenInput", () => {
         env: {
           "bad-key": "1",
         },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("TerminalLaunchCommand", () => {
+  it("rejects empty command args", () => {
+    expect(
+      decodes(TerminalLaunchCommand, {
+        file: "nvim",
+        args: ["-c", ""],
       }),
     ).toBe(false);
   });

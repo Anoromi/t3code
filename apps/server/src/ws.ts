@@ -1,6 +1,7 @@
-import { Cause, Effect, Layer, Option, Queue, Ref, Schema, Stream } from "effect";
+import { Cause, Effect, Fiber, Layer, Option, Queue, Ref, Schema, Stream } from "effect";
 import {
   CommandId,
+  type DesktopControlEvent,
   EventId,
   type OrchestrationCommand,
   type GitActionProgressEvent,
@@ -46,6 +47,7 @@ import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries";
 import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem";
 import { WorkspacePathOutsideRootError } from "./workspace/Services/WorkspacePaths";
 import { ProjectSetupScriptRunner } from "./project/Services/ProjectSetupScriptRunner";
+import { DesktopControl } from "./desktopControl";
 
 const WsRpcLayer = WsRpcGroup.toLayer(
   Effect.gen(function* () {
@@ -65,6 +67,7 @@ const WsRpcLayer = WsRpcGroup.toLayer(
     const workspaceEntries = yield* WorkspaceEntries;
     const workspaceFileSystem = yield* WorkspaceFileSystem;
     const projectSetupScriptRunner = yield* ProjectSetupScriptRunner;
+    const desktopControl = yield* DesktopControl;
 
     const serverCommandId = (tag: string) =>
       CommandId.makeUnsafe(`server:${tag}:${crypto.randomUUID()}`);
@@ -707,6 +710,32 @@ const WsRpcLayer = WsRpcGroup.toLayer(
             return Stream.concat(Stream.fromIterable(snapshotEvents), liveEvents);
           }),
           { "rpc.aggregate": "server" },
+        ),
+      [WS_METHODS.desktopRequestCorkdiffAppFocus]: ({ threadId }) =>
+        observeRpcEffect(
+          WS_METHODS.desktopRequestCorkdiffAppFocus,
+          desktopControl
+            .publish({
+              type: "corkdiff.focusAppRequested",
+              threadId,
+            })
+            .pipe(Effect.as({ accepted: true as const })),
+          { "rpc.aggregate": "desktop" },
+        ),
+      [WS_METHODS.subscribeDesktopControl]: (_input) =>
+        observeRpcStream(
+          WS_METHODS.subscribeDesktopControl,
+          Stream.callback<DesktopControlEvent>((queue) =>
+            Effect.acquireRelease(
+              desktopControl.stream.pipe(
+                Stream.runForEach((event) => Queue.offer(queue, event)),
+                Effect.forkScoped,
+              ),
+              (fiber) =>
+                Fiber.interrupt(fiber).pipe(Effect.andThen(Queue.end(queue)), Effect.asVoid),
+            ),
+          ),
+          { "rpc.aggregate": "desktop" },
         ),
     });
   }),

@@ -113,6 +113,16 @@ export interface DesktopBridge {
     position?: { x: number; y: number },
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
+  toggleExternalCorkdiff: (input: {
+    cwd: string;
+    serverUrl: string;
+    token: string | null;
+    threadId: string;
+  }) => Promise<{
+    workspaceId: number;
+    reused: boolean;
+  }>;
+  focusAppWindow: () => Promise<void>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
   checkForUpdate: () => Promise<DesktopUpdateCheckResult>;

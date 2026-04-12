@@ -6,6 +6,7 @@ import {
   createManagedTitle,
   findManagedClientByClassName,
   findManagedClient,
+  parseCliArgs,
   parseRegistry,
   pruneAssignments,
   quoteShellArg,
@@ -245,6 +246,42 @@ describe("ghostty-worktree", () => {
     expect(command).toContain(quoteShellArg("/repo/path/that's/fine"));
   });
 
+  it("builds a workspace-targeted Ghostty launch command with an exec payload", () => {
+    const command = buildGhosttyLaunchCommand({
+      className: "dev.t3tools.t3code.ghostty.exec123",
+      cwd: "/repo/worktree",
+      title: "Ghostty sample:feature",
+      workspace: 1,
+      execCommand: "env T3CODE_SERVER_URL='ws://127.0.0.1:1234/ws' nvim -c 'CorkDiff t3code'",
+    });
+
+    expect(command).toContain(
+      'ghostty --gtk-single-instance=false --class="$1" --title="$2" --working-directory="$3" -e sh -lc "$4"',
+    );
+    expect(command).toContain(
+      quoteShellArg("env T3CODE_SERVER_URL='ws://127.0.0.1:1234/ws' nvim -c 'CorkDiff t3code'"),
+    );
+  });
+
+  it("parses no-arg CLI invocation", () => {
+    expect(parseCliArgs([])).toEqual({ execCommand: null });
+  });
+
+  it("parses --exec CLI invocation", () => {
+    expect(parseCliArgs(["--exec", "nvim -c 'CorkDiff t3code'"])).toEqual({
+      execCommand: "nvim -c 'CorkDiff t3code'",
+    });
+  });
+
+  it("rejects invalid CLI arguments", () => {
+    expect(() => parseCliArgs(["--exec"])).toThrow(
+      "ghostty-worktree only accepts an optional --exec <command> argument.",
+    );
+    expect(() => parseCliArgs(["noop"])).toThrow(
+      "ghostty-worktree only accepts an optional --exec <command> argument.",
+    );
+  });
+
   it("focuses an existing managed Ghostty window", async () => {
     const worktree = createWorktree();
     const assignment = createAssignment(worktree, { pid: 200 });
@@ -264,6 +301,29 @@ describe("ghostty-worktree", () => {
     expect(result.exitCode).toBe(0);
     expect(dispatches).toEqual(["workspace:1", "focus:0x1234"]);
     expect(outputs.stdout).toEqual([`pid=200 workspace=1 worktree=${worktree.worktreeRoot}`]);
+  });
+
+  it("does not dispatch a new Ghostty launch when focusing an existing managed window", async () => {
+    const worktree = createWorktree();
+    const assignment = createAssignment(worktree, { pid: 200 });
+    const { deps, dispatches } = createCliDeps({
+      argvWorktree: worktree,
+      registry: {
+        version: 1,
+        assignments: {
+          [worktree.key]: assignment,
+        },
+      },
+      clients: [[createClient({ pid: 200, className: assignment.className, workspace: 1 })]],
+    });
+
+    const result = await runCli(
+      ["--exec", "env T3CODE_SERVER_URL='ws://127.0.0.1:1234/ws' nvim -c 'CorkDiff t3code'"],
+      deps,
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(dispatches.some((entry) => entry.startsWith("exec:"))).toBe(false);
   });
 
   it("follows the existing managed window to its current workspace", async () => {

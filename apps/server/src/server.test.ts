@@ -61,6 +61,7 @@ import {
   ProjectSetupScriptRunner,
   type ProjectSetupScriptRunnerShape,
 } from "./project/Services/ProjectSetupScriptRunner.ts";
+import { DesktopControl, type DesktopControlShape } from "./desktopControl.ts";
 import { WorkspaceEntriesLive } from "./workspace/Layers/WorkspaceEntries.ts";
 import { WorkspaceFileSystemLive } from "./workspace/Layers/WorkspaceFileSystem.ts";
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
@@ -141,6 +142,7 @@ const buildAppUnderTest = (options?: {
     checkpointDiffQuery?: Partial<CheckpointDiffQueryShape>;
     serverLifecycleEvents?: Partial<ServerLifecycleEventsShape>;
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
+    desktopControl?: Partial<DesktopControlShape>;
   };
 }) =>
   Effect.gen(function* () {
@@ -278,6 +280,13 @@ const buildAppUnderTest = (options?: {
           markHttpListening: Effect.void,
           enqueueCommand: (effect) => effect,
           ...options?.layers?.serverRuntimeStartup,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(DesktopControl)({
+          publish: (_event) => Effect.void,
+          stream: Stream.empty,
+          ...options?.layers?.desktopControl,
         }),
       ),
       Layer.provide(workspaceAndProjectServicesLayer),
