@@ -35,7 +35,11 @@ export function getAutoUpdateDisabledReason(args: {
   appImage?: string | undefined;
   disabledByEnv: boolean;
   hasUpdateFeedConfig: boolean;
+  packageChannel?: string | undefined;
 }): string | null {
+  if (args.packageChannel === "nix") {
+    return "Updates for this build are managed through Nix.";
+  }
   if (!args.hasUpdateFeedConfig) {
     return "Automatic updates are not available because no update feed is configured.";
   }

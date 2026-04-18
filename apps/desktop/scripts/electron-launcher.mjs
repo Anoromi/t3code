@@ -7,6 +7,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readlinkSync,
   readFileSync,
   rmSync,
   statSync,
@@ -26,6 +27,63 @@ export const desktopDir = resolve(__dirname, "..");
 const repoRoot = resolve(desktopDir, "..", "..");
 const defaultIconPath = join(desktopDir, "resources", "icon.icns");
 const developmentMacIconPngPath = join(repoRoot, "assets", "dev", "blueprint-macos-1024.png");
+const require = createRequire(import.meta.url);
+
+function resolveElectronPackageDir() {
+  const packageJsonPath = require.resolve("electron/package.json");
+  return dirname(packageJsonPath);
+}
+
+function resolveElectronExecutableFromPackageDir(packageDir) {
+  const pathFile = join(packageDir, "path.txt");
+  if (!existsSync(pathFile)) {
+    return null;
+  }
+
+  const executablePath = readFileSync(pathFile, "utf8").trim();
+  if (executablePath.length === 0) {
+    return null;
+  }
+
+  return join(packageDir, "dist", executablePath);
+}
+
+function resolveElectronInstallScriptNodeCommand(packageDir) {
+  const cliEntryPath = join(packageDir, "cli.js");
+  if (existsSync(cliEntryPath)) {
+    try {
+      const symlinkTarget = readlinkSync(cliEntryPath);
+      if (symlinkTarget) {
+        const command = resolve(packageDir, symlinkTarget);
+        if (existsSync(command)) {
+          return command;
+        }
+      }
+    } catch {
+      // `cli.js` may be a regular file under npm installs.
+    }
+  }
+
+  return process.env.T3CODE_NODE_EXECUTABLE?.trim() || "node";
+}
+
+function ensureElectronInstalled(packageDir) {
+  const installResult = spawnSync(
+    resolveElectronInstallScriptNodeCommand(packageDir),
+    [join(packageDir, "install.js")],
+    {
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        ELECTRON_SKIP_BINARY_DOWNLOAD: "",
+      },
+    },
+  );
+
+  if (installResult.status !== 0) {
+    throw new Error(`Electron install failed with exit code ${installResult.status ?? "unknown"}`);
+  }
+}
 
 function setPlistString(plistPath, key, value) {
   const replaceResult = spawnSync("plutil", ["-replace", key, "-string", value, plistPath], {
@@ -163,8 +221,15 @@ function buildMacLauncher(electronBinaryPath) {
 }
 
 export function resolveElectronPath() {
-  const require = createRequire(import.meta.url);
-  const electronBinaryPath = require("electron");
+  const packageDir = resolveElectronPackageDir();
+  let electronBinaryPath = resolveElectronExecutableFromPackageDir(packageDir);
+  if (!electronBinaryPath) {
+    ensureElectronInstalled(packageDir);
+    electronBinaryPath = resolveElectronExecutableFromPackageDir(packageDir);
+  }
+  if (!electronBinaryPath) {
+    throw new Error(`Electron executable missing after install in ${packageDir}`);
+  }
 
   if (process.platform !== "darwin") {
     return electronBinaryPath;
