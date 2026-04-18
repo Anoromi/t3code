@@ -184,11 +184,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           claudeAgent: {
             binaryPath: "  /opt/homebrew/bin/claude  ",
           },
-          opencode: {
-            binaryPath: "  /opt/homebrew/bin/opencode  ",
-            serverUrl: "  http://127.0.0.1:4096  ",
-            serverPassword: "  secret-password  ",
-          },
         },
       });
 
@@ -203,13 +198,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         binaryPath: "/opt/homebrew/bin/claude",
         customModels: [],
         launchArgs: "",
-      });
-      assert.deepEqual(next.providers.opencode, {
-        enabled: true,
-        binaryPath: "/opt/homebrew/bin/opencode",
-        serverUrl: "http://127.0.0.1:4096",
-        serverPassword: "secret-password",
-        customModels: [],
       });
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
@@ -269,10 +257,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           codex: {
             binaryPath: "/opt/homebrew/bin/codex",
           },
-          opencode: {
-            serverUrl: "http://127.0.0.1:4096",
-            serverPassword: "secret-password",
-          },
         },
       });
 
@@ -288,10 +272,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         providers: {
           codex: {
             binaryPath: "/opt/homebrew/bin/codex",
-          },
-          opencode: {
-            serverUrl: "http://127.0.0.1:4096",
-            serverPassword: "secret-password",
           },
         },
       });

@@ -13,8 +13,11 @@ import {
   ProjectMetaUpdatedPayload,
   OrchestrationProposedPlan,
   OrchestrationSession,
+  OrchestrationThread,
   ProjectCreateCommand,
   ThreadMetaUpdatedPayload,
+  ThreadForkCommand,
+  ThreadForkedPayload,
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
   ThreadTurnDiff,
@@ -33,10 +36,13 @@ const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
 const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLatestTurn);
 const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
+const decodeOrchestrationThread = Schema.decodeUnknownEffect(OrchestrationThread);
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
+const decodeThreadForkCommand = Schema.decodeUnknownEffect(ThreadForkCommand);
+const decodeThreadForkedPayload = Schema.decodeUnknownEffect(ThreadForkedPayload);
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>
   Effect.gen(function* () {
@@ -134,6 +140,20 @@ it.effect("decodes historical project.created payloads with a default provider",
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.defaultModelSelection?.provider, "codex");
+  }),
+);
+
+it.effect("decodes legacy project.created payloads without defaultModelSelection", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectCreatedPayload({
+      projectId: "project-1",
+      title: "Project Title",
+      workspaceRoot: "/tmp/workspace",
+      scripts: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.defaultModelSelection, null);
   }),
 );
 
@@ -418,6 +438,127 @@ it.effect("accepts a source proposed plan reference in thread.turn.start", () =>
       threadId: "thread-1",
       planId: "plan-1",
     });
+  }),
+);
+
+it.effect("parses thread.fork commands", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadForkCommand({
+      type: "thread.fork",
+      commandId: "cmd-thread-fork",
+      threadId: "thread-fork",
+      sourceThreadId: "thread-source",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.threadId, "thread-fork");
+    assert.strictEqual(parsed.sourceThreadId, "thread-source");
+  }),
+);
+
+it.effect("parses thread.forked payloads", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadForkedPayload({
+      threadId: "thread-fork",
+      projectId: "project-1",
+      title: "Fork: Source thread",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.4",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: "feature/fork",
+      worktreePath: "/tmp/worktree",
+      forkOrigin: {
+        sourceThreadId: "thread-source",
+        sourceTurnId: "turn-1",
+        sourceCheckpointTurnCount: null,
+        forkedAt: "2026-01-01T00:00:00.000Z",
+      },
+      latestTurn: {
+        turnId: "turn-1",
+        state: "completed",
+        requestedAt: "2026-01-01T00:00:00.000Z",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        completedAt: "2026-01-01T00:00:00.000Z",
+        assistantMessageId: null,
+      },
+      messages: [],
+      proposedPlans: [],
+      activities: [],
+      checkpoints: [],
+      turns: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.forkOrigin.sourceThreadId, "thread-source");
+    assert.strictEqual(parsed.forkOrigin.sourceCheckpointTurnCount, null);
+  }),
+);
+
+it.effect("parses history-only thread.forked payloads without checkpoint ancestry", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadForkedPayload({
+      threadId: "thread-fork-history-only",
+      projectId: "project-1",
+      title: "Fork: Source thread",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.4",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      forkOrigin: {
+        sourceThreadId: "thread-source",
+        sourceTurnId: null,
+        sourceCheckpointTurnCount: null,
+        forkedAt: "2026-01-01T00:00:00.000Z",
+      },
+      latestTurn: null,
+      messages: [],
+      proposedPlans: [],
+      activities: [],
+      checkpoints: [],
+      turns: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.forkOrigin.sourceTurnId, null);
+    assert.strictEqual(parsed.forkOrigin.sourceCheckpointTurnCount, null);
+  }),
+);
+
+it.effect("defaults forkOrigin to null on historical thread snapshots", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationThread({
+      id: "thread-1",
+      projectId: "project-1",
+      title: "Thread title",
+      modelSelection: {
+        provider: "codex",
+        model: "gpt-5.4",
+      },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      latestTurn: null,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      deletedAt: null,
+      messages: [],
+      proposedPlans: [],
+      activities: [],
+      checkpoints: [],
+      session: null,
+    });
+
+    assert.strictEqual(parsed.forkOrigin, null);
   }),
 );
 

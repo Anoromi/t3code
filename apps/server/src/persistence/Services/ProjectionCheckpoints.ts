@@ -13,11 +13,11 @@ import {
   NonNegativeInt,
   OrchestrationCheckpointFile,
   OrchestrationCheckpointStatus,
+  OrchestrationCheckpointVisibility,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
-import { Option, Context, Schema } from "effect";
-import type { Effect } from "effect";
+import { Option, Context, Schema, Effect } from "effect";
 
 import type { ProjectionRepositoryError } from "../Errors.ts";
 
@@ -26,6 +26,15 @@ export const ProjectionCheckpoint = Schema.Struct({
   turnId: TurnId,
   checkpointTurnCount: NonNegativeInt,
   checkpointRef: CheckpointRef,
+  visibleCheckpointRef: Schema.optional(Schema.NullOr(CheckpointRef)).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  visibleBaseCheckpointTurnCount: Schema.optional(Schema.NullOr(NonNegativeInt)).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  visibility: Schema.optional(OrchestrationCheckpointVisibility).pipe(
+    Schema.withDecodingDefault(Effect.succeed("visible")),
+  ),
   status: OrchestrationCheckpointStatus,
   files: Schema.Array(OrchestrationCheckpointFile),
   assistantMessageId: Schema.NullOr(MessageId),

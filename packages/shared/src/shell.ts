@@ -1,7 +1,7 @@
 import * as OS from "node:os";
 import { execFileSync } from "node:child_process";
 import { accessSync, constants, statSync } from "node:fs";
-import { extname, join } from "node:path";
+import { basename, extname, join } from "node:path";
 
 const PATH_CAPTURE_START = "__T3CODE_PATH_START__";
 const PATH_CAPTURE_END = "__T3CODE_PATH_END__";
@@ -48,7 +48,11 @@ export function listLoginShellCandidates(
   const seen = new Set<string>();
   const candidates: string[] = [];
 
-  for (const candidate of [trimNonEmpty(shell), trimNonEmpty(userShell), fallbackShell]) {
+  for (const candidate of [
+    resolveLoginShell(platform, shell),
+    resolveLoginShell(platform, userShell),
+    fallbackShell,
+  ]) {
     if (!candidate || seen.has(candidate)) {
       continue;
     }
@@ -57,6 +61,35 @@ export function listLoginShellCandidates(
   }
 
   return candidates;
+}
+
+export function resolveLoginShell(
+  platform: NodeJS.Platform,
+  shell: string | undefined,
+): string | undefined {
+  const trimmedShell = trimNonEmpty(shell);
+  return trimmedShell ? normalizeLoginShell(platform, trimmedShell) : undefined;
+}
+
+function normalizeLoginShell(platform: NodeJS.Platform, shell: string): string {
+  if (platform !== "linux") {
+    return shell;
+  }
+
+  if (!shell.startsWith("/nix/store/")) {
+    return shell;
+  }
+
+  if (shell.includes("bash-interactive")) {
+    return shell;
+  }
+
+  const shellBasename = basename(shell);
+  if (shellBasename === "bash" || shellBasename === "sh") {
+    return `/run/current-system/sw/bin/${shellBasename}`;
+  }
+
+  return shell;
 }
 
 export function extractPathFromShellOutput(output: string): string | null {

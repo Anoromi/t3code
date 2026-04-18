@@ -7,7 +7,6 @@ import { Effect } from "effect";
 
 import { OrchestrationCommandInvariantError } from "./Errors.ts";
 import {
-  listThreadsByProjectId,
   requireProject,
   requireProjectAbsent,
   requireThread,
@@ -15,7 +14,6 @@ import {
   requireThreadAbsent,
   requireThreadNotArchived,
 } from "./commandInvariants.ts";
-import { projectEvent } from "./projector.ts";
 
 const nowIso = () => new Date().toISOString();
 const defaultMetadata: Omit<OrchestrationEvent, "sequence" | "type" | "payload"> = {
@@ -49,49 +47,16 @@ function withEventBase(
   };
 }
 
-type PlannedOrchestrationEvent = Omit<OrchestrationEvent, "sequence">;
-
-type DecideOrchestrationCommandResult =
-  | PlannedOrchestrationEvent
-  | ReadonlyArray<PlannedOrchestrationEvent>;
-
-const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
-  commands,
-  readModel,
-}: {
-  readonly commands: ReadonlyArray<OrchestrationCommand>;
-  readonly readModel: OrchestrationReadModel;
-}): Effect.fn.Return<ReadonlyArray<PlannedOrchestrationEvent>, OrchestrationCommandInvariantError> {
-  let nextReadModel = readModel;
-  let nextSequence = readModel.snapshotSequence;
-  const plannedEvents: PlannedOrchestrationEvent[] = [];
-
-  for (const nextCommand of commands) {
-    const decided = yield* decideOrchestrationCommand({
-      command: nextCommand,
-      readModel: nextReadModel,
-    });
-    const nextEvents = Array.isArray(decided) ? decided : [decided];
-    for (const nextEvent of nextEvents) {
-      plannedEvents.push(nextEvent);
-      nextSequence += 1;
-      nextReadModel = yield* projectEvent(nextReadModel, {
-        ...nextEvent,
-        sequence: nextSequence,
-      }).pipe(Effect.orDie);
-    }
-  }
-
-  return plannedEvents;
-});
-
 export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand")(function* ({
   command,
   readModel,
 }: {
   readonly command: OrchestrationCommand;
   readonly readModel: OrchestrationReadModel;
-}): Effect.fn.Return<DecideOrchestrationCommandResult, OrchestrationCommandInvariantError> {
+}): Effect.fn.Return<
+  Omit<OrchestrationEvent, "sequence"> | ReadonlyArray<Omit<OrchestrationEvent, "sequence">>,
+  OrchestrationCommandInvariantError
+> {
   switch (command.type) {
     case "project.create": {
       yield* requireProjectAbsent({
@@ -114,6 +79,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           workspaceRoot: command.workspaceRoot,
           defaultModelSelection: command.defaultModelSelection ?? null,
           scripts: [],
+          worktreeGroupTitles: [],
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -143,6 +109,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             ? { defaultModelSelection: command.defaultModelSelection }
             : {}),
           ...(command.scripts !== undefined ? { scripts: command.scripts } : {}),
+          ...(command.worktreeGroupTitles !== undefined
+            ? { worktreeGroupTitles: command.worktreeGroupTitles }
+            : {}),
           updatedAt: occurredAt,
         },
       };
@@ -154,35 +123,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         projectId: command.projectId,
       });
-      const activeThreads = listThreadsByProjectId(readModel, command.projectId).filter(
-        (thread) => thread.deletedAt === null,
-      );
-      if (activeThreads.length > 0 && command.force !== true) {
-        return yield* new OrchestrationCommandInvariantError({
-          commandType: command.type,
-          detail: `Project '${command.projectId}' is not empty and cannot be deleted without force=true.`,
-        });
-      }
-      if (activeThreads.length > 0) {
-        return yield* decideCommandSequence({
-          readModel,
-          commands: [
-            ...activeThreads.map(
-              (thread): Extract<OrchestrationCommand, { type: "thread.delete" }> => ({
-                type: "thread.delete",
-                commandId: command.commandId,
-                threadId: thread.id,
-              }),
-            ),
-            {
-              type: "project.delete",
-              commandId: command.commandId,
-              projectId: command.projectId,
-            },
-          ],
-        });
-      }
-
       const occurredAt = nowIso();
       return {
         ...withEventBase({
@@ -191,10 +131,32 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           occurredAt,
           commandId: command.commandId,
         }),
-        type: "project.deleted" as const,
+        type: "project.deleted",
         payload: {
           projectId: command.projectId,
           deletedAt: occurredAt,
+        },
+      };
+    }
+
+    case "project.worktree-group-title.regenerate": {
+      yield* requireProject({
+        readModel,
+        command,
+        projectId: command.projectId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "project",
+          aggregateId: command.projectId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "project.worktree-group-title-regeneration-requested",
+        payload: {
+          projectId: command.projectId,
+          worktreePath: command.worktreePath,
+          createdAt: command.createdAt,
         },
       };
     }
@@ -232,6 +194,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         },
       };
     }
+
+    case "thread.fork":
+      return yield* new OrchestrationCommandInvariantError({
+        commandType: command.type,
+        detail: "thread.fork must be handled by ThreadForkService.",
+      });
 
     case "thread.delete": {
       yield* requireThread({
@@ -682,6 +650,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           turnId: command.turnId,
           checkpointTurnCount: command.checkpointTurnCount,
           checkpointRef: command.checkpointRef,
+          visibleCheckpointRef: command.visibleCheckpointRef ?? null,
+          visibleBaseCheckpointTurnCount: command.visibleBaseCheckpointTurnCount ?? null,
+          visibility: command.visibility ?? "visible",
           status: command.status,
           files: command.files,
           assistantMessageId: command.assistantMessageId ?? null,

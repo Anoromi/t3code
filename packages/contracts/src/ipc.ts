@@ -168,6 +168,24 @@ export interface DesktopBridge {
     position?: { x: number; y: number },
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
+  toggleExternalCorkdiff?: (input: {
+    cwd: string;
+    serverUrl: string;
+    token: string | null;
+    threadId: string;
+  }) => Promise<{
+    workspaceId: number;
+    reused: boolean;
+  }>;
+  openWorktreeTerminal?: (input: { cwd: string }) => Promise<{
+    worktreePath: string;
+  }>;
+  listOpenWorktreeTerminals?: () => Promise<
+    ReadonlyArray<{
+      worktreePath: string;
+    }>
+  >;
+  focusAppWindow?: () => Promise<void>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
   setUpdateChannel: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateState>;

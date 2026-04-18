@@ -10,7 +10,6 @@
     "catalog": {
       "effect": "4.0.0-beta.45",
       "@effect/atom-react": "4.0.0-beta.45",
-      "@effect/openapi-generator": "4.0.0-beta.45",
       "@effect/platform-bun": "4.0.0-beta.45",
       "@effect/platform-node": "4.0.0-beta.45",
       "@effect/platform-node-shared": "4.0.0-beta.45",
@@ -31,6 +30,15 @@
     "dev:web": "node scripts/dev-runner.ts dev:web",
     "dev:marketing": "turbo run dev --filter=@t3tools/marketing",
     "dev:desktop": "node scripts/dev-runner.ts dev:desktop",
+    "dev:desktop:wayland": "T3CODE_DESKTOP_OZONE_PLATFORM=wayland bun dev:desktop",
+    "dev:desktop:x11": "T3CODE_DESKTOP_OZONE_PLATFORM=x11 bun dev:desktop",
+    "ghostty:open": "node scripts/ghostty-worktree.ts",
+    "hypr:spawn": "node scripts/hypr-worktree.ts spawn",
+    "hypr:where": "node scripts/hypr-worktree.ts where",
+    "hypr:goto": "node scripts/hypr-worktree.ts goto",
+    "perf:desktop": "T3CODE_DESKTOP_PROFILE=1 turbo run start --filter=@t3tools/desktop",
+    "perf:desktop:wayland": "T3CODE_DESKTOP_PROFILE=1 T3CODE_DESKTOP_OZONE_PLATFORM=wayland bun perf:desktop",
+    "perf:desktop:x11": "T3CODE_DESKTOP_PROFILE=1 T3CODE_DESKTOP_OZONE_PLATFORM=x11 bun perf:desktop",
     "start": "turbo run start --filter=t3",
     "start:desktop": "turbo run start --filter=@t3tools/desktop",
     "start:marketing": "turbo run preview --filter=@t3tools/marketing",
@@ -85,6 +93,7 @@
     ]
   },
   "trustedDependencies": [
+    "electron",
     "node-pty"
   ]
 }

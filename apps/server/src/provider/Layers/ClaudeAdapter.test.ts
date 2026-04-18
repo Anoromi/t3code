@@ -18,7 +18,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
-import { Effect, Fiber, Layer, Random, Stream } from "effect";
+import { Effect, Fiber, Layer, Random, Scope, Stream } from "effect";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
@@ -398,7 +398,7 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("falls back to default effort when unsupported max is requested for Sonnet 4.6", () => {
+  it.effect("omits effort when unsupported max is requested for Sonnet 4.6", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -416,7 +416,7 @@ describe("ClaudeAdapterLive", () => {
       });
 
       const createInput = harness.getLastCreateQueryInput();
-      assert.equal(createInput?.options.effort, "high");
+      assert.equal(createInput?.options.effort, undefined);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -583,7 +583,7 @@ describe("ClaudeAdapterLive", () => {
       });
 
       const createInput = harness.getLastCreateQueryInput();
-      assert.equal(createInput?.options.effort, "high");
+      assert.equal(createInput?.options.effort, undefined);
       const promptText = yield* Effect.promise(() => readFirstPromptText(createInput));
       assert.equal(promptText, "Ultrathink:\nInvestigate the edge cases");
     }).pipe(
@@ -1242,7 +1242,7 @@ describe("ClaudeAdapterLive", () => {
   it.effect("closes the session when the Claude stream aborts after a turn starts", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
-      const context = yield* Effect.context<never>();
+      const context = yield* Effect.context<Scope.Scope>();
       const runFork = Effect.runForkWith(context);
 
       const adapter = yield* ClaudeAdapter;
@@ -1407,7 +1407,7 @@ describe("ClaudeAdapterLive", () => {
     );
 
     return Effect.gen(function* () {
-      const context = yield* Effect.context<never>();
+      const context = yield* Effect.context<Scope.Scope>();
       const runFork = Effect.runForkWith(context);
 
       const adapter = yield* ClaudeAdapter;
@@ -2741,84 +2741,84 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect(
-    "does not re-set the Claude model when the session already uses the same effective API model",
-    () => {
-      const harness = makeHarness();
-      return Effect.gen(function* () {
-        const adapter = yield* ClaudeAdapter;
-        const modelSelection = {
-          provider: "claudeAgent" as const,
-          model: "claude-opus-4-6",
-        };
-
-        const session = yield* adapter.startSession({
-          threadId: THREAD_ID,
-          provider: "claudeAgent",
-          modelSelection,
-          runtimeMode: "full-access",
-        });
-
-        yield* adapter.sendTurn({
-          threadId: session.threadId,
-          input: "hello",
-          modelSelection,
-          attachments: [],
-        });
-        yield* adapter.sendTurn({
-          threadId: session.threadId,
-          input: "hello again",
-          modelSelection,
-          attachments: [],
-        });
-
-        assert.deepEqual(harness.query.setModelCalls, []);
-      }).pipe(
-        Effect.provideService(Random.Random, makeDeterministicRandomService()),
-        Effect.provide(harness.layer),
-      );
-    },
-  );
-
-  it.effect("re-sets the Claude model when the effective API model changes", () => {
+  it.effect("re-sends the Claude model on each turn when a model selection is provided", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
+      const modelSelection = {
+        provider: "claudeAgent" as const,
+        model: "claude-opus-4-6",
+      };
 
       const session = yield* adapter.startSession({
         threadId: THREAD_ID,
         provider: "claudeAgent",
+        modelSelection,
         runtimeMode: "full-access",
       });
 
       yield* adapter.sendTurn({
         threadId: session.threadId,
         input: "hello",
-        modelSelection: {
-          provider: "claudeAgent",
-          model: "claude-opus-4-6",
-          options: {
-            contextWindow: "1m",
-          },
-        },
+        modelSelection,
         attachments: [],
       });
       yield* adapter.sendTurn({
         threadId: session.threadId,
         input: "hello again",
-        modelSelection: {
-          provider: "claudeAgent",
-          model: "claude-opus-4-6",
-        },
+        modelSelection,
         attachments: [],
       });
 
-      assert.deepEqual(harness.query.setModelCalls, ["claude-opus-4-6[1m]", "claude-opus-4-6"]);
+      assert.deepEqual(harness.query.setModelCalls, ["claude-opus-4-6", "claude-opus-4-6"]);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
     );
   });
+
+  it.effect(
+    "sets the Claude model using the selected slug even when only context window changes",
+    () => {
+      const harness = makeHarness();
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+
+        const session = yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: "claudeAgent",
+          runtimeMode: "full-access",
+        });
+
+        yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "hello",
+          modelSelection: {
+            provider: "claudeAgent",
+            model: "claude-opus-4-6",
+            options: {
+              contextWindow: "1m",
+            },
+          },
+          attachments: [],
+        });
+        yield* adapter.sendTurn({
+          threadId: session.threadId,
+          input: "hello again",
+          modelSelection: {
+            provider: "claudeAgent",
+            model: "claude-opus-4-6",
+          },
+          attachments: [],
+        });
+
+        assert.deepEqual(harness.query.setModelCalls, ["claude-opus-4-6[1m]", "claude-opus-4-6"]);
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
 
   it.effect("sets plan permission mode on sendTurn when interactionMode is plan", () => {
     const harness = makeHarness();

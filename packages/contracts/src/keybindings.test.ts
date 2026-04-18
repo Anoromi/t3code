@@ -35,6 +35,12 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedClose.command, "terminal.close");
 
+    const parsedWorktreeTerminal = yield* decode(KeybindingRule, {
+      key: "mod+t",
+      command: "terminal.worktree.open",
+    });
+    assert.strictEqual(parsedWorktreeTerminal.command, "terminal.worktree.open");
+
     const parsedDiffToggle = yield* decode(KeybindingRule, {
       key: "mod+d",
       command: "diff.toggle",
@@ -46,6 +52,12 @@ it.effect("parses keybinding rules", () =>
       command: "commandPalette.toggle",
     });
     assert.strictEqual(parsedCommandPalette.command, "commandPalette.toggle");
+
+    const parsedNavigationCommandMenu = yield* decode(KeybindingRule, {
+      key: "mod+e",
+      command: "navigation.commandMenu",
+    });
+    assert.strictEqual(parsedNavigationCommandMenu.command, "navigation.commandMenu");
 
     const parsedLocal = yield* decode(KeybindingRule, {
       key: "mod+shift+n",

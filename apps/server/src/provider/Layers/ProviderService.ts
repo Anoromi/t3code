@@ -12,15 +12,17 @@
 import {
   ModelSelection,
   NonNegativeInt,
-  ThreadId,
   ProviderInterruptTurnInput,
   ProviderRespondToRequestInput,
   ProviderRespondToUserInputInput,
   ProviderSendTurnInput,
   ProviderSessionStartInput,
+  ProviderThreadForkInput,
+  type ProviderThreadForkResult,
   ProviderStopSessionInput,
-  type ProviderRuntimeEvent,
   type ProviderSession,
+  type ProviderRuntimeEvent,
+  ThreadId,
 } from "@t3tools/contracts";
 import { Effect, Layer, Option, PubSub, Schema, SchemaIssue, Stream } from "effect";
 
@@ -161,9 +163,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
   const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
     Effect.succeed(event).pipe(
       Effect.tap((canonicalEvent) =>
-        canonicalEventLogger
-          ? canonicalEventLogger.write(canonicalEvent, canonicalEvent.threadId)
-          : Effect.void,
+        canonicalEventLogger ? canonicalEventLogger.write(canonicalEvent, null) : Effect.void,
       ),
       Effect.flatMap((canonicalEvent) => PubSub.publish(runtimeEventPubSub, canonicalEvent)),
       Effect.asVoid,
@@ -416,6 +416,41 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
+  const forkThread: ProviderServiceShape["forkThread"] = Effect.fn("forkThread")(
+    function* (rawInput) {
+      const input = yield* decodeInputOrValidationError({
+        operation: "ProviderService.forkThread",
+        schema: ProviderThreadForkInput,
+        payload: rawInput,
+      });
+      const bindingOption = yield* directory.getBinding(input.sourceThreadId);
+      const binding = Option.getOrUndefined(bindingOption);
+      if (!binding) {
+        return yield* toValidationError(
+          "ProviderService.forkThread",
+          `Cannot fork thread '${input.sourceThreadId}' because no persisted provider binding exists.`,
+        );
+      }
+
+      const adapter = yield* registry.getByProvider(binding.provider);
+      const result = yield* adapter.forkThread(input);
+      if (result.provider !== adapter.provider) {
+        return yield* toValidationError(
+          "ProviderService.forkThread",
+          `Adapter/provider mismatch: requested '${adapter.provider}', received '${result.provider}'.`,
+        );
+      }
+
+      yield* analytics.record("provider.thread.forked", {
+        provider: result.provider,
+        runtimeMode: result.runtimeMode,
+        hasResumeCursor: result.resumeCursor !== undefined,
+      });
+
+      return result satisfies ProviderThreadForkResult;
+    },
+  );
+
   const sendTurn: ProviderServiceShape["sendTurn"] = Effect.fn("sendTurn")(function* (rawInput) {
     const parsed = yield* decodeInputOrValidationError({
       operation: "ProviderService.sendTurn",
@@ -622,14 +657,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         if (routed.isActive) {
           yield* routed.adapter.stopSession(routed.threadId);
         }
-        yield* directory.upsert({
-          threadId: input.threadId,
-          provider: routed.adapter.provider,
-          status: "stopped",
-          runtimePayload: {
-            activeTurnId: null,
-          },
-        });
+        yield* directory.remove(input.threadId);
         yield* analytics.record("provider.session.stopped", {
           provider: routed.adapter.provider,
         });
@@ -737,6 +765,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     );
   });
 
+  const archiveThread: ProviderServiceShape["archiveThread"] = Effect.fn("archiveThread")(
+    function* (input) {
+      const adapter = yield* registry.getByProvider(input.provider);
+      yield* adapter.archiveThread(input.threadId, input.resumeCursor);
+      yield* analytics.record("provider.thread.archived", {
+        provider: input.provider,
+      });
+    },
+  );
+
   const runStopAll = Effect.fn("runStopAll")(function* () {
     const threadIds = yield* directory.listThreadIds();
     const activeSessions = yield* Effect.forEach(adapters, (adapter) =>
@@ -776,9 +814,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       Effect.logWarning("failed to stop provider service", { cause }),
     ),
   );
-
   return {
     startSession,
+    forkThread,
     sendTurn,
     interruptTurn,
     respondToRequest,
@@ -787,6 +825,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     listSessions,
     getCapabilities,
     rollbackConversation,
+    archiveThread,
     // Each access creates a fresh PubSub subscription so that multiple
     // consumers (ProviderRuntimeIngestion, CheckpointReactor, etc.) each
     // independently receive all runtime events.

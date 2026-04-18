@@ -33,6 +33,8 @@ interface ResolvedShortcutLabelOptions extends ShortcutMatchOptions {
   platform?: string;
 }
 
+type KeybindingCommandMatcher = KeybindingCommand | ((command: KeybindingCommand) => boolean);
+
 const TERMINAL_WORD_BACKWARD = "\u001bb";
 const TERMINAL_WORD_FORWARD = "\u001bf";
 const TERMINAL_LINE_START = "\u0001";
@@ -86,13 +88,14 @@ function matchesShortcutModifiers(
   );
 }
 
-function matchesShortcut(
+function matchesShortcutWithResolvedKeys(
   event: ShortcutEventLike,
   shortcut: KeybindingShortcut,
+  eventKeys: ReadonlySet<string>,
   platform = navigator.platform,
 ): boolean {
   if (!matchesShortcutModifiers(event, shortcut, platform)) return false;
-  return resolveEventKeys(event).has(shortcut.key);
+  return eventKeys.has(shortcut.key);
 }
 
 function resolvePlatform(options: ShortcutMatchOptions | undefined): string {
@@ -181,6 +184,31 @@ function matchesCommandShortcut(
   return resolveShortcutCommand(event, keybindings, options) === command;
 }
 
+function matchesCommandFilter(
+  command: KeybindingCommand,
+  filter: KeybindingCommandMatcher,
+): boolean {
+  return typeof filter === "function" ? filter(command) : command === filter;
+}
+
+export function couldMatchShortcutCommand(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  filter: KeybindingCommandMatcher,
+  options?: Pick<ShortcutMatchOptions, "platform">,
+): boolean {
+  const platform = resolvePlatform(options);
+  const eventKeys = resolveEventKeys(event);
+  for (let index = keybindings.length - 1; index >= 0; index -= 1) {
+    const binding = keybindings[index];
+    if (!binding || !matchesCommandFilter(binding.command, filter)) continue;
+    if (matchesShortcutWithResolvedKeys(event, binding.shortcut, eventKeys, platform)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function resolveShortcutCommand(
   event: ShortcutEventLike,
   keybindings: ResolvedKeybindingsConfig,
@@ -188,12 +216,13 @@ export function resolveShortcutCommand(
 ): KeybindingCommand | null {
   const platform = resolvePlatform(options);
   const context = resolveContext(options);
+  const eventKeys = resolveEventKeys(event);
 
   for (let index = keybindings.length - 1; index >= 0; index -= 1) {
     const binding = keybindings[index];
     if (!binding) continue;
     if (!matchesWhenClause(binding.whenAst, context)) continue;
-    if (!matchesShortcut(event, binding.shortcut, platform)) continue;
+    if (!matchesShortcutWithResolvedKeys(event, binding.shortcut, eventKeys, platform)) continue;
     return binding.command;
   }
   return null;
@@ -321,6 +350,14 @@ export function isDiffToggleShortcut(
   options?: ShortcutMatchOptions,
 ): boolean {
   return matchesCommandShortcut(event, keybindings, "diff.toggle", options);
+}
+
+export function isNavigationCommandMenuShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  return matchesCommandShortcut(event, keybindings, "navigation.commandMenu", options);
 }
 
 export function isChatNewShortcut(

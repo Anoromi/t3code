@@ -3,13 +3,37 @@ import { describe, expect, it } from "vitest";
 import {
   clampCollapsedComposerCursor,
   collapseExpandedComposerCursor,
+  composerTriggersEqual,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   isCollapsedCursorAdjacentToInlineToken,
+  normalizeReasoningCommandAlias,
+  normalizeReasoningValue,
+  parseComposerMenuSlashCommandQuery,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
 } from "./composer-logic";
 import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "./lib/terminalContext";
+
+describe("composerTriggersEqual", () => {
+  it("treats matching null triggers as equal", () => {
+    expect(composerTriggersEqual(null, null)).toBe(true);
+  });
+
+  it("compares trigger fields", () => {
+    const trigger = {
+      kind: "path" as const,
+      query: "src",
+      rangeStart: 4,
+      rangeEnd: 8,
+    };
+
+    expect(composerTriggersEqual(trigger, { ...trigger })).toBe(true);
+    expect(composerTriggersEqual(trigger, { ...trigger, query: "app" })).toBe(false);
+    expect(composerTriggersEqual(trigger, { ...trigger, rangeEnd: 9 })).toBe(false);
+    expect(composerTriggersEqual(trigger, null)).toBe(false);
+  });
+});
 
 describe("detectComposerTrigger", () => {
   it("detects @path trigger at cursor", () => {
@@ -72,6 +96,30 @@ describe("detectComposerTrigger", () => {
     });
   });
 
+  it("detects fast mode slash command while typing", () => {
+    const text = "/fa";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "fa",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("keeps reasoning slash command detection active while typing a value", () => {
+    const text = "/reasoning h";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "reasoning h",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
   it("detects $skill trigger at cursor", () => {
     const text = "Use $gh-fi";
     const trigger = detectComposerTrigger(text, text.length);
@@ -80,6 +128,90 @@ describe("detectComposerTrigger", () => {
       kind: "skill",
       query: "gh-fi",
       rangeStart: "Use ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("detects /re while typing", () => {
+    const text = "/re";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "re",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("detects /r while typing", () => {
+    const text = "/r";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "r",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("detects /branch while typing", () => {
+    const text = "/branch";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "branch",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("keeps the /branch trigger open after a trailing space", () => {
+    const text = "/branch ";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "branch ",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("detects /worktree while typing", () => {
+    const text = "/worktree";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "worktree",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("keeps the /worktree trigger open after a trailing space", () => {
+    const text = "/worktree ";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "worktree ",
+      rangeStart: 0,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("keeps the reasoning trigger open after a trailing space", () => {
+    const text = "/reasoning ";
+    const trigger = detectComposerTrigger(text, text.length);
+
+    expect(trigger).toEqual({
+      kind: "slash-command",
+      query: "reasoning ",
+      rangeStart: 0,
       rangeEnd: text.length,
     });
   });
@@ -132,6 +264,122 @@ describe("replaceTextRange", () => {
       text: "hello ",
       cursor: 6,
     });
+  });
+});
+
+describe("parseStandaloneComposerSlashCommand", () => {
+  it("parses built-in standalone commands", () => {
+    expect(parseStandaloneComposerSlashCommand("/plan")).toBe("plan");
+    expect(parseStandaloneComposerSlashCommand("/default")).toBe("default");
+    expect(parseStandaloneComposerSlashCommand("/fast")).toBe("fast");
+    expect(parseStandaloneComposerSlashCommand("/fork")).toBe("fork");
+  });
+
+  it("parses reasoning standalone commands", () => {
+    expect(parseStandaloneComposerSlashCommand("/reasoning xh")).toEqual({
+      kind: "reasoning",
+      effort: "xhigh",
+    });
+    expect(parseStandaloneComposerSlashCommand("/r h")).toEqual({
+      kind: "reasoning",
+      effort: "high",
+    });
+    expect(parseStandaloneComposerSlashCommand("/reasoning high")).toEqual({
+      kind: "reasoning",
+      effort: "high",
+    });
+  });
+
+  it("does not parse commands with trailing text as standalone slash commands", () => {
+    expect(parseStandaloneComposerSlashCommand("/fast please")).toBeNull();
+    expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
+    expect(parseStandaloneComposerSlashCommand("/fork later")).toBeNull();
+  });
+
+  it("ignores model and provider slash commands", () => {
+    expect(parseStandaloneComposerSlashCommand("/model")).toBeNull();
+    expect(parseStandaloneComposerSlashCommand("/review")).toBeNull();
+  });
+
+  it("parses /reasoning xhigh as a standalone slash command", () => {
+    expect(parseStandaloneComposerSlashCommand("/reasoning xhigh")).toEqual({
+      kind: "reasoning",
+      effort: "xhigh",
+    });
+  });
+
+  it("does not parse /reasoning without a value", () => {
+    expect(parseStandaloneComposerSlashCommand("/reasoning")).toBeNull();
+  });
+
+  it("does not parse /reasoning please", () => {
+    expect(parseStandaloneComposerSlashCommand("/reasoning please")).toBeNull();
+  });
+
+  it("does not parse /reasoning high now", () => {
+    expect(parseStandaloneComposerSlashCommand("/reasoning high now")).toBeNull();
+  });
+
+  it("does not parse invalid reasoning abbreviations", () => {
+    expect(parseStandaloneComposerSlashCommand("/r hh")).toBeNull();
+  });
+
+  it("does not parse /branch as a standalone slash command", () => {
+    expect(parseStandaloneComposerSlashCommand("/branch")).toBeNull();
+  });
+
+  it("does not parse /worktree as a standalone slash command", () => {
+    expect(parseStandaloneComposerSlashCommand("/worktree")).toBeNull();
+  });
+});
+
+describe("parseComposerMenuSlashCommandQuery", () => {
+  it("parses /branch query text", () => {
+    expect(parseComposerMenuSlashCommandQuery("branch feat")).toEqual({
+      command: "branch",
+      valueQuery: "feat",
+    });
+  });
+
+  it("parses bare /branch", () => {
+    expect(parseComposerMenuSlashCommandQuery("branch")).toEqual({
+      command: "branch",
+      valueQuery: "",
+    });
+  });
+
+  it("parses /worktree query text", () => {
+    expect(parseComposerMenuSlashCommandQuery("worktree loc")).toEqual({
+      command: "worktree",
+      valueQuery: "loc",
+    });
+  });
+
+  it("preserves named worktree branch casing", () => {
+    expect(parseComposerMenuSlashCommandQuery("worktree Feature/One")).toEqual({
+      command: "worktree",
+      valueQuery: "Feature/One",
+    });
+  });
+
+  it("parses bare /worktree", () => {
+    expect(parseComposerMenuSlashCommandQuery("worktree")).toEqual({
+      command: "worktree",
+      valueQuery: "",
+    });
+  });
+});
+
+describe("reasoning helpers", () => {
+  it("normalizes the /r alias to reasoning", () => {
+    expect(normalizeReasoningCommandAlias("r")).toBe("reasoning");
+  });
+
+  it("normalizes reasoning abbreviations", () => {
+    expect(normalizeReasoningValue("xh")).toBe("xhigh");
+    expect(normalizeReasoningValue("h")).toBe("high");
+    expect(normalizeReasoningValue("m")).toBe("medium");
+    expect(normalizeReasoningValue("l")).toBe("low");
   });
 });
 
@@ -285,19 +533,5 @@ describe("isCollapsedCursorAdjacentToInlineToken", () => {
 
     expect(isCollapsedCursorAdjacentToInlineToken(text, tokenEnd, "left")).toBe(true);
     expect(isCollapsedCursorAdjacentToInlineToken(text, tokenStart, "right")).toBe(true);
-  });
-});
-
-describe("parseStandaloneComposerSlashCommand", () => {
-  it("parses standalone /plan command", () => {
-    expect(parseStandaloneComposerSlashCommand(" /plan ")).toBe("plan");
-  });
-
-  it("parses standalone /default command", () => {
-    expect(parseStandaloneComposerSlashCommand("/default")).toBe("default");
-  });
-
-  it("ignores slash commands with extra message text", () => {
-    expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
   });
 });

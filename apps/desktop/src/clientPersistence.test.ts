@@ -51,6 +51,8 @@ function makeSecretStorage(available: boolean): DesktopSecretStorage {
 const clientSettings: ClientSettings = {
   confirmThreadArchive: true,
   confirmThreadDelete: false,
+  defaultCodexFastMode: true,
+  defaultCodexReasoningEffort: "high",
   diffWordWrap: true,
   sidebarProjectGroupingMode: "repository_path",
   sidebarProjectGroupingOverrides: {

@@ -21,9 +21,8 @@ import {
 import { scopeThreadRef } from "@t3tools/client-runtime";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 import { normalizeModelSlug } from "@t3tools/shared/model";
-import { createModelSelection } from "@t3tools/shared/model";
 import { Equal } from "effect";
-import { APP_VERSION } from "../../branding";
+import { APP_BASE_NAME, APP_VERSION } from "../../branding";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
@@ -56,7 +55,6 @@ import {
 } from "../../store";
 import { formatRelativeTime, formatRelativeTimeLabel } from "../../timestampFormat";
 import { cn } from "../../lib/utils";
-import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
@@ -101,16 +99,18 @@ const TIMESTAMP_FORMAT_LABELS = {
   "24-hour": "24-hour",
 } as const;
 
+const CODEX_REASONING_EFFORT_LABELS = {
+  xhigh: "Extra High",
+  high: "High",
+  medium: "Medium",
+  low: "Low",
+} as const;
+
 type InstallProviderSettings = {
   provider: ProviderKind;
   title: string;
-  badgeLabel?: string;
   binaryPlaceholder: string;
   binaryDescription: ReactNode;
-  serverUrlPlaceholder?: string;
-  serverUrlDescription?: ReactNode;
-  serverPasswordPlaceholder?: string;
-  serverPasswordDescription?: ReactNode;
   homePathKey?: "codexHomePath";
   homePlaceholder?: string;
   homeDescription?: ReactNode;
@@ -131,24 +131,6 @@ const PROVIDER_SETTINGS: readonly InstallProviderSettings[] = [
     title: "Claude",
     binaryPlaceholder: "Claude binary path",
     binaryDescription: "Path to the Claude binary",
-  },
-  {
-    provider: "cursor",
-    title: "Cursor",
-    badgeLabel: "Early Access",
-    binaryPlaceholder: "Cursor agent binary path",
-    binaryDescription: "Path to the Cursor agent binary",
-  },
-  {
-    provider: "opencode",
-    title: "OpenCode",
-    binaryPlaceholder: "OpenCode binary path",
-    binaryDescription: "Path to the OpenCode binary",
-    serverUrlPlaceholder: "http://127.0.0.1:4096",
-    serverUrlDescription: "Leave blank to let T3 Code spawn the server when needed",
-    serverPasswordPlaceholder: "Server password (optional)",
-    serverPasswordDescription:
-      "If your OpenCode server requires authentication, enter the password here. NOTE: Stored in plain text on disk",
   },
 ] as const;
 
@@ -178,7 +160,8 @@ function getProviderSummary(provider: ServerProvider | undefined) {
     return {
       headline: "Disabled",
       detail:
-        provider.message ?? "This provider is installed but disabled for new sessions in T3 Code.",
+        provider.message ??
+        `This provider is installed but disabled for new sessions in ${APP_BASE_NAME}.`,
     };
   }
   if (!provider.installed) {
@@ -469,6 +452,13 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
         : []),
+      ...(settings.defaultCodexReasoningEffort !==
+      DEFAULT_UNIFIED_SETTINGS.defaultCodexReasoningEffort
+        ? ["Default reasoning"]
+        : []),
+      ...(settings.defaultCodexFastMode !== DEFAULT_UNIFIED_SETTINGS.defaultCodexFastMode
+        ? ["Codex fast mode"]
+        : []),
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
@@ -487,6 +477,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
+      settings.defaultCodexFastMode,
+      settings.defaultCodexReasoningEffort,
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
       settings.enableAssistantStreaming,
@@ -539,28 +531,12 @@ export function GeneralSettingsPanel() {
       settings.providers.claudeAgent.customModels.length > 0 ||
       settings.providers.claudeAgent.launchArgs !== "",
     ),
-    cursor: Boolean(
-      settings.providers.cursor.binaryPath !==
-        DEFAULT_UNIFIED_SETTINGS.providers.cursor.binaryPath ||
-      settings.providers.cursor.customModels.length > 0,
-    ),
-    opencode: Boolean(
-      settings.providers.opencode.binaryPath !==
-        DEFAULT_UNIFIED_SETTINGS.providers.opencode.binaryPath ||
-      settings.providers.opencode.serverUrl !==
-        DEFAULT_UNIFIED_SETTINGS.providers.opencode.serverUrl ||
-      settings.providers.opencode.serverPassword !==
-        DEFAULT_UNIFIED_SETTINGS.providers.opencode.serverPassword ||
-      settings.providers.opencode.customModels.length > 0,
-    ),
   });
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
     Record<ProviderKind, string>
   >({
     codex: "",
     claudeAgent: "",
-    cursor: "",
-    opencode: "",
   });
   const [customModelErrorByProvider, setCustomModelErrorByProvider] = useState<
     Partial<Record<ProviderKind, string | null>>
@@ -587,11 +563,6 @@ export function GeneralSettingsPanel() {
   const availableEditors = useServerAvailableEditors();
   const observability = useServerObservability();
   const serverProviders = useServerProviders();
-  const visibleProviderSettings = PROVIDER_SETTINGS.filter(
-    (providerSettings) =>
-      providerSettings.provider !== "cursor" ||
-      serverProviders.some((provider) => provider.provider === "cursor"),
-  );
   const codexHomePath = settings.providers.codex.homePath;
   const logsDirectoryPath = observability?.logsDirectoryPath ?? null;
   const diagnosticsDescription = (() => {
@@ -756,7 +727,7 @@ export function GeneralSettingsPanel() {
     [settings, updateSettings],
   );
 
-  const providerCards = visibleProviderSettings.map((providerSettings) => {
+  const providerCards = PROVIDER_SETTINGS.map((providerSettings) => {
     const liveProvider = serverProviders.find(
       (candidate) => candidate.provider === providerSettings.provider,
     );
@@ -776,19 +747,12 @@ export function GeneralSettingsPanel() {
     return {
       provider: providerSettings.provider,
       title: providerSettings.title,
-      badgeLabel: providerSettings.badgeLabel,
       binaryPlaceholder: providerSettings.binaryPlaceholder,
       binaryDescription: providerSettings.binaryDescription,
-      serverUrlPlaceholder: providerSettings.serverUrlPlaceholder,
-      serverUrlDescription: providerSettings.serverUrlDescription,
-      serverPasswordPlaceholder: providerSettings.serverPasswordPlaceholder,
-      serverPasswordDescription: providerSettings.serverPasswordDescription,
       homePathKey: providerSettings.homePathKey,
       homePlaceholder: providerSettings.homePlaceholder,
       homeDescription: providerSettings.homeDescription,
       binaryPathValue: providerConfig.binaryPath,
-      serverUrlValue: "serverUrl" in providerConfig ? providerConfig.serverUrl : "",
-      serverPasswordValue: "serverPassword" in providerConfig ? providerConfig.serverPassword : "",
       isDirty: !Equal.equals(providerConfig, defaultProviderConfig),
       liveProvider,
       models,
@@ -812,7 +776,7 @@ export function GeneralSettingsPanel() {
       <SettingsSection title="General">
         <SettingsRow
           title="Theme"
-          description="Choose how T3 Code looks across the app."
+          description={`Choose how ${APP_BASE_NAME} looks across the app.`}
           resetAction={
             theme !== "system" ? (
               <SettingResetButton label="theme" onClick={() => setTheme("system")} />
@@ -978,6 +942,86 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
+          title="Default reasoning"
+          description="Start new Codex drafts with this reasoning level."
+          resetAction={
+            settings.defaultCodexReasoningEffort !==
+            DEFAULT_UNIFIED_SETTINGS.defaultCodexReasoningEffort ? (
+              <SettingResetButton
+                label="default reasoning"
+                onClick={() =>
+                  updateSettings({
+                    defaultCodexReasoningEffort:
+                      DEFAULT_UNIFIED_SETTINGS.defaultCodexReasoningEffort,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.defaultCodexReasoningEffort}
+              onValueChange={(value) => {
+                if (
+                  value === "xhigh" ||
+                  value === "high" ||
+                  value === "medium" ||
+                  value === "low"
+                ) {
+                  updateSettings({ defaultCodexReasoningEffort: value });
+                }
+              }}
+            >
+              <SelectTrigger className="w-full sm:w-40" aria-label="Default reasoning">
+                <SelectValue>
+                  {CODEX_REASONING_EFFORT_LABELS[settings.defaultCodexReasoningEffort]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="xhigh">
+                  {CODEX_REASONING_EFFORT_LABELS.xhigh}
+                </SelectItem>
+                <SelectItem hideIndicator value="high">
+                  {CODEX_REASONING_EFFORT_LABELS.high}
+                </SelectItem>
+                <SelectItem hideIndicator value="medium">
+                  {CODEX_REASONING_EFFORT_LABELS.medium}
+                </SelectItem>
+                <SelectItem hideIndicator value="low">
+                  {CODEX_REASONING_EFFORT_LABELS.low}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Codex fast mode"
+          description="Use fast mode by default for new Codex drafts."
+          resetAction={
+            settings.defaultCodexFastMode !== DEFAULT_UNIFIED_SETTINGS.defaultCodexFastMode ? (
+              <SettingResetButton
+                label="Codex fast mode"
+                onClick={() =>
+                  updateSettings({
+                    defaultCodexFastMode: DEFAULT_UNIFIED_SETTINGS.defaultCodexFastMode,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.defaultCodexFastMode}
+              onCheckedChange={(checked) =>
+                updateSettings({ defaultCodexFastMode: Boolean(checked) })
+              }
+              aria-label="Enable Codex fast mode by default"
+            />
+          }
+        />
+
+        <SettingsRow
           title="Add project starts in"
           description='Leave empty to use "~/" when the Add Project browser opens.'
           resetAction={
@@ -1088,7 +1132,7 @@ export function GeneralSettingsPanel() {
                     textGenerationModelSelection: resolveAppModelSelectionState(
                       {
                         ...settings,
-                        textGenerationModelSelection: createModelSelection(provider, model),
+                        textGenerationModelSelection: { provider, model },
                       },
                       serverProviders,
                     ),
@@ -1113,11 +1157,11 @@ export function GeneralSettingsPanel() {
                     textGenerationModelSelection: resolveAppModelSelectionState(
                       {
                         ...settings,
-                        textGenerationModelSelection: createModelSelection(
-                          textGenProvider,
-                          textGenModel,
-                          nextOptions,
-                        ),
+                        textGenerationModelSelection: {
+                          provider: textGenProvider,
+                          model: textGenModel,
+                          ...(nextOptions ? { options: nextOptions } : {}),
+                        },
                       },
                       serverProviders,
                     ),
@@ -1174,11 +1218,6 @@ export function GeneralSettingsPanel() {
                         className={cn("size-2 shrink-0 rounded-full", providerCard.statusStyle.dot)}
                       />
                       <h3 className="text-sm font-medium text-foreground">{providerDisplayName}</h3>
-                      {providerCard.badgeLabel ? (
-                        <Badge variant="warning" size="sm" className="shrink-0">
-                          {providerCard.badgeLabel}
-                        </Badge>
-                      ) : null}
                       {providerCard.versionLabel ? (
                         <code className="text-xs text-muted-foreground">
                           {providerCard.versionLabel}
@@ -1300,84 +1339,6 @@ export function GeneralSettingsPanel() {
                         </span>
                       </label>
                     </div>
-
-                    {providerCard.serverUrlPlaceholder ? (
-                      <div className="border-t border-border/60 px-4 py-3 sm:px-5">
-                        <label
-                          htmlFor={`provider-install-${providerCard.provider}-server-url`}
-                          className="block"
-                        >
-                          <span className="text-xs font-medium text-foreground">
-                            {providerDisplayName} server URL
-                          </span>
-                          <Input
-                            id={`provider-install-${providerCard.provider}-server-url`}
-                            className="mt-1.5"
-                            value={providerCard.serverUrlValue}
-                            onChange={(event) =>
-                              updateSettings({
-                                providers: {
-                                  ...settings.providers,
-                                  [providerCard.provider]: {
-                                    ...settings.providers[providerCard.provider],
-                                    ...(providerCard.provider === "opencode"
-                                      ? { serverUrl: event.target.value }
-                                      : {}),
-                                  },
-                                },
-                              })
-                            }
-                            placeholder={providerCard.serverUrlPlaceholder}
-                            spellCheck={false}
-                          />
-                          {providerCard.serverUrlDescription ? (
-                            <span className="mt-1 block text-xs text-muted-foreground">
-                              {providerCard.serverUrlDescription}
-                            </span>
-                          ) : null}
-                        </label>
-                      </div>
-                    ) : null}
-
-                    {providerCard.serverPasswordPlaceholder ? (
-                      <div className="border-t border-border/60 px-4 py-3 sm:px-5">
-                        <label
-                          htmlFor={`provider-install-${providerCard.provider}-server-password`}
-                          className="block"
-                        >
-                          <span className="text-xs font-medium text-foreground">
-                            {providerDisplayName} server password
-                          </span>
-                          <Input
-                            id={`provider-install-${providerCard.provider}-server-password`}
-                            className="mt-1.5"
-                            type="password"
-                            autoComplete="off"
-                            value={providerCard.serverPasswordValue}
-                            onChange={(event) =>
-                              updateSettings({
-                                providers: {
-                                  ...settings.providers,
-                                  [providerCard.provider]: {
-                                    ...settings.providers[providerCard.provider],
-                                    ...(providerCard.provider === "opencode"
-                                      ? { serverPassword: event.target.value }
-                                      : {}),
-                                  },
-                                },
-                              })
-                            }
-                            placeholder={providerCard.serverPasswordPlaceholder}
-                            spellCheck={false}
-                          />
-                          {providerCard.serverPasswordDescription ? (
-                            <span className="mt-1 block text-xs text-muted-foreground">
-                              {providerCard.serverPasswordDescription}
-                            </span>
-                          ) : null}
-                        </label>
-                      </div>
-                    ) : null}
 
                     {providerCard.homePathKey ? (
                       <div className="border-t border-border/60 px-4 py-3 sm:px-5">
@@ -1558,9 +1519,7 @@ export function GeneralSettingsPanel() {
                           placeholder={
                             providerCard.provider === "codex"
                               ? "gpt-6.7-codex-ultra-preview"
-                              : providerCard.provider === "opencode"
-                                ? "openai/gpt-5"
-                                : "claude-sonnet-5-0"
+                              : "claude-sonnet-5-0"
                           }
                           spellCheck={false}
                         />

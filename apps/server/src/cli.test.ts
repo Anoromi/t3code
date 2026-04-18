@@ -9,6 +9,7 @@ import { NetService } from "@t3tools/shared/Net";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Stream from "effect/Stream";
 import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import * as HttpServer from "effect/unstable/http/HttpServer";
 import * as CliError from "effect/unstable/cli/CliError";
@@ -25,6 +26,9 @@ import {
   orchestrationSnapshotRouteLayer,
 } from "./orchestration/http.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
+import { ProviderSessionRuntimeRepositoryLive } from "./persistence/Layers/ProviderSessionRuntime.ts";
+import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory.ts";
+import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService.ts";
 import { RepositoryIdentityResolverLive } from "./project/Layers/RepositoryIdentityResolver.ts";
 import {
   makePersistedServerRuntimeState,
@@ -83,6 +87,28 @@ const makeProjectPersistenceLayer = (config: ServerConfigShape) =>
   Layer.mergeAll(
     OrchestrationLayerLive.pipe(
       Layer.provideMerge(RepositoryIdentityResolverLive),
+      Layer.provideMerge(
+        Layer.mergeAll(
+          ProviderSessionDirectoryLive.pipe(Layer.provide(ProviderSessionRuntimeRepositoryLive)),
+          Layer.succeed(ProviderService, {
+            startSession: () => Effect.die("ProviderService.startSession should not be used"),
+            forkThread: () => Effect.die("ProviderService.forkThread should not be used"),
+            sendTurn: () => Effect.die("ProviderService.sendTurn should not be used"),
+            interruptTurn: () => Effect.die("ProviderService.interruptTurn should not be used"),
+            respondToRequest: () =>
+              Effect.die("ProviderService.respondToRequest should not be used"),
+            respondToUserInput: () =>
+              Effect.die("ProviderService.respondToUserInput should not be used"),
+            stopSession: () => Effect.die("ProviderService.stopSession should not be used"),
+            listSessions: () => Effect.succeed([]),
+            getCapabilities: () => Effect.die("ProviderService.getCapabilities should not be used"),
+            rollbackConversation: () =>
+              Effect.die("ProviderService.rollbackConversation should not be used"),
+            archiveThread: () => Effect.die("ProviderService.archiveThread should not be used"),
+            streamEvents: Stream.empty,
+          } satisfies ProviderServiceShape),
+        ),
+      ),
       Layer.provideMerge(SqlitePersistenceLayerLive),
     ),
     WorkspacePathsLive,

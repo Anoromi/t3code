@@ -101,7 +101,7 @@ export const layer = Layer.effect(
       spawn: (input) =>
         Effect.sync(() => {
           let processHandle: BunPtyProcess | null = null;
-          const command = [input.shell, ...(input.args ?? [])];
+          const command = [input.file, ...(input.args ?? [])];
           const subprocess = Bun.spawn(command, {
             cwd: input.cwd,
             env: input.env,

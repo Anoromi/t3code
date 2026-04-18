@@ -2,6 +2,7 @@ import type {
   OrchestrationEvent,
   OrchestrationReadModel,
   ProjectId,
+  ThreadForkCommand,
   ThreadId,
 } from "@t3tools/contracts";
 import { OrchestrationCommand } from "@t3tools/contracts";
@@ -39,6 +40,10 @@ import { decideOrchestrationCommand } from "../decider.ts";
 import { createEmptyReadModel, projectEvent } from "../projector.ts";
 import { OrchestrationProjectionPipeline } from "../Services/ProjectionPipeline.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
+import { ProviderSessionDirectory } from "../../provider/Services/ProviderSessionDirectory.ts";
+import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { ThreadForkServiceLive } from "./ThreadForkService.ts";
+import { ThreadForkService } from "../Services/ThreadForkService.ts";
 import {
   OrchestrationEngineService,
   type OrchestrationEngineShape,
@@ -58,6 +63,7 @@ function commandToAggregateRef(command: OrchestrationCommand): {
     case "project.create":
     case "project.meta.update":
     case "project.delete":
+    case "project.worktree-group-title.regenerate":
       return {
         aggregateKind: "project",
         aggregateId: command.projectId,
@@ -76,11 +82,130 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const commandReceiptRepository = yield* OrchestrationCommandReceiptRepository;
   const projectionPipeline = yield* OrchestrationProjectionPipeline;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+  const threadForkService = yield* ThreadForkService;
+  const providerService = yield* ProviderService;
+  const providerSessionDirectory = yield* ProviderSessionDirectory;
 
   let readModel = createEmptyReadModel(new Date().toISOString());
 
   const commandQueue = yield* Queue.unbounded<CommandEnvelope>();
   const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
+
+  const processThreadFork = (
+    command: ThreadForkCommand,
+  ): Effect.Effect<
+    {
+      readonly committedEvents: ReadonlyArray<OrchestrationEvent>;
+      readonly lastSequence: number;
+      readonly nextReadModel: OrchestrationReadModel;
+    },
+    OrchestrationDispatchError
+  > =>
+    Effect.gen(function* () {
+      const sourceThread = readModel.threads.find((thread) => thread.id === command.sourceThreadId);
+      const sourceProvider =
+        sourceThread?.session?.providerName ?? sourceThread?.modelSelection.provider ?? null;
+      if (sourceProvider !== "codex") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.sourceThreadId}' is bound to provider '${sourceProvider ?? "unknown"}' and cannot be forked via Codex.`,
+        });
+      }
+
+      const forkedProviderThread = yield* providerService
+        .forkThread({
+          sourceThreadId: command.sourceThreadId,
+          targetThreadId: command.threadId,
+        })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new OrchestrationCommandInvariantError({
+                commandType: command.type,
+                detail: error.message,
+                cause: error,
+              }),
+          ),
+        );
+
+      const eventBase = yield* threadForkService.createForkEvent({
+        command,
+        readModel,
+      });
+
+      return yield* sql
+        .withTransaction(
+          Effect.gen(function* () {
+            const savedEvent = yield* eventStore.append(eventBase);
+            const nextReadModel = yield* projectEvent(readModel, savedEvent);
+            yield* projectionPipeline.projectEvent(savedEvent);
+            yield* providerSessionDirectory
+              .upsert({
+                threadId: command.threadId,
+                provider: forkedProviderThread.provider,
+                runtimeMode: forkedProviderThread.runtimeMode,
+                status: "stopped",
+                resumeCursor: forkedProviderThread.resumeCursor,
+                ...(forkedProviderThread.runtimePayload !== undefined
+                  ? { runtimePayload: forkedProviderThread.runtimePayload }
+                  : {}),
+              })
+              .pipe(
+                Effect.mapError(
+                  (error) =>
+                    new OrchestrationCommandInvariantError({
+                      commandType: command.type,
+                      detail: error.message,
+                      cause: error,
+                    }),
+                ),
+              );
+            yield* commandReceiptRepository.upsert({
+              commandId: command.commandId,
+              aggregateKind: savedEvent.aggregateKind,
+              aggregateId: savedEvent.aggregateId,
+              acceptedAt: savedEvent.occurredAt,
+              resultSequence: savedEvent.sequence,
+              status: "accepted",
+              error: null,
+            });
+            return {
+              committedEvents: [savedEvent] satisfies OrchestrationEvent[],
+              lastSequence: savedEvent.sequence,
+              nextReadModel,
+            } as const;
+          }),
+        )
+        .pipe(
+          Effect.catchTag("SqlError", (sqlError) =>
+            Effect.fail(
+              toPersistenceSqlError("OrchestrationEngine.processEnvelope:forkTransaction")(
+                sqlError,
+              ),
+            ),
+          ),
+          Effect.catchCause((cause: Cause.Cause<OrchestrationDispatchError>) =>
+            providerService
+              .archiveThread({
+                threadId: command.threadId,
+                provider: forkedProviderThread.provider,
+                resumeCursor: forkedProviderThread.resumeCursor,
+              })
+              .pipe(
+                Effect.catch((archiveError) =>
+                  Effect.sync(() => {
+                    console.warn("failed to archive forked provider thread after rollback", {
+                      sourceThreadId: command.sourceThreadId,
+                      targetThreadId: command.threadId,
+                      cause: Cause.pretty(Cause.fail(archiveError)),
+                    });
+                  }),
+                ),
+                Effect.flatMap(() => Effect.failCause(cause)),
+              ),
+          ),
+        );
+    });
 
   const processEnvelope = (envelope: CommandEnvelope): Effect.Effect<void> => {
     const dispatchStartSequence = readModel.snapshotSequence;
@@ -131,6 +256,27 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             commandId: envelope.command.commandId,
             detail: existingReceipt.value.error ?? "Previously rejected.",
           });
+        }
+
+        if (envelope.command.type === "thread.fork") {
+          const committedFork = yield* processThreadFork(envelope.command);
+          readModel = committedFork.nextReadModel;
+          for (const [index, event] of committedFork.committedEvents.entries()) {
+            yield* PubSub.publish(eventPubSub, event);
+            if (index === 0) {
+              yield* Metric.update(
+                Metric.withAttributes(
+                  orchestrationCommandAckDuration,
+                  metricAttributes({
+                    ...baseMetricAttributes,
+                    ackEventType: event.type,
+                  }),
+                ),
+                Duration.millis(Math.max(0, Date.now() - envelope.startedAtMs)),
+              );
+            }
+          }
+          return { sequence: committedFork.lastSequence };
         }
 
         const eventBase = yield* decideOrchestrationCommand({
@@ -307,4 +453,4 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 export const OrchestrationEngineLive = Layer.effect(
   OrchestrationEngineService,
   makeOrchestrationEngine,
-);
+).pipe(Layer.provideMerge(ThreadForkServiceLive));

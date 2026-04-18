@@ -16,6 +16,10 @@
       "types": "./src/logging.ts",
       "import": "./src/logging.ts"
     },
+    "./desktopDaemon": {
+      "types": "./src/desktopDaemon.ts",
+      "import": "./src/desktopDaemon.ts"
+    },
     "./shell": {
       "types": "./src/shell.ts",
       "import": "./src/shell.ts"
@@ -36,10 +40,6 @@
       "types": "./src/schemaJson.ts",
       "import": "./src/schemaJson.ts"
     },
-    "./toolActivity": {
-      "types": "./src/toolActivity.ts",
-      "import": "./src/toolActivity.ts"
-    },
     "./Struct": {
       "types": "./src/Struct.ts",
       "import": "./src/Struct.ts"
@@ -55,6 +55,10 @@
     "./projectScripts": {
       "types": "./src/projectScripts.ts",
       "import": "./src/projectScripts.ts"
+    },
+    "./worktree": {
+      "types": "./src/worktree.ts",
+      "import": "./src/worktree.ts"
     },
     "./searchRanking": {
       "types": "./src/searchRanking.ts",

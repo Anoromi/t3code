@@ -1,8 +1,9 @@
-import { Cause, Duration, Effect, Layer, Option, Queue, Ref, Schema, Stream } from "effect";
+import { Cause, Duration, Effect, Fiber, Layer, Option, Queue, Ref, Schema, Stream } from "effect";
 import {
   type AuthAccessStreamEvent,
   AuthSessionId,
   CommandId,
+  type DesktopControlEvent,
   EventId,
   type OrchestrationCommand,
   type GitActionProgressEvent,
@@ -29,6 +30,7 @@ import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery.ts";
 import { ServerConfig } from "./config.ts";
+import { DesktopControl } from "./desktopControl.ts";
 import { GitCore } from "./git/Services/GitCore.ts";
 import { GitManager } from "./git/Services/GitManager.ts";
 import { GitStatusBroadcaster } from "./git/Services/GitStatusBroadcaster.ts";
@@ -153,6 +155,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const serverAuth = yield* ServerAuth;
       const bootstrapCredentials = yield* BootstrapCredentialService;
       const sessions = yield* SessionCredentialService;
+      const desktopControl = yield* DesktopControl;
       const serverCommandId = (tag: string) =>
         CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
 
@@ -174,6 +177,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           type: "thread.activity.append",
           commandId: serverCommandId("setup-script-activity"),
           threadId: input.threadId,
+          createdAt: input.createdAt,
           activity: {
             id: EventId.make(crypto.randomUUID()),
             tone: input.tone,
@@ -183,7 +187,6 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             turnId: null,
             createdAt: input.createdAt,
           },
-          createdAt: input.createdAt,
         });
 
       const toDispatchCommandError = (cause: unknown, fallbackMessage: string) =>
@@ -607,6 +610,20 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                       message: "Failed to dispatch orchestration command",
                       cause,
                     }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.getSnapshot]: (_input) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.getSnapshot,
+            projectionSnapshotQuery.getSnapshot().pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationGetSnapshotError({
+                    message: "Failed to load orchestration snapshot",
+                    cause,
+                  }),
               ),
             ),
             { "rpc.aggregate": "orchestration" },
@@ -1053,6 +1070,32 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               );
             }),
             { "rpc.aggregate": "auth" },
+          ),
+        [WS_METHODS.desktopRequestCorkdiffAppFocus]: ({ threadId }) =>
+          observeRpcEffect(
+            WS_METHODS.desktopRequestCorkdiffAppFocus,
+            desktopControl
+              .publish({
+                type: "corkdiff.focusAppRequested",
+                threadId,
+              })
+              .pipe(Effect.as({ accepted: true as const })),
+            { "rpc.aggregate": "desktop" },
+          ),
+        [WS_METHODS.subscribeDesktopControl]: (_input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeDesktopControl,
+            Stream.callback<DesktopControlEvent>((queue) =>
+              Effect.acquireRelease(
+                desktopControl.stream.pipe(
+                  Stream.runForEach((event) => Queue.offer(queue, event)),
+                  Effect.forkScoped,
+                ),
+                (fiber) =>
+                  Fiber.interrupt(fiber).pipe(Effect.andThen(Queue.end(queue)), Effect.asVoid),
+              ),
+            ),
+            { "rpc.aggregate": "desktop" },
           ),
       });
     }),

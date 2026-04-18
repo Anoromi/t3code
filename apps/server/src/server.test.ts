@@ -92,6 +92,7 @@ import {
   ProjectSetupScriptRunner,
   type ProjectSetupScriptRunnerShape,
 } from "./project/Services/ProjectSetupScriptRunner.ts";
+import { DesktopControl, type DesktopControlShape } from "./desktopControl.ts";
 import {
   RepositoryIdentityResolver,
   type RepositoryIdentityResolverShape,
@@ -152,6 +153,7 @@ const makeDefaultOrchestrationReadModel = () => {
         runtimeMode: "full-access" as const,
         branch: null,
         worktreePath: null,
+        forkOrigin: null,
         createdAt: now,
         updatedAt: now,
         archivedAt: null,
@@ -180,6 +182,7 @@ const makeDefaultOrchestrationThreadShell = (
     interactionMode: "default",
     branch: null,
     worktreePath: null,
+    forkOrigin: null,
     latestTurn: null,
     createdAt: now,
     updatedAt: now,
@@ -333,6 +336,7 @@ const buildAppUnderTest = (options?: {
     browserTraceCollector?: Partial<BrowserTraceCollectorShape>;
     serverLifecycleEvents?: Partial<ServerLifecycleEventsShape>;
     serverRuntimeStartup?: Partial<ServerRuntimeStartupShape>;
+    desktopControl?: Partial<DesktopControlShape>;
     serverEnvironment?: Partial<ServerEnvironmentShape>;
     repositoryIdentityResolver?: Partial<RepositoryIdentityResolverShape>;
   };
@@ -524,6 +528,13 @@ const buildAppUnderTest = (options?: {
           markHttpListening: Effect.void,
           enqueueCommand: (effect) => effect,
           ...options?.layers?.serverRuntimeStartup,
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(DesktopControl)({
+          publish: (_event) => Effect.void,
+          stream: Stream.empty,
+          ...options?.layers?.desktopControl,
         }),
       ),
       Layer.provide(
@@ -2889,6 +2900,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             runtimeMode: "full-access" as const,
             branch: null,
             worktreePath: null,
+            forkOrigin: null,
             createdAt: now,
             updatedAt: now,
             archivedAt: null,
@@ -2932,6 +2944,13 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       });
 
       const wsUrl = yield* getWsServerUrl("/ws");
+      const snapshotResult = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) => client[ORCHESTRATION_WS_METHODS.getSnapshot]({})),
+      );
+      assert.equal(snapshotResult.snapshotSequence, snapshot.snapshotSequence);
+      assert.equal(snapshotResult.projects[0]?.id, ProjectId.make("project-a"));
+      assert.equal(snapshotResult.threads[0]?.id, ThreadId.make("thread-1"));
+
       const dispatchResult = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           client[ORCHESTRATION_WS_METHODS.dispatchCommand]({

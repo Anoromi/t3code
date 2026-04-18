@@ -96,7 +96,18 @@ function createThreadControlHarness() {
   return { manager, context, requireSession, sendRequest, updateSession };
 }
 
-function createPendingUserInputHarness() {
+function createPendingUserInputHarness(
+  overrides?: Partial<{
+    pendingUserInputs: Map<
+      ApprovalRequestId,
+      {
+        requestId: ApprovalRequestId;
+        jsonRpcId: number;
+        threadId: ReturnType<typeof asThreadId>;
+      }
+    >;
+  }>,
+) {
   const manager = new CodexAppServerManager();
   const context = {
     session: {
@@ -109,16 +120,18 @@ function createPendingUserInputHarness() {
       createdAt: "2026-02-10T00:00:00.000Z",
       updatedAt: "2026-02-10T00:00:00.000Z",
     },
-    pendingUserInputs: new Map([
-      [
-        ApprovalRequestId.make("req-user-input-1"),
-        {
-          requestId: ApprovalRequestId.make("req-user-input-1"),
-          jsonRpcId: 42,
-          threadId: asThreadId("thread_1"),
-        },
-      ],
-    ]),
+    pendingUserInputs:
+      overrides?.pendingUserInputs ??
+      new Map([
+        [
+          ApprovalRequestId.make("req-user-input-1"),
+          {
+            requestId: ApprovalRequestId.make("req-user-input-1"),
+            jsonRpcId: 42,
+            threadId: asThreadId("thread_1"),
+          },
+        ],
+      ]),
     collabReceiverTurns: new Map(),
   };
 
@@ -717,7 +730,7 @@ describe("sendTurn", () => {
         mode: "plan",
         settings: {
           model: "gpt-5.3-codex",
-          reasoning_effort: "medium",
+          reasoning_effort: "high",
           developer_instructions: CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
         },
       },
@@ -747,8 +760,40 @@ describe("sendTurn", () => {
         mode: "default",
         settings: {
           model: "gpt-5.3-codex",
-          reasoning_effort: "medium",
+          reasoning_effort: "high",
           developer_instructions: CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+        },
+      },
+    });
+  });
+
+  it("preserves an explicit collaboration reasoning effort override", async () => {
+    const { manager, context, sendRequest } = createSendTurnHarness();
+
+    await manager.sendTurn({
+      threadId: asThreadId("thread_1"),
+      input: "Plan this carefully",
+      interactionMode: "plan",
+      effort: "low",
+    });
+
+    expect(sendRequest).toHaveBeenCalledWith(context, "turn/start", {
+      threadId: "thread_1",
+      input: [
+        {
+          type: "text",
+          text: "Plan this carefully",
+          text_elements: [],
+        },
+      ],
+      model: "gpt-5.3-codex",
+      effort: "low",
+      collaborationMode: {
+        mode: "plan",
+        settings: {
+          model: "gpt-5.3-codex",
+          reasoning_effort: "low",
+          developer_instructions: CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
         },
       },
     });
@@ -778,7 +823,7 @@ describe("sendTurn", () => {
         mode: "plan",
         settings: {
           model: "gpt-5.2-codex",
-          reasoning_effort: "medium",
+          reasoning_effort: "high",
           developer_instructions: CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
         },
       },
@@ -954,6 +999,22 @@ describe("respondToUserInput", () => {
         },
       }),
     );
+  });
+
+  it("throws the canonical stale-request error when the pending user input is missing", async () => {
+    const { manager } = createPendingUserInputHarness({
+      pendingUserInputs: new Map(),
+    });
+
+    await expect(
+      manager.respondToUserInput(
+        asThreadId("thread_1"),
+        ApprovalRequestId.make("req-user-input-missing"),
+        {
+          scope: "All request methods",
+        },
+      ),
+    ).rejects.toThrow("Unknown pending user-input request: req-user-input-missing");
   });
 
   it("tracks file-read approval requests with the correct method", () => {

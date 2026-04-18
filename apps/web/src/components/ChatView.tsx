@@ -2,15 +2,17 @@ import {
   type ApprovalRequestId,
   DEFAULT_MODEL_BY_PROVIDER,
   type ClaudeAgentEffort,
+  type CodexReasoningEffort,
   type EnvironmentId,
+  type GitBranch,
   type MessageId,
   type ModelSelection,
+  type ProjectEntry,
   type ProjectScript,
   type ProviderKind,
   type ProjectId,
   type ProviderApprovalDecision,
   type ServerProvider,
-  type ResolvedKeybindingsConfig,
   type ScopedThreadRef,
   type ThreadId,
   type TurnId,
@@ -26,14 +28,19 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime";
-import { applyClaudePromptEffortPrefix, createModelSelection } from "@t3tools/shared/model";
+import { applyClaudePromptEffortPrefix } from "@t3tools/shared/model";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
 import { truncate } from "@t3tools/shared/String";
-import { Debouncer } from "@tanstack/react-pacer";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Debouncer, useDebouncedValue } from "@tanstack/react-pacer";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useShallow } from "zustand/react/shallow";
+import { normalizeModelSlug } from "@t3tools/shared/model";
+import { gitBranchSearchInfiniteQueryOptions } from "~/lib/gitReactQuery";
+import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { useGitStatus } from "~/lib/gitStatusState";
+import { basenameOfPath } from "~/vscode-icons";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import { readEnvironmentApi } from "../environmentApi";
 import { isElectron } from "../env";
@@ -41,11 +48,17 @@ import { readLocalApi } from "../localApi";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import {
   collapseExpandedComposerCursor,
+  type ComposerTrigger,
+  detectComposerTrigger,
+  expandCollapsedComposerCursor,
+  parseComposerMenuSlashCommandQuery,
   parseStandaloneComposerSlashCommand,
+  replaceTextRange,
 } from "../composer-logic";
 import {
   deriveCompletionDividerBeforeEntryId,
   derivePendingApprovals,
+  deriveRecoverableUserInputPrompt,
   derivePendingUserInputs,
   derivePhase,
   deriveTimelineEntries,
@@ -61,6 +74,7 @@ import {
 } from "../session-logic";
 import { type LegendListRef } from "@legendapp/list/react";
 import {
+  buildRecoveredUserInputTurnPrompt,
   buildPendingUserInputAnswers,
   derivePendingUserInputProgress,
   setPendingUserInputCustomAnswer,
@@ -92,11 +106,14 @@ import {
 import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useCommandPaletteStore } from "../commandPaletteStore";
-import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { BranchToolbar } from "./BranchToolbar";
-import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import {
+  couldMatchShortcutCommand,
+  resolveShortcutCommand,
+  shortcutLabelForCommand,
+} from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import { ChevronDownIcon } from "lucide-react";
@@ -104,6 +121,7 @@ import { cn, randomUUID } from "~/lib/utils";
 import { toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
+import { toggleExternalCorkdiffForThread } from "../lib/externalCorkdiff";
 import {
   commandForProjectScript,
   nextProjectScriptId,
@@ -113,7 +131,7 @@ import { newCommandId, newDraftId, newMessageId, newThreadId } from "~/lib/utils
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
 import { useSettings } from "../hooks/useSettings";
 import { resolveAppModelSelection } from "../modelSelection";
-import { isTerminalFocused } from "../lib/terminalFocus";
+import { isTerminalFocused, shouldBypassGlobalTerminalShortcuts } from "../lib/terminalFocus";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
 import {
   useSavedEnvironmentRegistryStore,
@@ -140,7 +158,12 @@ import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
-import { resolveEffectiveEnvMode, resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
+import {
+  dedupeRemoteBranchesWithLocalMatches,
+  resolveDraftEnvModeAfterBranchChange,
+  resolveEffectiveEnvMode,
+  resolveEnvironmentOptionLabel,
+} from "./BranchToolbar.logic";
 import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import {
@@ -151,19 +174,25 @@ import {
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
+  hasForkableThreadHistory,
+  isThreadForkReady,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
   type LocalDispatchSnapshot,
   PullRequestDialogState,
+  buildTemporaryWorktreeBranchName,
   cloneComposerImageForRetry,
   deriveLockedProvider,
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
+  resolveChatViewShortcutCommand,
+  resolvePendingWorktreeAction,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   shouldWriteThreadErrorToCurrentServerThread,
   waitForStartedServerThread,
+  threadSupportsCodexFork,
 } from "./ChatView.logic";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
@@ -175,13 +204,20 @@ import {
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { retainThreadDetailSubscription } from "../environments/runtime/service";
 import { RightPanelSheet } from "./RightPanelSheet";
+import { applyGitBranchSelection } from "~/lib/gitBranchSelection";
+import { type ComposerCommandItem } from "./chat/ComposerCommandMenu";
+import { AVAILABLE_PROVIDER_OPTIONS } from "./chat/ProviderModelPicker";
 
 const IMAGE_ONLY_BOOTSTRAP_PROMPT =
   "[User attached one or more images without additional text. Respond using the conversation context and the attached image(s).]";
 const EMPTY_ACTIVITIES: OrchestrationThreadActivity[] = [];
 const EMPTY_PROPOSED_PLANS: Thread["proposedPlans"] = [];
+const GLOBAL_KEYDOWN_EVENT_OPTIONS = { capture: true } as const;
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
+const EMPTY_TERMINAL_CONTEXTS: TerminalContextDraft[] = [];
+const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 
 type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
 
@@ -314,6 +350,145 @@ function formatOutgoingPrompt(params: {
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 
+const REASONING_LABEL_BY_OPTION: Record<CodexReasoningEffort, string> = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra High",
+};
+const REASONING_SHORT_ALIAS_BY_OPTION: Record<CodexReasoningEffort, string> = {
+  low: "l",
+  medium: "m",
+  high: "h",
+  xhigh: "xh",
+};
+const reasoningOptions = [
+  "xhigh",
+  "high",
+  "medium",
+  "low",
+] as const satisfies readonly CodexReasoningEffort[];
+
+const extendReplacementRangeForTrailingSpace = (
+  text: string,
+  rangeEnd: number,
+  replacement: string,
+): number => {
+  if (!replacement.endsWith(" ")) {
+    return rangeEnd;
+  }
+  return text[rangeEnd] === " " ? rangeEnd + 1 : rangeEnd;
+};
+
+function isWorktreeModeQuery(query: string): boolean {
+  const normalizedQuery = query.trim().toLowerCase();
+  return (
+    normalizedQuery.length === 0 ||
+    "local".startsWith(normalizedQuery) ||
+    "worktree".startsWith(normalizedQuery)
+  );
+}
+
+const syncTerminalContextsByIds = (
+  contexts: ReadonlyArray<TerminalContextDraft>,
+  ids: ReadonlyArray<string>,
+): TerminalContextDraft[] => {
+  const contextsById = new Map(contexts.map((context) => [context.id, context]));
+  return ids.flatMap((id) => {
+    const context = contextsById.get(id);
+    return context ? [context] : [];
+  });
+};
+
+const terminalContextIdListsEqual = (
+  contexts: ReadonlyArray<TerminalContextDraft>,
+  ids: ReadonlyArray<string>,
+): boolean =>
+  contexts.length === ids.length && contexts.every((context, index) => context.id === ids[index]);
+
+function describeBranchCommandItem(branch: GitBranch, activeProjectCwd: string): string {
+  if (branch.current) {
+    return "Current branch";
+  }
+  if (branch.worktreePath && branch.worktreePath !== activeProjectCwd) {
+    return "Reuse existing worktree";
+  }
+  if (branch.worktreePath === activeProjectCwd) {
+    return "Checked out in the project root";
+  }
+  if (branch.isRemote) {
+    return "Checkout remote branch";
+  }
+  if (branch.isDefault) {
+    return "Switch to default branch";
+  }
+  return "Switch branch";
+}
+
+function resolveComposerConfigCommandItem(input: {
+  command: "branch" | "worktree";
+  valueQuery: string;
+  canShowWorktreeSlashCommand: boolean;
+  gitBranches: readonly GitBranch[];
+  activeProjectCwd: string;
+}): ComposerCommandItem | undefined {
+  const rawQuery = input.valueQuery.trim();
+  const query = rawQuery.toLowerCase();
+  if (input.command === "worktree") {
+    if (!input.canShowWorktreeSlashCommand) {
+      return undefined;
+    }
+    if (isWorktreeModeQuery(rawQuery)) {
+      const mode = "worktree".startsWith(query) && query !== "local" ? "worktree" : "local";
+      return {
+        id: `worktree-mode:${mode}`,
+        type: "worktree-mode",
+        mode,
+        label: `/worktree ${mode}`,
+        description:
+          mode === "local" ? "Run in the project root" : "Create and run in a new worktree",
+      };
+    }
+    const branch = input.gitBranches.find((entry) => entry.name.toLowerCase() === query);
+    if (branch) {
+      return {
+        id: `branch:${branch.name}:${branch.worktreePath ?? ""}`,
+        type: "branch",
+        branch,
+        label: branch.name,
+        description: describeBranchCommandItem(branch, input.activeProjectCwd),
+      };
+    }
+    if (rawQuery.length > 0) {
+      return {
+        id: `named-worktree:${rawQuery}`,
+        type: "named-worktree-target",
+        branchName: rawQuery,
+        label: `/worktree ${rawQuery}`,
+        description: `Set ${rawQuery} as the new worktree branch name`,
+      };
+    }
+    return undefined;
+  }
+
+  const branch = input.gitBranches.find((entry) => {
+    if (query.length === 0) {
+      return entry.current;
+    }
+    return entry.name.toLowerCase() === query || entry.name.toLowerCase().includes(query);
+  });
+  if (!branch) {
+    return undefined;
+  }
+  return {
+    id: `branch:${branch.name}:${branch.worktreePath ?? ""}`,
+    type: "branch",
+    branch,
+    label: branch.name,
+    description: describeBranchCommandItem(branch, input.activeProjectCwd),
+  };
+}
+
 type ChatViewProps =
   | {
       environmentId: EnvironmentId;
@@ -416,7 +591,6 @@ interface PersistentThreadTerminalDrawerProps {
   splitShortcutLabel: string | undefined;
   newShortcutLabel: string | undefined;
   closeShortcutLabel: string | undefined;
-  keybindings: ResolvedKeybindingsConfig;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
 }
 
@@ -429,7 +603,6 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   splitShortcutLabel,
   newShortcutLabel,
   closeShortcutLabel,
-  keybindings,
   onAddTerminalContext,
 }: PersistentThreadTerminalDrawerProps) {
   const serverThread = useStore(useMemo(() => createThreadSelectorByRef(threadRef), [threadRef]));
@@ -573,7 +746,6 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
         splitShortcutLabel={visible ? splitShortcutLabel : undefined}
         newShortcutLabel={visible ? newShortcutLabel : undefined}
         closeShortcutLabel={visible ? closeShortcutLabel : undefined}
-        keybindings={keybindings}
         onActiveTerminalChange={activateTerminal}
         onCloseTerminal={closeTerminal}
         onHeightChange={setTerminalHeight}
@@ -605,7 +777,9 @@ export default function ChatView(props: ChatViewProps) {
       [routeKind, routeThreadRef],
     ),
   );
+  const queryClient = useQueryClient();
   const setStoreThreadError = useStore((store) => store.setError);
+  const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
   const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
   const activeThreadLastVisitedAt = useUiStateStore((store) =>
     routeKind === "server" ? store.threadLastVisitedAtById[routeThreadKey] : undefined,
@@ -637,6 +811,9 @@ export default function ChatView(props: ChatViewProps) {
     (store) => store.setTerminalContexts,
   );
   const setComposerDraftModelSelection = useComposerDraftStore((store) => store.setModelSelection);
+  const setComposerDraftProviderModelOptions = useComposerDraftStore(
+    (store) => store.setProviderModelOptions,
+  );
   const setComposerDraftRuntimeMode = useComposerDraftStore((store) => store.setRuntimeMode);
   const setComposerDraftInteractionMode = useComposerDraftStore(
     (store) => store.setInteractionMode,
@@ -662,6 +839,18 @@ export default function ChatView(props: ChatViewProps) {
   const composerTerminalContextsRef = useRef<TerminalContextDraft[]>([]);
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
   const composerRef = useComposerHandleContext() ?? localComposerRef;
+  const composerTerminalContexts = useComposerDraftStore(
+    (store) =>
+      store.getComposerDraft(composerDraftTarget)?.terminalContexts ?? EMPTY_TERMINAL_CONTEXTS,
+  );
+  const [composerCursor, setComposerCursor] = useState(0);
+  const [composerTrigger, setComposerTrigger] = useState<ComposerTrigger | null>(null);
+  const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
+  const composerSelectLockRef = useRef(false);
+  const composerMenuOpenRef = useRef(false);
+  const composerMenuItemsRef = useRef<ComposerCommandItem[]>([]);
+  const activeComposerMenuItemRef = useRef<ComposerCommandItem | null>(null);
+  const nonPersistedComposerImageIds = useMemo(() => [] as string[], []);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
@@ -790,7 +979,7 @@ export default function ChatView(props: ChatViewProps) {
     composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
-  const diffOpen = rawSearch.diff === "1";
+  const diffOpen = !isElectron && rawSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
   const activeThreadRef = useMemo(
     () => (activeThread ? scopeThreadRef(activeThread.environmentId, activeThread.id) : null),
@@ -1052,6 +1241,10 @@ export default function ChatView(props: ChatViewProps) {
     selectedProviderByThreadId ?? threadProvider ?? "codex",
   );
   const selectedProvider: ProviderKind = lockedProvider ?? unlockedSelectedProvider;
+  const selectedModelForPicker =
+    activeThread?.modelSelection.model ??
+    activeProject?.defaultModelSelection?.model ??
+    DEFAULT_MODEL_BY_PROVIDER[selectedProvider];
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(
@@ -1070,7 +1263,21 @@ export default function ChatView(props: ChatViewProps) {
     () => derivePendingUserInputs(threadActivities),
     [threadActivities],
   );
-  const activePendingUserInput = pendingUserInputs[0] ?? null;
+  const recoverableUserInputPrompt = useMemo(
+    () =>
+      deriveRecoverableUserInputPrompt(
+        threadActivities,
+        activeThread?.messages ?? [],
+        activeThread?.session ?? null,
+      ),
+    [activeThread?.messages, activeThread?.session, threadActivities],
+  );
+  const activePendingUserInput = pendingUserInputs[0] ?? recoverableUserInputPrompt;
+  const activePendingUserInputMode: "live" | "recovery" | null = pendingUserInputs[0]
+    ? "live"
+    : recoverableUserInputPrompt
+      ? "recovery"
+      : null;
   const activePendingDraftAnswers = useMemo(
     () =>
       activePendingUserInput
@@ -1128,7 +1335,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const planSidebarLabel = sidebarProposedPlan || interactionMode === "plan" ? "Plan" : "Tasks";
   const showPlanFollowUpPrompt =
-    pendingUserInputs.length === 0 &&
+    activePendingUserInput === null &&
     interactionMode === "plan" &&
     latestTurnSettled &&
     hasActionableProposedPlan(activeProposedPlan);
@@ -1148,11 +1355,36 @@ export default function ChatView(props: ChatViewProps) {
     threadError: activeThread?.error,
   });
   const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const activeThreadSupportsFork = threadSupportsCodexFork(activeThread ?? null);
+  const hasActiveThreadForkableHistory = hasForkableThreadHistory(activeThread ?? null);
+  const threadForkReady =
+    activeThreadSupportsFork &&
+    isThreadForkReady({
+      thread: activeThread ?? null,
+      isServerThread,
+      phase,
+      isSendBusy,
+      isConnecting,
+      isRevertingCheckpoint,
+    });
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
     activeThread?.session ?? null,
     localDispatchStartedAt,
   );
+  const autoRestartedRecoverableUserInputRequestIdsRef = useRef<Set<ApprovalRequestId>>(new Set());
+  useEffect(() => {
+    const actionableRequestIds = new Set<ApprovalRequestId>(
+      pendingUserInputs.map((entry) => entry.requestId),
+    );
+    if (recoverableUserInputPrompt) {
+      actionableRequestIds.add(recoverableUserInputPrompt.requestId);
+    }
+    setRespondingUserInputRequestIds((existing) => {
+      const next = existing.filter((id) => actionableRequestIds.has(id));
+      return next.length === existing.length ? existing : next;
+    });
+  }, [pendingUserInputs, recoverableUserInputPrompt]);
   useEffect(() => {
     attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
   }, [attachmentPreviewHandoffByMessageId]);
@@ -1420,9 +1652,300 @@ export default function ChatView(props: ChatViewProps) {
         worktreePath: activeThread?.worktreePath ?? null,
       })
     : null;
+  const composerTriggerKind = composerTrigger?.kind ?? null;
+  const pathTriggerQuery = composerTrigger?.kind === "path" ? composerTrigger.query : "";
+  const composerMenuSlashCommand =
+    composerTrigger?.kind === "slash-command"
+      ? parseComposerMenuSlashCommandQuery(composerTrigger.query)
+      : null;
+  const isPathTrigger = composerTriggerKind === "path";
+  const [debouncedPathQuery, composerPathQueryDebouncer] = useDebouncedValue(
+    pathTriggerQuery,
+    { wait: COMPOSER_PATH_QUERY_DEBOUNCE_MS },
+    (debouncerState) => ({ isPending: debouncerState.isPending }),
+  );
+  const effectivePathQuery = pathTriggerQuery.length > 0 ? debouncedPathQuery : "";
   const gitStatusQuery = useGitStatus({ environmentId, cwd: gitCwd });
+  const envLocked = Boolean(
+    activeThread &&
+    (activeThread.messages.length > 0 ||
+      (activeThread.session !== null && activeThread.session.status !== "closed")),
+  );
+  const branchesQuery = useInfiniteQuery(
+    gitBranchSearchInfiniteQueryOptions({ environmentId, cwd: gitCwd, query: "" }),
+  );
+  const gitBranches = useMemo(
+    () =>
+      dedupeRemoteBranchesWithLocalMatches(
+        branchesQuery.data?.pages.flatMap((page) => page.branches) ?? [],
+      ),
+    [branchesQuery.data?.pages],
+  );
+  const canShowWorktreeSlashCommand =
+    isLocalDraftThread && !envLocked && (activeThread?.worktreePath ?? null) === null;
   const keybindings = useServerKeybindings();
   const availableEditors = useServerAvailableEditors();
+  const modelOptionsByProvider = useMemo(
+    () => ({
+      codex: providerStatuses.find((provider) => provider.provider === "codex")?.models ?? [],
+      claudeAgent:
+        providerStatuses.find((provider) => provider.provider === "claudeAgent")?.models ?? [],
+    }),
+    [providerStatuses],
+  );
+  const selectedModelForPickerWithCustomFallback = useMemo(() => {
+    const currentOptions = modelOptionsByProvider[selectedProvider];
+    return currentOptions.some((option) => option.slug === selectedModelForPicker)
+      ? selectedModelForPicker
+      : (normalizeModelSlug(selectedModelForPicker, selectedProvider) ?? selectedModelForPicker);
+  }, [modelOptionsByProvider, selectedModelForPicker, selectedProvider]);
+  const searchableModelOptions = useMemo(
+    () =>
+      AVAILABLE_PROVIDER_OPTIONS.filter(
+        (option) => lockedProvider === null || option.value === lockedProvider,
+      ).flatMap((option) =>
+        modelOptionsByProvider[option.value].map(({ slug, name }) => ({
+          provider: option.value,
+          providerLabel: option.label,
+          slug,
+          name,
+          searchSlug: slug.toLowerCase(),
+          searchName: name.toLowerCase(),
+          searchProvider: option.label.toLowerCase(),
+        })),
+      ),
+    [lockedProvider, modelOptionsByProvider],
+  );
+  const workspaceEntriesQuery = useQuery(
+    projectSearchEntriesQueryOptions({
+      environmentId,
+      cwd: gitCwd,
+      query: effectivePathQuery,
+      enabled: isPathTrigger,
+      limit: 80,
+    }),
+  );
+  const workspaceEntries = workspaceEntriesQuery.data?.entries ?? EMPTY_PROJECT_ENTRIES;
+  const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
+    if (!composerTrigger) return [];
+    if (composerTrigger.kind === "path") {
+      return workspaceEntries.map((entry) => ({
+        id: `path:${entry.kind}:${entry.path}`,
+        type: "path",
+        path: entry.path,
+        pathKind: entry.kind,
+        label: basenameOfPath(entry.path),
+        description: entry.parentPath ?? "",
+      }));
+    }
+
+    if (composerTrigger.kind === "slash-command") {
+      if (composerMenuSlashCommand?.command === "reasoning" && selectedProvider === "codex") {
+        const query = composerMenuSlashCommand.valueQuery.toLowerCase();
+        return reasoningOptions
+          .filter((effort) => {
+            if (!query) {
+              return true;
+            }
+            const shortAlias = REASONING_SHORT_ALIAS_BY_OPTION[effort];
+            return effort.startsWith(query) || shortAlias === query;
+          })
+          .map((effort) => ({
+            id: `reasoning:${effort}`,
+            type: "reasoning",
+            effort,
+            label: `/reasoning ${effort}`,
+            description: `${REASONING_LABEL_BY_OPTION[effort]} · alias: /r ${REASONING_SHORT_ALIAS_BY_OPTION[effort]}`,
+          }));
+      }
+
+      if (composerMenuSlashCommand?.command === "worktree") {
+        const rawQuery = composerMenuSlashCommand.valueQuery.trim();
+        const query = rawQuery.toLowerCase();
+        if (isWorktreeModeQuery(rawQuery)) {
+          return (
+            [
+              {
+                id: "worktree-mode:local",
+                type: "worktree-mode",
+                mode: "local",
+                label: "/worktree local",
+                description: "Run in the project root",
+              },
+              {
+                id: "worktree-mode:worktree",
+                type: "worktree-mode",
+                mode: "worktree",
+                label: "/worktree worktree",
+                description: "Create and run in a new worktree",
+              },
+            ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "worktree-mode" }>>
+          ).filter((item) => query.length === 0 || item.mode.startsWith(query));
+        }
+
+        const matchingBranches = gitBranches
+          .filter((branch) => branch.name.toLowerCase().includes(query))
+          .map((branch) => ({
+            id: `branch:${branch.name}:${branch.worktreePath ?? ""}`,
+            type: "branch" as const,
+            branch,
+            label: branch.name,
+            description: describeBranchCommandItem(branch, activeProject?.cwd ?? ""),
+          }));
+        const hasExactMatch = gitBranches.some((branch) => branch.name.toLowerCase() === query);
+        const syntheticItem = hasExactMatch
+          ? []
+          : [
+              {
+                id: `named-worktree:${rawQuery}`,
+                type: "named-worktree-target" as const,
+                branchName: rawQuery,
+                label: `/worktree ${rawQuery}`,
+                description: `Set ${rawQuery} as the new worktree branch name`,
+              },
+            ];
+        return [...syntheticItem, ...matchingBranches];
+      }
+
+      if (composerMenuSlashCommand?.command === "branch") {
+        const query = composerMenuSlashCommand.valueQuery.toLowerCase();
+        return gitBranches
+          .filter((branch) => {
+            if (query.length === 0) {
+              return true;
+            }
+            return branch.name.toLowerCase().includes(query);
+          })
+          .map((branch) => ({
+            id: `branch:${branch.name}:${branch.worktreePath ?? ""}`,
+            type: "branch",
+            branch,
+            label: branch.name,
+            description: describeBranchCommandItem(branch, activeProject?.cwd ?? ""),
+          }));
+      }
+
+      const slashCommandItems = [
+        {
+          id: "slash:model",
+          type: "slash-command",
+          command: "model",
+          label: "/model",
+          description: "Switch response model for this thread",
+        },
+        {
+          id: "slash:plan",
+          type: "slash-command",
+          command: "plan",
+          label: "/plan",
+          description: "Switch this thread into plan mode",
+        },
+        {
+          id: "slash:default",
+          type: "slash-command",
+          command: "default",
+          label: "/default",
+          description: "Switch this thread back to normal chat mode",
+        },
+        ...(threadForkReady
+          ? [
+              {
+                id: "slash:fork",
+                type: "slash-command",
+                command: "fork",
+                label: "/fork",
+                description: "Fork this thread from its current settled state",
+              } as const,
+            ]
+          : []),
+        {
+          id: "slash:branch",
+          type: "slash-command",
+          command: "branch",
+          label: "/branch",
+          description: "Select branch or worktree base for this thread",
+        },
+        ...(canShowWorktreeSlashCommand
+          ? [
+              {
+                id: "slash:worktree",
+                type: "slash-command",
+                command: "worktree",
+                label: "/worktree",
+                description: "Choose local repo or a new worktree",
+              } as const,
+            ]
+          : []),
+        ...(selectedProvider === "codex"
+          ? [
+              {
+                id: "slash:fast",
+                type: "slash-command",
+                command: "fast",
+                label: "/fast",
+                description: "Toggle Codex fast mode for this thread",
+              } as const,
+              {
+                id: "slash:reasoning",
+                type: "slash-command",
+                command: "reasoning",
+                label: "/reasoning",
+                description: "Set Codex reasoning effort for this thread",
+              } as const,
+            ]
+          : []),
+      ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
+      const query = composerTrigger.query.trim().toLowerCase();
+      if (!query) {
+        return [...slashCommandItems];
+      }
+      return slashCommandItems.filter(
+        (item) => item.command.startsWith(query) || item.label.slice(1).startsWith(query),
+      );
+    }
+
+    return searchableModelOptions
+      .filter(({ searchSlug, searchName, searchProvider }) => {
+        const query = composerTrigger.query.trim().toLowerCase();
+        if (!query) return true;
+        return (
+          searchSlug.includes(query) || searchName.includes(query) || searchProvider.includes(query)
+        );
+      })
+      .map(({ provider, providerLabel, slug, name }) => ({
+        id: `model:${provider}:${slug}`,
+        type: "model",
+        provider,
+        model: slug,
+        label: name,
+        description: `${providerLabel} · ${slug}`,
+      }));
+  }, [
+    activeProject?.cwd,
+    canShowWorktreeSlashCommand,
+    composerMenuSlashCommand,
+    composerTrigger,
+    gitBranches,
+    searchableModelOptions,
+    selectedProvider,
+    threadForkReady,
+    workspaceEntries,
+  ]);
+  const composerMenuOpen = Boolean(composerTrigger);
+  const activeComposerMenuItem = useMemo(
+    () =>
+      composerMenuItems.find((item) => item.id === composerHighlightedItemId) ??
+      composerMenuItems[0] ??
+      null,
+    [composerHighlightedItemId, composerMenuItems],
+  );
+  composerMenuOpenRef.current = composerMenuOpen;
+  composerMenuItemsRef.current = composerMenuItems;
+  activeComposerMenuItemRef.current = activeComposerMenuItem;
+  const nonPersistedComposerImageIdSet = useMemo(
+    () => new Set(nonPersistedComposerImageIds),
+    [nonPersistedComposerImageIds],
+  );
   const activeProviderStatus = useMemo(
     () => providerStatuses.find((status) => status.provider === selectedProvider) ?? null,
     [selectedProvider, providerStatuses],
@@ -1478,6 +2001,10 @@ export default function ChatView(props: ChatViewProps) {
     if (!isServerThread) {
       return;
     }
+    if (isElectron) {
+      void toggleExternalCorkdiffForThread(scopeThreadRef(environmentId, threadId));
+      return;
+    }
     if (!diffOpen) {
       onDiffPanelOpen?.();
     }
@@ -1494,12 +2021,6 @@ export default function ChatView(props: ChatViewProps) {
       },
     });
   }, [diffOpen, environmentId, isServerThread, navigate, onDiffPanelOpen, threadId]);
-
-  const envLocked = Boolean(
-    activeThread &&
-    (activeThread.messages.length > 0 ||
-      (activeThread.session !== null && activeThread.session.status !== "closed")),
-  );
 
   // Handle environment change for draft threads.  When the user picks a
   // different environment we update the draft context to point at the physical
@@ -2097,6 +2618,7 @@ export default function ChatView(props: ChatViewProps) {
   const envMode: DraftThreadEnvMode = canOverrideServerThreadEnvMode
     ? (pendingServerThreadEnvMode ?? draftThread?.envMode ?? derivedEnvMode)
     : derivedEnvMode;
+  const pendingWorktreeBranch = draftThread?.pendingWorktreeBranch ?? null;
   const activeThreadBranch =
     canOverrideServerThreadEnvMode && pendingServerThreadBranch !== undefined
       ? pendingServerThreadBranch
@@ -2230,13 +2752,42 @@ export default function ChatView(props: ChatViewProps) {
       if (!activeThreadId || useCommandPaletteStore.getState().open || event.defaultPrevented) {
         return;
       }
-      const shortcutContext = {
+      const couldMatchHandledShortcut = couldMatchShortcutCommand(
+        event,
+        keybindings,
+        (command) =>
+          command === "terminal.toggle" ||
+          command === "terminal.split" ||
+          command === "terminal.close" ||
+          command === "terminal.new" ||
+          command === "diff.toggle" ||
+          projectScriptIdFromCommand(command) !== null,
+      );
+      if (!couldMatchHandledShortcut) {
+        return;
+      }
+      const terminalOpen = Boolean(terminalState.terminalOpen);
+      const bypassGlobalShortcuts = shouldBypassGlobalTerminalShortcuts();
+      if (bypassGlobalShortcuts) {
+        const command = resolveShortcutCommand(event, keybindings, {
+          context: {
+            terminalFocus: false,
+            terminalOpen,
+          },
+        });
+        if (command === "diff.toggle") {
+          event.preventDefault();
+          event.stopPropagation();
+          onToggleDiff();
+        }
+        return;
+      }
+      const command = resolveChatViewShortcutCommand({
+        event,
+        keybindings,
         terminalFocus: isTerminalFocused(),
-        terminalOpen: Boolean(terminalState.terminalOpen),
-      };
-
-      const command = resolveShortcutCommand(event, keybindings, {
-        context: shortcutContext,
+        terminalOpen,
+        preferExternalDiff: isElectron,
       });
       if (!command) return;
 
@@ -2290,8 +2841,9 @@ export default function ChatView(props: ChatViewProps) {
       event.stopPropagation();
       void runProjectScript(script);
     };
-    window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
+    // Capture phase keeps app shortcuts working when xterm consumes focused key events on Linux.
+    window.addEventListener("keydown", handler, GLOBAL_KEYDOWN_EVENT_OPTIONS);
+    return () => window.removeEventListener("keydown", handler, GLOBAL_KEYDOWN_EVENT_OPTIONS);
   }, [
     activeProject,
     terminalState.terminalOpen,
@@ -2357,6 +2909,69 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
 
+  const setPrompt = useCallback(
+    (nextPrompt: string) => {
+      promptRef.current = nextPrompt;
+      setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+    },
+    [composerDraftTarget, setComposerDraftPrompt],
+  );
+
+  const applyReasoningEffort = useCallback(
+    (effort: CodexReasoningEffort) => {
+      if (selectedProvider !== "codex") {
+        return;
+      }
+      const existingOptions =
+        activeThread?.modelSelection.provider === "codex"
+          ? activeThread.modelSelection.options
+          : undefined;
+      setComposerDraftProviderModelOptions(
+        composerDraftTarget,
+        "codex",
+        {
+          ...existingOptions,
+          reasoningEffort: effort,
+        },
+        { persistSticky: true },
+      );
+      scheduleComposerFocus();
+    },
+    [
+      activeThread?.modelSelection,
+      composerDraftTarget,
+      scheduleComposerFocus,
+      selectedProvider,
+      setComposerDraftProviderModelOptions,
+    ],
+  );
+
+  const toggleCodexFastMode = useCallback(() => {
+    if (selectedProvider !== "codex") {
+      return;
+    }
+    const existingOptions =
+      activeThread?.modelSelection.provider === "codex"
+        ? activeThread.modelSelection.options
+        : undefined;
+    setComposerDraftProviderModelOptions(
+      composerDraftTarget,
+      "codex",
+      {
+        ...existingOptions,
+        fastMode: existingOptions?.fastMode !== true,
+      },
+      { persistSticky: true },
+    );
+    scheduleComposerFocus();
+  }, [
+    activeThread?.modelSelection,
+    composerDraftTarget,
+    scheduleComposerFocus,
+    selectedProvider,
+    setComposerDraftProviderModelOptions,
+  ]);
+
   const onSend = async (e?: { preventDefault: () => void }) => {
     e?.preventDefault();
     const api = readEnvironmentApi(environmentId);
@@ -2406,11 +3021,70 @@ export default function ChatView(props: ChatViewProps) {
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (standaloneSlashCommand) {
-      handleInteractionModeChange(standaloneSlashCommand);
+      if (typeof standaloneSlashCommand === "object") {
+        if (ctxSelectedProvider === "codex") {
+          setComposerDraftProviderModelOptions(
+            composerDraftTarget,
+            "codex",
+            {
+              ...ctxSelectedModelSelection.options,
+              reasoningEffort: standaloneSlashCommand.effort,
+            },
+            { persistSticky: true },
+          );
+          scheduleComposerFocus();
+        }
+        applyReasoningEffort(standaloneSlashCommand.effort);
+      } else if (standaloneSlashCommand === "fork") {
+        await onForkThread();
+        return;
+      } else if (standaloneSlashCommand === "fast") {
+        if (ctxSelectedProvider === "codex") {
+          setComposerDraftProviderModelOptions(
+            composerDraftTarget,
+            "codex",
+            {
+              ...ctxSelectedModelSelection.options,
+              fastMode: ctxSelectedModelSelection.options?.fastMode !== true,
+            },
+            { persistSticky: true },
+          );
+          scheduleComposerFocus();
+        }
+      } else {
+        handleInteractionModeChange(standaloneSlashCommand);
+      }
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
       return;
+    }
+    if (composerImages.length === 0 && sendableComposerTerminalContexts.length === 0) {
+      const menuSlashCommand = parseComposerMenuSlashCommandQuery(trimmed);
+      if (menuSlashCommand?.command === "branch" || menuSlashCommand?.command === "worktree") {
+        const selectedConfigItem =
+          ((activeComposerMenuItemRef.current ?? composerMenuItemsRef.current[0]) as
+            | ComposerCommandItem
+            | undefined) ??
+          resolveComposerConfigCommandItem({
+            command: menuSlashCommand.command,
+            valueQuery: menuSlashCommand.valueQuery,
+            canShowWorktreeSlashCommand,
+            gitBranches,
+            activeProjectCwd: activeProject?.cwd ?? "",
+          });
+        if (
+          selectedConfigItem?.type === "branch" ||
+          selectedConfigItem?.type === "worktree-mode" ||
+          selectedConfigItem?.type === "named-worktree-target"
+        ) {
+          const applied = await applyComposerConfigCommandItem(selectedConfigItem);
+          if (applied) {
+            return;
+          }
+        }
+        return;
+      }
     }
     if (!hasSendableContent) {
       if (expiredTerminalContextCount > 0) {
@@ -2429,22 +3103,11 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeProject) return;
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
-    const baseBranchForWorktree =
-      isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
-        ? activeThreadBranch
-        : null;
-
-    // In worktree mode, require an explicit base branch so we don't silently
-    // fall back to local execution when branch selection is missing.
     const shouldCreateWorktree =
       isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath;
-    if (shouldCreateWorktree && !activeThreadBranch) {
-      setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
-      return;
-    }
 
     sendInFlightRef.current = true;
-    beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
+    beginLocalDispatch({ preparingWorktree: shouldCreateWorktree });
 
     const composerImagesSnapshot = [...composerImages];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
@@ -2516,6 +3179,24 @@ export default function ChatView(props: ChatViewProps) {
 
     let turnStartSucceeded = false;
     await (async () => {
+      let baseBranchForWorktree: string | null = null;
+      let worktreeBranchName: string | null = null;
+      if (shouldCreateWorktree) {
+        const branchResult = await api.git.listBranches({ cwd: activeProject.cwd });
+        if (!branchResult.isRepo) {
+          throw new Error("Git worktree creation is unavailable outside a Git repository.");
+        }
+        const worktreeAction = resolvePendingWorktreeAction({
+          baseBranch: activeThreadBranch,
+          pendingWorktreeBranch,
+          gitBranches: branchResult.branches,
+        });
+        if (worktreeAction.kind === "error") {
+          throw new Error(worktreeAction.message);
+        }
+        baseBranchForWorktree = worktreeAction.branch;
+        worktreeBranchName = worktreeAction.newBranch;
+      }
       let firstComposerImageName: string | null = null;
       if (composerImagesSnapshot.length > 0) {
         const firstComposerImage = composerImagesSnapshot[0];
@@ -2534,13 +3215,16 @@ export default function ChatView(props: ChatViewProps) {
         }
       }
       const title = truncate(titleSeed);
-      const threadCreateModelSelection = createModelSelection(
-        ctxSelectedProvider,
-        ctxSelectedModel ||
+      const threadCreateModelSelection: ModelSelection = {
+        provider: ctxSelectedProvider,
+        model:
+          ctxSelectedModel ||
           activeProject.defaultModelSelection?.model ||
           DEFAULT_MODEL_BY_PROVIDER.codex,
-        ctxSelectedModelSelection.options,
-      );
+        ...(ctxSelectedModelSelection.options
+          ? { options: ctxSelectedModelSelection.options }
+          : {}),
+      };
 
       // Auto-title from first message
       if (isFirstMessage && isServerThread) {
@@ -2580,12 +3264,12 @@ export default function ChatView(props: ChatViewProps) {
                     },
                   }
                 : {}),
-              ...(baseBranchForWorktree
+              ...(baseBranchForWorktree && worktreeBranchName
                 ? {
                     prepareWorktree: {
                       projectCwd: activeProject.cwd,
                       baseBranch: baseBranchForWorktree,
-                      branch: buildTemporaryWorktreeBranchName(),
+                      branch: worktreeBranchName,
                     },
                     runSetupScript: true,
                   }
@@ -2717,6 +3401,157 @@ export default function ChatView(props: ChatViewProps) {
     [activeThreadId, environmentId, setThreadError],
   );
 
+  const onRestartFromStaleUserInputPrompt = useCallback(
+    async (
+      prompt: NonNullable<typeof activePendingUserInput>,
+      answers: Record<string, string | string[]>,
+    ) => {
+      const api = readEnvironmentApi(environmentId);
+      if (!api || !activeThread || isSendBusy || isConnecting || sendInFlightRef.current) return;
+
+      const sendCtx = composerRef.current?.getSendContext();
+      if (!sendCtx) return;
+      const {
+        selectedProvider: ctxSelectedProvider,
+        selectedModel: ctxSelectedModel,
+        selectedProviderModels: ctxSelectedProviderModels,
+        selectedPromptEffort: ctxSelectedPromptEffort,
+        selectedModelSelection: ctxSelectedModelSelection,
+      } = sendCtx;
+      const messageText = buildRecoveredUserInputTurnPrompt({
+        questions: prompt.questions,
+        answers,
+      });
+      const threadIdForSend = activeThread.id;
+      const messageIdForSend = newMessageId();
+      const messageCreatedAt = new Date().toISOString();
+      const outgoingMessageText = formatOutgoingPrompt({
+        provider: ctxSelectedProvider,
+        model: ctxSelectedModel,
+        models: ctxSelectedProviderModels,
+        effort: ctxSelectedPromptEffort,
+        text: messageText,
+      });
+
+      setRespondingUserInputRequestIds((existing) =>
+        existing.includes(prompt.requestId) ? existing : [...existing, prompt.requestId],
+      );
+      sendInFlightRef.current = true;
+      beginLocalDispatch({ preparingWorktree: false });
+      setThreadError(threadIdForSend, null);
+
+      isAtEndRef.current = true;
+      showScrollDebouncer.current.cancel();
+      setShowScrollToBottom(false);
+      await legendListRef.current?.scrollToEnd?.({ animated: false });
+
+      setOptimisticUserMessages((existing) => [
+        ...existing,
+        {
+          id: messageIdForSend,
+          role: "user",
+          text: outgoingMessageText,
+          createdAt: messageCreatedAt,
+          streaming: false,
+        },
+      ]);
+
+      let turnStartSucceeded = false;
+      try {
+        await persistThreadSettingsForNextTurn({
+          threadId: threadIdForSend,
+          createdAt: messageCreatedAt,
+          modelSelection: ctxSelectedModelSelection,
+          runtimeMode,
+          interactionMode,
+        });
+
+        await api.orchestration.dispatchCommand({
+          type: "thread.turn.start",
+          commandId: newCommandId(),
+          threadId: threadIdForSend,
+          message: {
+            messageId: messageIdForSend,
+            role: "user",
+            text: outgoingMessageText,
+            attachments: [],
+          },
+          modelSelection: ctxSelectedModelSelection,
+          titleSeed: activeThread.title,
+          runtimeMode,
+          interactionMode,
+          createdAt: messageCreatedAt,
+        });
+        turnStartSucceeded = true;
+      } catch (err) {
+        setOptimisticUserMessages((existing) =>
+          existing.filter((message) => message.id !== messageIdForSend),
+        );
+        setThreadError(
+          threadIdForSend,
+          err instanceof Error ? err.message : "Failed to restart from recovered prompt.",
+        );
+      } finally {
+        sendInFlightRef.current = false;
+        setRespondingUserInputRequestIds((existing) =>
+          existing.filter((id) => id !== prompt.requestId),
+        );
+        if (!turnStartSucceeded) {
+          resetLocalDispatch();
+        }
+      }
+    },
+    [
+      activeThread,
+      beginLocalDispatch,
+      environmentId,
+      interactionMode,
+      isConnecting,
+      isSendBusy,
+      persistThreadSettingsForNextTurn,
+      resetLocalDispatch,
+      runtimeMode,
+      setThreadError,
+    ],
+  );
+
+  useLayoutEffect(() => {
+    if (!recoverableUserInputPrompt) {
+      return;
+    }
+
+    const requestId = recoverableUserInputPrompt.requestId;
+    if (autoRestartedRecoverableUserInputRequestIdsRef.current.has(requestId)) {
+      return;
+    }
+
+    const normalizedDetail = recoverableUserInputPrompt.failureDetail.toLowerCase();
+    const isStaleFailure =
+      normalizedDetail.includes("stale pending user-input request") ||
+      normalizedDetail.includes("unknown pending user-input request") ||
+      normalizedDetail.includes("unknown pending user input request");
+    if (!isStaleFailure) {
+      return;
+    }
+
+    const draftAnswers =
+      pendingUserInputAnswersByRequestId[requestId] ?? EMPTY_PENDING_USER_INPUT_ANSWERS;
+    const resolvedAnswers = buildPendingUserInputAnswers(
+      recoverableUserInputPrompt.questions,
+      draftAnswers,
+    );
+    if (!resolvedAnswers) {
+      return;
+    }
+
+    autoRestartedRecoverableUserInputRequestIdsRef.current.add(requestId);
+    void onRestartFromStaleUserInputPrompt(recoverableUserInputPrompt, resolvedAnswers);
+  }, [
+    onRestartFromStaleUserInputPrompt,
+    pendingUserInputAnswersByRequestId,
+    recoverableUserInputPrompt,
+  ]);
+
   const setActivePendingUserInputQuestionIndex = useCallback(
     (nextQuestionIndex: number) => {
       if (!activePendingUserInput) {
@@ -2803,7 +3638,14 @@ export default function ChatView(props: ChatViewProps) {
     }
     if (activePendingProgress.isLastQuestion) {
       if (activePendingResolvedAnswers) {
-        void onRespondToUserInput(activePendingUserInput.requestId, activePendingResolvedAnswers);
+        if (activePendingUserInputMode === "recovery") {
+          void onRestartFromStaleUserInputPrompt(
+            activePendingUserInput,
+            activePendingResolvedAnswers,
+          );
+        } else {
+          void onRespondToUserInput(activePendingUserInput.requestId, activePendingResolvedAnswers);
+        }
       }
       return;
     }
@@ -2812,6 +3654,8 @@ export default function ChatView(props: ChatViewProps) {
     activePendingProgress,
     activePendingResolvedAnswers,
     activePendingUserInput,
+    activePendingUserInputMode,
+    onRestartFromStaleUserInputPrompt,
     onRespondToUserInput,
     setActivePendingUserInputQuestionIndex,
   ]);
@@ -3097,6 +3941,103 @@ export default function ChatView(props: ChatViewProps) {
     environmentId,
   ]);
 
+  const onForkThread = useCallback(async () => {
+    const api = readEnvironmentApi(environmentId);
+    if (
+      !api ||
+      !activeThread ||
+      !activeProject ||
+      !isServerThread ||
+      isSendBusy ||
+      isConnecting ||
+      sendInFlightRef.current
+    ) {
+      return;
+    }
+
+    if (!activeThreadSupportsFork) {
+      toastManager.add({
+        type: "error",
+        title: "Could not fork thread",
+        description: "Only Codex-backed threads support true forking.",
+      });
+      return;
+    }
+
+    if (!hasActiveThreadForkableHistory) {
+      toastManager.add({
+        type: "error",
+        title: "Could not fork thread",
+        description: "This thread has no persisted history to fork yet.",
+      });
+      return;
+    }
+
+    if (!threadForkReady) {
+      toastManager.add({
+        type: "error",
+        title: "Could not fork thread",
+        description: "This thread is still processing and cannot be forked yet.",
+      });
+      return;
+    }
+
+    const nextThreadId = newThreadId();
+    const createdAt = new Date().toISOString();
+
+    sendInFlightRef.current = true;
+    beginLocalDispatch({ preparingWorktree: false });
+    const finish = () => {
+      sendInFlightRef.current = false;
+      resetLocalDispatch();
+    };
+
+    await api.orchestration
+      .dispatchCommand({
+        type: "thread.fork",
+        commandId: newCommandId(),
+        threadId: nextThreadId,
+        sourceThreadId: activeThread.id,
+        createdAt,
+      })
+      .then(() => {
+        promptRef.current = "";
+        clearComposerDraftContent(composerDraftTarget);
+        composerRef.current?.resetCursorState();
+        return navigate({
+          to: "/$environmentId/$threadId",
+          params: {
+            environmentId: activeThread.environmentId,
+            threadId: nextThreadId,
+          },
+        });
+      })
+      .catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Could not fork thread",
+          description:
+            error instanceof Error ? error.message : "An error occurred while forking the thread.",
+        });
+      })
+      .then(finish, finish);
+  }, [
+    activeProject,
+    activeThread,
+    activeThreadSupportsFork,
+    beginLocalDispatch,
+    clearComposerDraftContent,
+    composerDraftTarget,
+    composerRef,
+    hasActiveThreadForkableHistory,
+    isConnecting,
+    isSendBusy,
+    isServerThread,
+    navigate,
+    resetLocalDispatch,
+    threadForkReady,
+  ]);
+
   const onProviderModelSelect = useCallback(
     (provider: ProviderKind, model: string) => {
       if (!activeThread) return;
@@ -3143,6 +4084,7 @@ export default function ChatView(props: ChatViewProps) {
         setDraftThreadContext(composerDraftTarget, {
           envMode: mode,
           ...(mode === "worktree" && draftThread?.worktreePath ? { worktreePath: null } : {}),
+          ...(mode === "local" ? { pendingWorktreeBranch: null } : {}),
         });
       }
       scheduleComposerFocus();
@@ -3157,13 +4099,462 @@ export default function ChatView(props: ChatViewProps) {
       setDraftThreadContext,
     ],
   );
+  const setThreadBranchFromComposer = useCallback(
+    (branch: string | null, worktreePath: string | null) => {
+      const api = readEnvironmentApi(environmentId);
+      if (activeThread?.session && worktreePath !== activeWorktreePath && api) {
+        void api.orchestration
+          .dispatchCommand({
+            type: "thread.session.stop",
+            commandId: newCommandId(),
+            threadId,
+            createdAt: new Date().toISOString(),
+          })
+          .catch(() => undefined);
+      }
+      if (api && isServerThread) {
+        void api.orchestration.dispatchCommand({
+          type: "thread.meta.update",
+          commandId: newCommandId(),
+          threadId,
+          branch,
+          worktreePath,
+        });
+      }
+      if (isServerThread) {
+        setStoreThreadBranch(scopeThreadRef(environmentId, threadId), branch, worktreePath);
+        return;
+      }
+      const nextDraftEnvMode = resolveDraftEnvModeAfterBranchChange({
+        nextWorktreePath: worktreePath,
+        currentWorktreePath: activeWorktreePath ?? null,
+        effectiveEnvMode: envMode,
+      });
+      setDraftThreadContext(composerDraftTarget, {
+        branch,
+        worktreePath,
+        envMode: nextDraftEnvMode,
+      });
+    },
+    [
+      activeThread?.session,
+      activeWorktreePath,
+      composerDraftTarget,
+      envMode,
+      isServerThread,
+      setDraftThreadContext,
+      setStoreThreadBranch,
+      threadId,
+    ],
+  );
+  const clearComposerConfigCommand = useCallback(() => {
+    promptRef.current = "";
+    clearComposerDraftContent(composerDraftTarget);
+    setComposerHighlightedItemId(null);
+    setComposerCursor(0);
+    setComposerTrigger(null);
+    scheduleComposerFocus();
+  }, [clearComposerDraftContent, composerDraftTarget, scheduleComposerFocus]);
+  const applyComposerConfigCommandItem = useCallback(
+    async (item: ComposerCommandItem): Promise<boolean> => {
+      if (item.type === "named-worktree-target") {
+        if (!canShowWorktreeSlashCommand) {
+          return false;
+        }
+        setDraftThreadContext(composerDraftTarget, {
+          pendingWorktreeBranch: item.branchName,
+          worktreePath: null,
+          envMode: "worktree",
+        });
+        clearComposerConfigCommand();
+        return true;
+      }
+      if (item.type === "worktree-mode") {
+        if (!canShowWorktreeSlashCommand) {
+          return false;
+        }
+        onEnvModeChange(item.mode);
+        clearComposerConfigCommand();
+        return true;
+      }
+      if (item.type !== "branch") {
+        return false;
+      }
+      const api = readEnvironmentApi(environmentId);
+      if (!api || !activeProject || !gitCwd) {
+        return false;
+      }
+      const applied = await applyGitBranchSelection({
+        activeProjectCwd: activeProject.cwd,
+        activeWorktreePath: activeWorktreePath ?? null,
+        api,
+        branch: item.branch,
+        branchCwd: gitCwd,
+        effectiveEnvMode: envMode,
+        envLocked,
+        onSetThreadBranch: setThreadBranchFromComposer,
+        onBranchActionError: (title, description) => {
+          toastManager.add({
+            type: "error",
+            title,
+            description,
+          });
+        },
+        queryClient,
+      });
+      if (applied) {
+        clearComposerConfigCommand();
+      }
+      return applied;
+    },
+    [
+      activeProject,
+      activeWorktreePath,
+      canShowWorktreeSlashCommand,
+      clearComposerConfigCommand,
+      composerDraftTarget,
+      envLocked,
+      envMode,
+      gitCwd,
+      onEnvModeChange,
+      queryClient,
+      setDraftThreadContext,
+      setThreadBranchFromComposer,
+    ],
+  );
 
+  const applyPromptReplacement = useCallback(
+    (
+      rangeStart: number,
+      rangeEnd: number,
+      replacement: string,
+      options?: { expectedText?: string },
+    ): boolean => {
+      const currentText = promptRef.current;
+      const safeStart = Math.max(0, Math.min(currentText.length, rangeStart));
+      const safeEnd = Math.max(safeStart, Math.min(currentText.length, rangeEnd));
+      if (
+        options?.expectedText !== undefined &&
+        currentText.slice(safeStart, safeEnd) !== options.expectedText
+      ) {
+        return false;
+      }
+      const next = replaceTextRange(promptRef.current, rangeStart, rangeEnd, replacement);
+      const nextCursor = collapseExpandedComposerCursor(next.text, next.cursor);
+      promptRef.current = next.text;
+      const activePendingQuestion = activePendingProgress?.activeQuestion;
+      if (activePendingQuestion && activePendingUserInput) {
+        setPendingUserInputAnswersByRequestId((existing) => ({
+          ...existing,
+          [activePendingUserInput.requestId]: {
+            ...existing[activePendingUserInput.requestId],
+            [activePendingQuestion.id]: setPendingUserInputCustomAnswer(
+              existing[activePendingUserInput.requestId]?.[activePendingQuestion.id],
+              next.text,
+            ),
+          },
+        }));
+      } else {
+        setPrompt(next.text);
+      }
+      setComposerCursor(nextCursor);
+      setComposerTrigger(
+        detectComposerTrigger(next.text, expandCollapsedComposerCursor(next.text, nextCursor)),
+      );
+      window.requestAnimationFrame(() => {
+        composerRef.current?.focusAt(nextCursor);
+      });
+      return true;
+    },
+    [activePendingProgress?.activeQuestion, activePendingUserInput, composerRef, setPrompt],
+  );
+
+  const readComposerSnapshot = useCallback((): {
+    value: string;
+    cursor: number;
+    expandedCursor: number;
+    terminalContextIds: string[];
+  } => {
+    const editorSnapshot = composerRef.current?.readSnapshot();
+    if (editorSnapshot) {
+      return editorSnapshot;
+    }
+    return {
+      value: promptRef.current,
+      cursor: composerCursor,
+      expandedCursor: expandCollapsedComposerCursor(promptRef.current, composerCursor),
+      terminalContextIds: composerTerminalContexts.map((context) => context.id),
+    };
+  }, [composerCursor, composerRef, composerTerminalContexts]);
+
+  const resolveActiveComposerTrigger = useCallback((): {
+    snapshot: { value: string; cursor: number; expandedCursor: number };
+    trigger: ComposerTrigger | null;
+  } => {
+    const snapshot = readComposerSnapshot();
+    return {
+      snapshot,
+      trigger: detectComposerTrigger(snapshot.value, snapshot.expandedCursor),
+    };
+  }, [readComposerSnapshot]);
+
+  const onSelectComposerItem = useCallback(
+    (item: ComposerCommandItem) => {
+      if (composerSelectLockRef.current) return;
+      composerSelectLockRef.current = true;
+      window.requestAnimationFrame(() => {
+        composerSelectLockRef.current = false;
+      });
+      const { snapshot, trigger } = resolveActiveComposerTrigger();
+      if (!trigger) return;
+      if (item.type === "path") {
+        const replacement = `@${item.path} `;
+        const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+          snapshot.value,
+          trigger.rangeEnd,
+          replacement,
+        );
+        const applied = applyPromptReplacement(
+          trigger.rangeStart,
+          replacementRangeEnd,
+          replacement,
+          { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+        );
+        if (applied) {
+          setComposerHighlightedItemId(null);
+        }
+        return;
+      }
+      if (item.type === "slash-command") {
+        if (item.command === "model") {
+          const replacement = "/model ";
+          const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+            snapshot.value,
+            trigger.rangeEnd,
+            replacement,
+          );
+          const applied = applyPromptReplacement(
+            trigger.rangeStart,
+            replacementRangeEnd,
+            replacement,
+            { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+          );
+          if (applied) {
+            setComposerHighlightedItemId(null);
+          }
+          return;
+        }
+        if (
+          item.command === "reasoning" ||
+          item.command === "branch" ||
+          item.command === "worktree"
+        ) {
+          if (item.command === "reasoning" && selectedProvider !== "codex") {
+            return;
+          }
+          const replacement = `/${item.command} `;
+          const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+            snapshot.value,
+            trigger.rangeEnd,
+            replacement,
+          );
+          const applied = applyPromptReplacement(
+            trigger.rangeStart,
+            replacementRangeEnd,
+            replacement,
+            { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+          );
+          if (applied) {
+            setComposerHighlightedItemId(null);
+          }
+          return;
+        }
+        if (item.command === "fast") {
+          if (selectedProvider !== "codex") {
+            return;
+          }
+          toggleCodexFastMode();
+        } else if (item.command === "fork") {
+          void onForkThread();
+        } else {
+          void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
+        }
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+        });
+        if (applied) {
+          setComposerHighlightedItemId(null);
+        }
+        return;
+      }
+      if (item.type === "reasoning") {
+        if (selectedProvider !== "codex") {
+          return;
+        }
+        applyReasoningEffort(item.effort);
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+        });
+        if (applied) {
+          setComposerHighlightedItemId(null);
+        }
+        return;
+      }
+      if (
+        item.type === "worktree-mode" ||
+        item.type === "branch" ||
+        item.type === "named-worktree-target"
+      ) {
+        void applyComposerConfigCommandItem(item).then((applied) => {
+          if (applied) {
+            setComposerHighlightedItemId(null);
+          }
+        });
+        return;
+      }
+      if (item.type !== "model") {
+        return;
+      }
+      onProviderModelSelect(item.provider, item.model);
+      const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+        expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+      });
+      if (applied) {
+        setComposerHighlightedItemId(null);
+      }
+    },
+    [
+      applyComposerConfigCommandItem,
+      applyReasoningEffort,
+      applyPromptReplacement,
+      handleInteractionModeChange,
+      onProviderModelSelect,
+      onForkThread,
+      resolveActiveComposerTrigger,
+      selectedProvider,
+      toggleCodexFastMode,
+    ],
+  );
+  const onComposerMenuItemHighlighted = useCallback((itemId: string | null) => {
+    setComposerHighlightedItemId(itemId);
+  }, []);
+  const nudgeComposerMenuHighlight = useCallback(
+    (key: "ArrowDown" | "ArrowUp") => {
+      if (composerMenuItems.length === 0) {
+        return;
+      }
+      const highlightedIndex = composerMenuItems.findIndex(
+        (item) => item.id === composerHighlightedItemId,
+      );
+      const normalizedIndex =
+        highlightedIndex >= 0 ? highlightedIndex : key === "ArrowDown" ? -1 : 0;
+      const offset = key === "ArrowDown" ? 1 : -1;
+      const nextIndex =
+        (normalizedIndex + offset + composerMenuItems.length) % composerMenuItems.length;
+      const nextItem = composerMenuItems[nextIndex];
+      setComposerHighlightedItemId(nextItem?.id ?? null);
+    },
+    [composerHighlightedItemId, composerMenuItems],
+  );
+  const isComposerMenuLoading =
+    (composerTriggerKind === "path" &&
+      ((pathTriggerQuery.length > 0 && composerPathQueryDebouncer.state.isPending) ||
+        workspaceEntriesQuery.isLoading ||
+        workspaceEntriesQuery.isFetching)) ||
+    (composerMenuSlashCommand?.command === "branch" &&
+      (branchesQuery.isLoading || branchesQuery.isFetching));
+
+  const onPromptChange = useCallback(
+    (
+      nextPrompt: string,
+      nextCursor: number,
+      expandedCursor: number,
+      cursorAdjacentToMention: boolean,
+      terminalContextIds: string[],
+    ) => {
+      if (activePendingProgress?.activeQuestion && activePendingUserInput) {
+        onChangeActivePendingUserInputCustomAnswer(
+          activePendingProgress.activeQuestion.id,
+          nextPrompt,
+          nextCursor,
+          expandedCursor,
+          cursorAdjacentToMention,
+        );
+        return;
+      }
+      promptRef.current = nextPrompt;
+      setPrompt(nextPrompt);
+      if (!terminalContextIdListsEqual(composerTerminalContexts, terminalContextIds)) {
+        setComposerDraftTerminalContexts(
+          composerDraftTarget,
+          syncTerminalContextsByIds(composerTerminalContexts, terminalContextIds),
+        );
+      }
+      setComposerCursor(nextCursor);
+      setComposerTrigger(
+        cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
+      );
+    },
+    [
+      activePendingProgress?.activeQuestion,
+      activePendingUserInput,
+      composerTerminalContexts,
+      onChangeActivePendingUserInputCustomAnswer,
+      setPrompt,
+      setComposerDraftTerminalContexts,
+      threadId,
+    ],
+  );
+
+  const onComposerCommandKey = (
+    key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
+    event: KeyboardEvent,
+  ) => {
+    if (key === "Tab" && event.shiftKey) {
+      toggleInteractionMode();
+      return true;
+    }
+
+    const { trigger } = resolveActiveComposerTrigger();
+    const menuIsActive = composerMenuOpenRef.current || trigger !== null;
+
+    if (menuIsActive) {
+      const currentItems = composerMenuItemsRef.current;
+      if (key === "ArrowDown" && currentItems.length > 0) {
+        nudgeComposerMenuHighlight("ArrowDown");
+        return true;
+      }
+      if (key === "ArrowUp" && currentItems.length > 0) {
+        nudgeComposerMenuHighlight("ArrowUp");
+        return true;
+      }
+      if (key === "Tab" || key === "Enter") {
+        const selectedItem = activeComposerMenuItemRef.current ?? currentItems[0];
+        if (selectedItem) {
+          onSelectComposerItem(selectedItem);
+          return true;
+        }
+      }
+    }
+
+    if (key === "Enter" && !event.shiftKey) {
+      void onSend();
+      return true;
+    }
+    return false;
+  };
   const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
     setExpandedImage(preview);
   }, []);
   const onOpenTurnDiff = useCallback(
     (turnId: TurnId, filePath?: string) => {
       if (!isServerThread) {
+        return;
+      }
+      if (isElectron) {
+        void turnId;
+        void filePath;
+        void toggleExternalCorkdiffForThread(scopeThreadRef(environmentId, threadId));
         return;
       }
       onDiffPanelOpen?.();
@@ -3319,13 +4710,15 @@ export default function ChatView(props: ChatViewProps) {
               isPreparingWorktree={isPreparingWorktree}
               activePendingApproval={activePendingApproval}
               pendingApprovals={pendingApprovals}
-              pendingUserInputs={pendingUserInputs}
+              activePendingUserInput={activePendingUserInput}
+              activePendingUserInputMode={activePendingUserInputMode}
               activePendingProgress={activePendingProgress}
               activePendingResolvedAnswers={activePendingResolvedAnswers}
               activePendingIsResponding={activePendingIsResponding}
               activePendingDraftAnswers={activePendingDraftAnswers}
               activePendingQuestionIndex={activePendingQuestionIndex}
               respondingRequestIds={respondingRequestIds}
+              respondingUserInputRequestIds={respondingUserInputRequestIds}
               showPlanFollowUpPrompt={showPlanFollowUpPrompt}
               activeProposedPlan={activeProposedPlan}
               activePlan={activePlan as { turnId?: TurnId } | null}
@@ -3342,6 +4735,10 @@ export default function ChatView(props: ChatViewProps) {
               resolvedTheme={resolvedTheme}
               settings={settings}
               gitCwd={gitCwd}
+              activeProjectCwd={activeProject?.cwd ?? null}
+              gitBranches={gitBranches}
+              canShowWorktreeSlashCommand={canShowWorktreeSlashCommand}
+              threadForkReady={threadForkReady}
               promptRef={promptRef}
               composerImagesRef={composerImagesRef}
               composerTerminalContextsRef={composerTerminalContextsRef}
@@ -3362,6 +4759,8 @@ export default function ChatView(props: ChatViewProps) {
               handleRuntimeModeChange={handleRuntimeModeChange}
               handleInteractionModeChange={handleInteractionModeChange}
               togglePlanSidebar={togglePlanSidebar}
+              onForkThread={onForkThread}
+              onApplyComposerConfigCommandItem={applyComposerConfigCommandItem}
               focusComposer={focusComposer}
               scheduleComposerFocus={scheduleComposerFocus}
               setThreadError={setThreadError}
@@ -3444,7 +4843,6 @@ export default function ChatView(props: ChatViewProps) {
           splitShortcutLabel={splitTerminalShortcutLabel ?? undefined}
           newShortcutLabel={newTerminalShortcutLabel ?? undefined}
           closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
-          keybindings={keybindings}
           onAddTerminalContext={addTerminalContextToDraft}
         />
       ))}

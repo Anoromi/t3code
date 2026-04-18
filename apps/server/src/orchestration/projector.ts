@@ -16,6 +16,7 @@ import {
   ThreadActivityAppendedPayload,
   ThreadArchivedPayload,
   ThreadCreatedPayload,
+  ThreadForkedPayload,
   ThreadDeletedPayload,
   ThreadInteractionModeSetPayload,
   ThreadMetaUpdatedPayload,
@@ -185,6 +186,7 @@ export function projectEvent(
             workspaceRoot: payload.workspaceRoot,
             defaultModelSelection: payload.defaultModelSelection,
             scripts: payload.scripts,
+            worktreeGroupTitles: payload.worktreeGroupTitles ?? [],
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
             deletedAt: null,
@@ -217,12 +219,18 @@ export function projectEvent(
                     ? { defaultModelSelection: payload.defaultModelSelection }
                     : {}),
                   ...(payload.scripts !== undefined ? { scripts: payload.scripts } : {}),
+                  ...(payload.worktreeGroupTitles !== undefined
+                    ? { worktreeGroupTitles: payload.worktreeGroupTitles }
+                    : {}),
                   updatedAt: payload.updatedAt,
                 }
               : project,
           ),
         })),
       );
+
+    case "project.worktree-group-title-regeneration-requested":
+      return Effect.succeed(nextBase);
 
     case "project.deleted":
       return decodeForEvent(ProjectDeletedPayload, event.payload, event.type, "payload").pipe(
@@ -259,6 +267,7 @@ export function projectEvent(
             interactionMode: payload.interactionMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
+            forkOrigin: null,
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -267,6 +276,48 @@ export function projectEvent(
             messages: [],
             activities: [],
             checkpoints: [],
+            session: null,
+          },
+          event.type,
+          "thread",
+        );
+        const existing = nextBase.threads.find((entry) => entry.id === thread.id);
+        return {
+          ...nextBase,
+          threads: existing
+            ? nextBase.threads.map((entry) => (entry.id === thread.id ? thread : entry))
+            : [...nextBase.threads, thread],
+        };
+      });
+
+    case "thread.forked":
+      return Effect.gen(function* () {
+        const payload = yield* decodeForEvent(
+          ThreadForkedPayload,
+          event.payload,
+          event.type,
+          "payload",
+        );
+        const thread: OrchestrationThread = yield* decodeForEvent(
+          OrchestrationThread,
+          {
+            id: payload.threadId,
+            projectId: payload.projectId,
+            title: payload.title,
+            modelSelection: payload.modelSelection,
+            runtimeMode: payload.runtimeMode,
+            interactionMode: payload.interactionMode,
+            branch: payload.branch,
+            worktreePath: payload.worktreePath,
+            forkOrigin: payload.forkOrigin,
+            latestTurn: payload.latestTurn,
+            createdAt: payload.createdAt,
+            updatedAt: payload.updatedAt,
+            deletedAt: null,
+            messages: payload.messages,
+            proposedPlans: payload.proposedPlans,
+            activities: payload.activities,
+            checkpoints: payload.checkpoints,
             session: null,
           },
           event.type,
@@ -518,6 +569,13 @@ export function projectEvent(
             turnId: payload.turnId,
             checkpointTurnCount: payload.checkpointTurnCount,
             checkpointRef: payload.checkpointRef,
+            ...(payload.visibleCheckpointRef !== undefined
+              ? { visibleCheckpointRef: payload.visibleCheckpointRef }
+              : {}),
+            ...(payload.visibleBaseCheckpointTurnCount !== undefined
+              ? { visibleBaseCheckpointTurnCount: payload.visibleBaseCheckpointTurnCount }
+              : {}),
+            ...(payload.visibility !== undefined ? { visibility: payload.visibility } : {}),
             status: payload.status,
             files: payload.files,
             assistantMessageId: payload.assistantMessageId,

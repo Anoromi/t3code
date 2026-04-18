@@ -1,6 +1,6 @@
 import { type ApprovalRequestId } from "@t3tools/contracts";
 import { memo, useEffect, useEffectEvent, useRef } from "react";
-import { type PendingUserInput } from "../../session-logic";
+import { type PendingUserInput, type RecoverablePendingUserInput } from "../../session-logic";
 import {
   derivePendingUserInputProgress,
   type PendingUserInputDraftAnswer,
@@ -9,7 +9,8 @@ import { CheckIcon } from "lucide-react";
 import { cn } from "~/lib/utils";
 
 interface PendingUserInputPanelProps {
-  pendingUserInputs: PendingUserInput[];
+  prompt: PendingUserInput | RecoverablePendingUserInput | null;
+  mode: "live" | "recovery";
   respondingRequestIds: ApprovalRequestId[];
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
@@ -18,22 +19,22 @@ interface PendingUserInputPanelProps {
 }
 
 export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPanel({
-  pendingUserInputs,
+  prompt,
+  mode,
   respondingRequestIds,
   answers,
   questionIndex,
   onToggleOption,
   onAdvance,
 }: PendingUserInputPanelProps) {
-  if (pendingUserInputs.length === 0) return null;
-  const activePrompt = pendingUserInputs[0];
-  if (!activePrompt) return null;
+  if (!prompt) return null;
 
   return (
     <ComposerPendingUserInputCard
-      key={activePrompt.requestId}
-      prompt={activePrompt}
-      isResponding={respondingRequestIds.includes(activePrompt.requestId)}
+      key={prompt.requestId}
+      prompt={prompt}
+      mode={mode}
+      isResponding={respondingRequestIds.includes(prompt.requestId)}
       answers={answers}
       questionIndex={questionIndex}
       onToggleOption={onToggleOption}
@@ -44,13 +45,15 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
 
 const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard({
   prompt,
+  mode,
   isResponding,
   answers,
   questionIndex,
   onToggleOption,
   onAdvance,
 }: {
-  prompt: PendingUserInput;
+  prompt: PendingUserInput | RecoverablePendingUserInput;
+  mode: "live" | "recovery";
   isResponding: boolean;
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
@@ -123,6 +126,12 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     return null;
   }
 
+  const headerLabel = mode === "recovery" ? "Recovered Prompt" : activeQuestion.header;
+  const supportingCopy =
+    mode === "recovery"
+      ? "The app was restarted before this answer could be delivered. Submit these answers as a new turn."
+      : null;
+
   return (
     <div className="px-4 py-3 sm:px-5">
       <div className="flex items-center gap-3">
@@ -133,10 +142,13 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             </span>
           ) : null}
           <span className="text-[11px] font-semibold tracking-widest text-muted-foreground/50 uppercase">
-            {activeQuestion.header}
+            {headerLabel}
           </span>
         </div>
       </div>
+      {supportingCopy ? (
+        <p className="mt-1 text-xs text-muted-foreground/70">{supportingCopy}</p>
+      ) : null}
       <p className="mt-1.5 text-sm text-foreground/90">{activeQuestion.question}</p>
       {activeQuestion.multiSelect ? (
         <p className="mt-1 text-xs text-muted-foreground/65">Select one or more options.</p>

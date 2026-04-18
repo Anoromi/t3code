@@ -7,10 +7,12 @@ import {
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
 import {
+  couldMatchShortcutCommand,
   formatShortcutLabel,
   isChatNewShortcut,
   isChatNewLocalShortcut,
   isDiffToggleShortcut,
+  isNavigationCommandMenuShortcut,
   isOpenFavoriteEditorShortcut,
   isTerminalClearShortcut,
   isTerminalCloseShortcut,
@@ -107,6 +109,16 @@ const DEFAULT_BINDINGS = compile([
     command: "commandPalette.toggle",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
+  {
+    shortcut: modShortcut("t"),
+    command: "terminal.worktree.open",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
+    shortcut: modShortcut("e"),
+    command: "navigation.commandMenu",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
@@ -116,6 +128,41 @@ const DEFAULT_BINDINGS = compile([
   { shortcut: modShortcut("2"), command: "thread.jump.2" },
   { shortcut: modShortcut("3"), command: "thread.jump.3" },
 ]);
+
+describe("couldMatchShortcutCommand", () => {
+  it("fast-rejects unrelated modifier chords before context evaluation", () => {
+    assert.isFalse(
+      couldMatchShortcutCommand(
+        event({ key: "u", code: "KeyU", metaKey: true }),
+        DEFAULT_BINDINGS,
+        "commandPalette.toggle",
+        { platform: "Linux" },
+      ),
+    );
+  });
+
+  it("matches by physical digit alias for thread jump shortcuts", () => {
+    assert.isTrue(
+      couldMatchShortcutCommand(
+        event({ key: "!", code: "Digit1", ctrlKey: true }),
+        DEFAULT_BINDINGS,
+        "thread.jump.1",
+        { platform: "Linux" },
+      ),
+    );
+  });
+
+  it("accepts command predicates for grouped listeners", () => {
+    assert.isTrue(
+      couldMatchShortcutCommand(
+        event({ key: "d", ctrlKey: true }),
+        DEFAULT_BINDINGS,
+        (command) => command === "terminal.split" || command === "diff.toggle",
+        { platform: "Linux" },
+      ),
+    );
+  });
+});
 
 describe("isTerminalToggleShortcut", () => {
   it("matches Cmd+J on macOS", () => {
@@ -129,15 +176,6 @@ describe("isTerminalToggleShortcut", () => {
   it("matches Ctrl+J on non-macOS", () => {
     assert.isTrue(
       isTerminalToggleShortcut(event({ ctrlKey: true }), DEFAULT_BINDINGS, { platform: "Win32" }),
-    );
-  });
-
-  it("matches Ctrl+J on non-macOS while terminalFocus is true", () => {
-    assert.isTrue(
-      isTerminalToggleShortcut(event({ ctrlKey: true }), DEFAULT_BINDINGS, {
-        platform: "Win32",
-        context: { terminalFocus: true },
-      }),
     );
   });
 });
@@ -269,6 +307,18 @@ describe("shortcutLabelForCommand", () => {
       "⌘K",
     );
     assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "terminal.worktree.open", "Linux"),
+      "Ctrl+T",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "terminal.worktree.open", "MacIntel"),
+      "⌘T",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "navigation.commandMenu", "Linux"),
+      "Ctrl+E",
+    );
+    assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "editor.openFavorite", "Linux"),
       "Ctrl+O",
     );
@@ -362,6 +412,27 @@ describe("thread navigation helpers", () => {
 });
 
 describe("chat/editor shortcuts", () => {
+  it("matches navigation.commandMenu shortcut outside terminal focus", () => {
+    assert.isTrue(
+      isNavigationCommandMenuShortcut(event({ key: "e", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: false },
+      }),
+    );
+    assert.isTrue(
+      isNavigationCommandMenuShortcut(event({ key: "e", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+    );
+    assert.isFalse(
+      isNavigationCommandMenuShortcut(event({ key: "e", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+
   it("matches chat.new shortcut", () => {
     assert.isTrue(
       isChatNewShortcut(event({ key: "o", metaKey: true, shiftKey: true }), DEFAULT_BINDINGS, {
@@ -428,6 +499,22 @@ describe("chat/editor shortcuts", () => {
     assert.isFalse(
       isDiffToggleShortcut(event({ key: "d", metaKey: true }), DEFAULT_BINDINGS, {
         platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+
+  it("matches terminal.worktree.open shortcut outside terminal focus", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "t", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+      "terminal.worktree.open",
+    );
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "t", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
         context: { terminalFocus: true },
       }),
     );

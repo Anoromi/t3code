@@ -14,15 +14,20 @@ import { describe, expect, it } from "vitest";
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
+import { ProviderSessionRuntimeRepositoryLive } from "../../persistence/Layers/ProviderSessionRuntime.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import {
   OrchestrationEventStore,
   type OrchestrationEventStoreShape,
 } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { RepositoryIdentityResolverLive } from "../../project/Layers/RepositoryIdentityResolver.ts";
+import { ProviderSessionDirectoryLive } from "../../provider/Layers/ProviderSessionDirectory.ts";
+import { ProviderSessionDirectory } from "../../provider/Services/ProviderSessionDirectory.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
+import { ThreadForkServiceLive } from "./ThreadForkService.ts";
+import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
   OrchestrationProjectionPipeline,
@@ -37,25 +42,76 @@ const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.make(value);
 
+function makeProviderTestLayers() {
+  const providerServiceLayer = Layer.succeed(ProviderService, {
+    startSession: () => Effect.die("ProviderService.startSession should not be used in test"),
+    forkThread: (input) =>
+      Effect.succeed({
+        provider: "codex" as const,
+        resumeCursor: {
+          threadId: `provider-${String(input.targetThreadId)}`,
+        },
+        runtimeMode: "full-access" as const,
+        runtimePayload: {
+          cwd: "/tmp/project-fork",
+          modelSelection: {
+            provider: "codex" as const,
+            model: "gpt-5-codex",
+          },
+        },
+      }),
+    sendTurn: () => Effect.die("ProviderService.sendTurn should not be used in test"),
+    interruptTurn: () => Effect.die("ProviderService.interruptTurn should not be used in test"),
+    respondToRequest: () =>
+      Effect.die("ProviderService.respondToRequest should not be used in test"),
+    respondToUserInput: () =>
+      Effect.die("ProviderService.respondToUserInput should not be used in test"),
+    stopSession: () => Effect.die("ProviderService.stopSession should not be used in test"),
+    listSessions: () => Effect.succeed([]),
+    getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" as const }),
+    rollbackConversation: () =>
+      Effect.die("ProviderService.rollbackConversation should not be used in test"),
+    archiveThread: () => Effect.void,
+    streamEvents: Stream.empty,
+  });
+  const providerSessionDirectoryLayer = ProviderSessionDirectoryLive.pipe(
+    Layer.provide(ProviderSessionRuntimeRepositoryLive),
+    Layer.provide(SqlitePersistenceMemory),
+  );
+
+  return {
+    providerServiceLayer,
+    providerSessionDirectoryLayer,
+  };
+}
+
 async function createOrchestrationSystem() {
   const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
     prefix: "t3-orchestration-engine-test-",
   });
+  const { providerServiceLayer, providerSessionDirectoryLayer } = makeProviderTestLayers();
   const orchestrationLayer = OrchestrationEngineLive.pipe(
     Layer.provide(OrchestrationProjectionSnapshotQueryLive),
     Layer.provide(OrchestrationProjectionPipelineLive),
     Layer.provide(OrchestrationEventStoreLive),
     Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+    Layer.provide(ThreadForkServiceLive),
     Layer.provide(RepositoryIdentityResolverLive),
+    Layer.provide(providerServiceLayer),
+    Layer.provide(providerSessionDirectoryLayer),
     Layer.provide(SqlitePersistenceMemory),
     Layer.provideMerge(ServerConfigLayer),
     Layer.provideMerge(NodeServices.layer),
   );
-  const runtime = ManagedRuntime.make(orchestrationLayer);
+  const runtime = ManagedRuntime.make(
+    Layer.mergeAll(orchestrationLayer, providerSessionDirectoryLayer),
+  );
   const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
   return {
     engine,
-    run: <A, E>(effect: Effect.Effect<A, E>) => runtime.runPromise(effect),
+    run: <A, E>(
+      effect: Effect.Effect<A, E, OrchestrationEngineService | ProviderSessionDirectory>,
+    ) => runtime.runPromise(effect),
     dispose: () => runtime.dispose(),
   };
 }
@@ -126,6 +182,7 @@ describe("OrchestrationEngine", () => {
           runtimeMode: "full-access" as const,
           branch: null,
           worktreePath: null,
+          forkOrigin: null,
           latestTurn: null,
           createdAt: "2026-03-03T00:00:02.000Z",
           updatedAt: "2026-03-03T00:00:03.000Z",
@@ -139,7 +196,7 @@ describe("OrchestrationEngine", () => {
         },
       ],
     };
-
+    const { providerServiceLayer, providerSessionDirectoryLayer } = makeProviderTestLayers();
     const layer = OrchestrationEngineLive.pipe(
       Layer.provide(
         Layer.succeed(ProjectionSnapshotQuery, {
@@ -168,6 +225,8 @@ describe("OrchestrationEngine", () => {
       ),
       Layer.provide(Layer.succeed(OrchestrationEventStore, failOnHistoricalReplayStore)),
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+      Layer.provide(providerServiceLayer),
+      Layer.provide(providerSessionDirectoryLayer),
       Layer.provide(SqlitePersistenceMemory),
     );
 
@@ -370,6 +429,239 @@ describe("OrchestrationEngine", () => {
     await system.dispose();
   });
 
+  it("forks from the latest settled thread snapshot without requiring a checkpoint", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-project-fork-create"),
+        projectId: asProjectId("project-fork"),
+        title: "Fork Project",
+        workspaceRoot: "/tmp/project-fork",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-fork-source-create"),
+        threadId: ThreadId.make("thread-source"),
+        projectId: asProjectId("project-fork"),
+        title: "Source thread",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: "feature/fork-test",
+        worktreePath: "/tmp/worktrees/fork-test",
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-thread-fork-turn-start"),
+        threadId: ThreadId.make("thread-source"),
+        message: {
+          messageId: asMessageId("msg-source-user"),
+          role: "user",
+          text: "hello from source",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-thread-fork-session-running"),
+        threadId: ThreadId.make("thread-source"),
+        session: {
+          threadId: ThreadId.make("thread-source"),
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-source-1"),
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: CommandId.make("cmd-thread-fork-assistant-delta"),
+        threadId: ThreadId.make("thread-source"),
+        messageId: asMessageId("msg-source-assistant"),
+        delta: "assistant reply",
+        turnId: asTurnId("turn-source-1"),
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.message.assistant.complete",
+        commandId: CommandId.make("cmd-thread-fork-assistant-complete"),
+        threadId: ThreadId.make("thread-source"),
+        messageId: asMessageId("msg-source-assistant"),
+        turnId: asTurnId("turn-source-1"),
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-thread-fork-session-ready"),
+        threadId: ThreadId.make("thread-source"),
+        session: {
+          threadId: ThreadId.make("thread-source"),
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: createdAt,
+        },
+        createdAt,
+      }),
+    );
+
+    await system.run(
+      engine.dispatch({
+        type: "thread.fork",
+        commandId: CommandId.make("cmd-thread-fork-dispatch"),
+        threadId: ThreadId.make("thread-forked"),
+        sourceThreadId: ThreadId.make("thread-source"),
+        createdAt,
+      }),
+    );
+
+    const readModel = await system.run(engine.getReadModel());
+    const forkedThread = readModel.threads.find((thread) => thread.id === "thread-forked");
+    expect(forkedThread).toBeDefined();
+    expect(forkedThread?.title).toBe("Fork: Source thread");
+    expect(forkedThread?.branch).toBe("feature/fork-test");
+    expect(forkedThread?.worktreePath).toBe("/tmp/worktrees/fork-test");
+    expect(forkedThread?.forkOrigin).toEqual({
+      sourceThreadId: ThreadId.make("thread-source"),
+      sourceTurnId: asTurnId("turn-source-1"),
+      sourceCheckpointTurnCount: null,
+      forkedAt: createdAt,
+    });
+    expect(forkedThread?.latestTurn?.turnId).toBe("turn-source-1");
+    expect(forkedThread?.messages.map((message) => message.text)).toEqual(
+      expect.arrayContaining(["hello from source", "assistant reply"]),
+    );
+    expect(forkedThread?.checkpoints).toEqual([]);
+    expect(
+      forkedThread?.messages.some((message) => message.id === asMessageId("msg-source-user")),
+    ).toBe(false);
+    expect(forkedThread?.session).toBeNull();
+
+    const providerSessionDirectory = await system.run(Effect.service(ProviderSessionDirectory));
+    const forkBinding = await system.run(
+      providerSessionDirectory.getBinding(ThreadId.make("thread-forked")),
+    );
+    expect(Option.isSome(forkBinding)).toBe(true);
+    if (Option.isSome(forkBinding)) {
+      expect(forkBinding.value.provider).toBe("codex");
+      expect(forkBinding.value.status).toBe("stopped");
+      expect(forkBinding.value.resumeCursor).toEqual({
+        threadId: "provider-thread-forked",
+      });
+      expect(forkBinding.value.runtimePayload).toEqual({
+        cwd: "/tmp/project-fork",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+      });
+    }
+
+    await system.dispose();
+  });
+
+  it("rejects forking while the source thread is still processing", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = now();
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-project-fork-running-create"),
+        projectId: asProjectId("project-fork-running"),
+        title: "Fork Project",
+        workspaceRoot: "/tmp/project-fork-running",
+        defaultModelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-fork-running-create"),
+        threadId: ThreadId.make("thread-source-running"),
+        projectId: asProjectId("project-fork-running"),
+        title: "Source thread",
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-thread-fork-running-turn-start"),
+        threadId: ThreadId.make("thread-source-running"),
+        message: {
+          messageId: asMessageId("msg-source-running-user"),
+          role: "user",
+          text: "still working",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt,
+      }),
+    );
+
+    await expect(
+      system.run(
+        engine.dispatch({
+          type: "thread.fork",
+          commandId: CommandId.make("cmd-thread-fork-running-dispatch"),
+          threadId: ThreadId.make("thread-forked-running"),
+          sourceThreadId: ThreadId.make("thread-source-running"),
+          createdAt,
+        }),
+      ),
+    ).rejects.toThrow("is still processing and cannot be forked yet");
+
+    await system.dispose();
+  });
+
   it("streams persisted domain events in order", async () => {
     const system = await createOrchestrationSystem();
     const { engine } = system;
@@ -565,6 +857,9 @@ describe("OrchestrationEngine", () => {
         turnId: asTurnId("turn-1"),
         completedAt: createdAt,
         checkpointRef: asCheckpointRef("refs/t3/checkpoints/thread-turn-diff/turn/1"),
+        visibleCheckpointRef: null,
+        visibleBaseCheckpointTurnCount: null,
+        visibility: "visible",
         status: "ready",
         files: [],
         checkpointTurnCount: 1,
@@ -580,6 +875,9 @@ describe("OrchestrationEngine", () => {
         turnId: asTurnId("turn-1"),
         checkpointTurnCount: 1,
         checkpointRef: asCheckpointRef("refs/t3/checkpoints/thread-turn-diff/turn/1"),
+        visibleCheckpointRef: null,
+        visibleBaseCheckpointTurnCount: null,
+        visibility: "visible",
         status: "ready",
         files: [],
         assistantMessageId: null,
@@ -628,6 +926,7 @@ describe("OrchestrationEngine", () => {
     const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
       prefix: "t3-orchestration-engine-test-",
     });
+    const { providerServiceLayer, providerSessionDirectoryLayer } = makeProviderTestLayers();
 
     const runtime = ManagedRuntime.make(
       OrchestrationEngineLive.pipe(
@@ -636,6 +935,8 @@ describe("OrchestrationEngine", () => {
         Layer.provide(Layer.succeed(OrchestrationEventStore, flakyStore)),
         Layer.provide(OrchestrationCommandReceiptRepositoryLive),
         Layer.provide(RepositoryIdentityResolverLive),
+        Layer.provide(providerServiceLayer),
+        Layer.provide(providerSessionDirectoryLayer),
         Layer.provide(SqlitePersistenceMemory),
         Layer.provideMerge(ServerConfigLayer),
         Layer.provideMerge(NodeServices.layer),
@@ -725,6 +1026,7 @@ describe("OrchestrationEngine", () => {
         return Effect.void;
       },
     };
+    const { providerServiceLayer, providerSessionDirectoryLayer } = makeProviderTestLayers();
 
     const runtime = ManagedRuntime.make(
       OrchestrationEngineLive.pipe(
@@ -733,6 +1035,8 @@ describe("OrchestrationEngine", () => {
         Layer.provide(OrchestrationEventStoreLive),
         Layer.provide(OrchestrationCommandReceiptRepositoryLive),
         Layer.provide(RepositoryIdentityResolverLive),
+        Layer.provide(providerServiceLayer),
+        Layer.provide(providerSessionDirectoryLayer),
         Layer.provide(SqlitePersistenceMemory),
       ),
     );
@@ -868,6 +1172,7 @@ describe("OrchestrationEngine", () => {
         return Effect.void;
       },
     };
+    const { providerServiceLayer, providerSessionDirectoryLayer } = makeProviderTestLayers();
 
     const runtime = ManagedRuntime.make(
       OrchestrationEngineLive.pipe(
@@ -876,6 +1181,8 @@ describe("OrchestrationEngine", () => {
         Layer.provide(Layer.succeed(OrchestrationEventStore, nonTransactionalStore)),
         Layer.provide(OrchestrationCommandReceiptRepositoryLive),
         Layer.provide(RepositoryIdentityResolverLive),
+        Layer.provide(providerServiceLayer),
+        Layer.provide(providerSessionDirectoryLayer),
         Layer.provide(SqlitePersistenceMemory),
       ),
     );

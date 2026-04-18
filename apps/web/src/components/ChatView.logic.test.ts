@@ -1,5 +1,16 @@
 import { scopeThreadRef } from "@t3tools/client-runtime";
-import { EnvironmentId, ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  MessageId,
+  ProjectId,
+  type KeybindingCommand,
+  type KeybindingShortcut,
+  type KeybindingWhenNode,
+  type ResolvedKeybindingsConfig,
+  ThreadId,
+  TurnId,
+  type OrchestrationLatestTurn,
+} from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { type EnvironmentState, useStore } from "../store";
 import { type Thread } from "../types";
@@ -7,16 +18,80 @@ import { type Thread } from "../types";
 import {
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
+  buildTemporaryWorktreeBranchName,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  hasForkableThreadHistory,
   hasServerAcknowledgedLocalDispatch,
+  isThreadForkReady,
   reconcileMountedTerminalThreadIds,
+  resolveChatViewShortcutCommand,
   resolveSendEnvMode,
   shouldWriteThreadErrorToCurrentServerThread,
   waitForStartedServerThread,
+  threadSupportsCodexFork,
+  resolvePendingWorktreeAction,
 } from "./ChatView.logic";
+import { type ShortcutEventLike } from "../keybindings";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+function shortcutEvent(overrides: Partial<ShortcutEventLike> = {}): ShortcutEventLike {
+  return {
+    key: "d",
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    ...overrides,
+  };
+}
+
+function modShortcut(key: string): KeybindingShortcut {
+  return {
+    key,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    altKey: false,
+    modKey: true,
+  };
+}
+
+function whenIdentifier(name: string): KeybindingWhenNode {
+  return { type: "identifier", name };
+}
+
+function whenNot(node: KeybindingWhenNode): KeybindingWhenNode {
+  return { type: "not", node };
+}
+
+function compileKeybindings(
+  bindings: ReadonlyArray<{
+    readonly shortcut: KeybindingShortcut;
+    readonly command: KeybindingCommand;
+    readonly whenAst?: KeybindingWhenNode;
+  }>,
+): ResolvedKeybindingsConfig {
+  return bindings.map((binding) => ({
+    command: binding.command,
+    shortcut: binding.shortcut,
+    ...(binding.whenAst ? { whenAst: binding.whenAst } : {}),
+  }));
+}
+
+const terminalAndDiffBindings = compileKeybindings([
+  {
+    shortcut: modShortcut("d"),
+    command: "terminal.split",
+    whenAst: whenIdentifier("terminalFocus"),
+  },
+  {
+    shortcut: modShortcut("d"),
+    command: "diff.toggle",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+]);
 
 describe("deriveComposerSendState", () => {
   it("treats expired terminal pills as non-sendable content", () => {
@@ -175,6 +250,32 @@ describe("reconcileMountedTerminalThreadIds", () => {
   });
 });
 
+describe("resolveChatViewShortcutCommand", () => {
+  it("prefers external Corkdiff when desktop Ctrl+D overlaps terminal shortcuts", () => {
+    expect(
+      resolveChatViewShortcutCommand({
+        event: shortcutEvent({ key: "d", ctrlKey: true }),
+        keybindings: terminalAndDiffBindings,
+        terminalFocus: true,
+        terminalOpen: true,
+        preferExternalDiff: true,
+      }),
+    ).toBe("diff.toggle");
+  });
+
+  it("keeps terminal Ctrl+D behavior when external Corkdiff is not preferred", () => {
+    expect(
+      resolveChatViewShortcutCommand({
+        event: shortcutEvent({ key: "d", ctrlKey: true }),
+        keybindings: terminalAndDiffBindings,
+        terminalFocus: true,
+        terminalOpen: true,
+        preferExternalDiff: false,
+      }),
+    ).toBe("terminal.split");
+  });
+});
+
 describe("shouldWriteThreadErrorToCurrentServerThread", () => {
   it("routes errors to the active server thread when route and target match", () => {
     const threadId = ThreadId.make("thread-1");
@@ -238,6 +339,7 @@ const makeThread = (input?: {
     : null,
   branch: null,
   worktreePath: null,
+  forkOrigin: null,
   turnDiffSummaries: [],
   activities: [],
 });
@@ -479,6 +581,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       latestTurn: previousLatestTurn,
       branch: null,
       worktreePath: null,
+      forkOrigin: null,
       turnDiffSummaries: [],
       activities: [],
     });
@@ -516,6 +619,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       latestTurn: previousLatestTurn,
       branch: null,
       worktreePath: null,
+      forkOrigin: null,
       turnDiffSummaries: [],
       activities: [],
     });
@@ -698,6 +802,7 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
       latestTurn: previousLatestTurn,
       branch: null,
       worktreePath: null,
+      forkOrigin: null,
       turnDiffSummaries: [],
       activities: [],
     });
@@ -716,5 +821,287 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
         threadError: null,
       }),
     ).toBe(true);
+  });
+});
+
+describe("pending worktree resolution", () => {
+  it("creates a named worktree branch from the selected base branch", () => {
+    expect(
+      resolvePendingWorktreeAction({
+        baseBranch: "feature/base",
+        pendingWorktreeBranch: "feature/new-worktree",
+        gitBranches: [
+          {
+            name: "feature/base",
+            current: false,
+            isDefault: false,
+            worktreePath: null,
+          },
+        ],
+      }),
+    ).toEqual({
+      kind: "create-worktree",
+      branch: "feature/base",
+      newBranch: "feature/new-worktree",
+    });
+  });
+
+  it("falls back to the current repo branch when no explicit base branch is set", () => {
+    expect(
+      resolvePendingWorktreeAction({
+        baseBranch: null,
+        pendingWorktreeBranch: "feature/new-worktree",
+        gitBranches: [
+          {
+            name: "main",
+            current: true,
+            isDefault: true,
+            worktreePath: null,
+          },
+        ],
+      }),
+    ).toEqual({
+      kind: "create-worktree",
+      branch: "main",
+      newBranch: "feature/new-worktree",
+    });
+  });
+
+  it("fails clearly when the named target already exists locally", () => {
+    expect(
+      resolvePendingWorktreeAction({
+        baseBranch: "main",
+        pendingWorktreeBranch: "feature/new-worktree",
+        gitBranches: [
+          {
+            name: "feature/new-worktree",
+            current: false,
+            isDefault: false,
+            worktreePath: null,
+          },
+        ],
+      }),
+    ).toEqual({
+      kind: "error",
+      message:
+        'Branch "feature/new-worktree" already exists locally. Pick a different worktree branch name or use that branch directly.',
+    });
+  });
+
+  it("fails clearly when the named target exists remotely", () => {
+    expect(
+      resolvePendingWorktreeAction({
+        baseBranch: "main",
+        pendingWorktreeBranch: "origin/feature/remote-only",
+        gitBranches: [
+          {
+            name: "origin/feature/remote-only",
+            current: false,
+            isDefault: false,
+            worktreePath: null,
+            isRemote: true,
+            remoteName: "origin",
+          },
+        ],
+      }),
+    ).toEqual({
+      kind: "error",
+      message:
+        'Branch "origin/feature/remote-only" already exists on a remote. Pick a different worktree branch name or create/check out the branch first.',
+    });
+  });
+
+  it("uses the legacy autogenerated branch path when no named worktree target is set", () => {
+    const result = resolvePendingWorktreeAction({
+      baseBranch: "main",
+      pendingWorktreeBranch: null,
+      gitBranches: [
+        {
+          name: "main",
+          current: true,
+          isDefault: true,
+          worktreePath: null,
+        },
+      ],
+    });
+
+    expect(result.kind).toBe("create-worktree");
+    if (result.kind !== "create-worktree") {
+      throw new Error("Expected create-worktree action");
+    }
+    expect(result.branch).toBe("main");
+    expect(result.newBranch).toMatch(/^t3code\/[0-9a-f]{8}$/);
+  });
+
+  it("builds temporary worktree branch names with the expected prefix", () => {
+    expect(buildTemporaryWorktreeBranchName()).toMatch(/^t3code\/[0-9a-f]{8}$/);
+  });
+});
+
+describe("fork readiness", () => {
+  const settledLatestTurn: OrchestrationLatestTurn = {
+    turnId: TurnId.make("turn-1"),
+    state: "completed",
+    requestedAt: "2026-03-17T12:52:29.000Z",
+    startedAt: "2026-03-17T12:52:30.000Z",
+    completedAt: "2026-03-17T12:52:31.000Z",
+    assistantMessageId: null,
+  };
+
+  it("counts reply-only server history as forkable even without checkpoints", () => {
+    expect(
+      hasForkableThreadHistory({
+        messages: [
+          {
+            id: MessageId.make("msg-user-1"),
+            role: "user",
+            text: "testing",
+            streaming: false,
+            createdAt: "2026-03-17T12:52:29.000Z",
+          },
+          {
+            id: MessageId.make("msg-assistant-1"),
+            role: "assistant",
+            text: "Received. I'm ready in /tmp/repo.",
+            streaming: false,
+            createdAt: "2026-03-17T12:52:30.000Z",
+          },
+        ],
+        activities: [],
+        proposedPlans: [],
+        turnDiffSummaries: [],
+        latestTurn: null,
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5.4",
+        },
+        session: null,
+      }),
+    ).toBe(true);
+  });
+
+  it("treats settled history without checkpoints as fork-ready", () => {
+    expect(
+      isThreadForkReady({
+        thread: {
+          messages: [
+            {
+              id: MessageId.make("msg-user-1"),
+              role: "user",
+              text: "testing",
+              streaming: false,
+              createdAt: "2026-03-17T12:52:29.000Z",
+            },
+            {
+              id: MessageId.make("msg-assistant-1"),
+              role: "assistant",
+              text: "Received. I'm ready in /tmp/repo.",
+              streaming: false,
+              createdAt: "2026-03-17T12:52:30.000Z",
+            },
+          ],
+          activities: [],
+          proposedPlans: [],
+          turnDiffSummaries: [],
+          latestTurn: settledLatestTurn,
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5.4",
+          },
+          session: {
+            provider: "codex",
+            status: "ready",
+            createdAt: "2026-03-17T12:52:29.000Z",
+            updatedAt: "2026-03-17T12:52:31.000Z",
+            orchestrationStatus: "ready",
+          },
+        },
+        isServerThread: true,
+        phase: "ready",
+        isSendBusy: false,
+        isConnecting: false,
+        isRevertingCheckpoint: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("blocks forking while a latest turn is still in flight", () => {
+    expect(
+      isThreadForkReady({
+        thread: {
+          messages: [
+            {
+              id: MessageId.make("msg-user-1"),
+              role: "user",
+              text: "testing",
+              streaming: false,
+              createdAt: "2026-03-17T12:52:29.000Z",
+            },
+          ],
+          activities: [],
+          proposedPlans: [],
+          turnDiffSummaries: [],
+          latestTurn: {
+            ...settledLatestTurn,
+            state: "running",
+            completedAt: null,
+          },
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5.4",
+          },
+          session: {
+            provider: "codex",
+            status: "running",
+            createdAt: "2026-03-17T12:52:29.000Z",
+            updatedAt: "2026-03-17T12:52:31.000Z",
+            orchestrationStatus: "running",
+          },
+        },
+        isServerThread: true,
+        phase: "running",
+        isSendBusy: false,
+        isConnecting: false,
+        isRevertingCheckpoint: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("only allows true fork support for codex-backed threads", () => {
+    expect(
+      threadSupportsCodexFork({
+        messages: [],
+        activities: [],
+        proposedPlans: [],
+        turnDiffSummaries: [],
+        latestTurn: null,
+        modelSelection: {
+          provider: "codex",
+          model: "gpt-5.4",
+        },
+        session: null,
+      }),
+    ).toBe(true);
+
+    expect(
+      threadSupportsCodexFork({
+        messages: [],
+        activities: [],
+        proposedPlans: [],
+        turnDiffSummaries: [],
+        latestTurn: null,
+        modelSelection: {
+          provider: "claudeAgent",
+          model: "claude-sonnet-4-5",
+        },
+        session: {
+          provider: "claudeAgent",
+          status: "ready",
+          createdAt: "2026-03-17T12:52:29.000Z",
+          updatedAt: "2026-03-17T12:52:31.000Z",
+          orchestrationStatus: "ready",
+        },
+      }),
+    ).toBe(false);
   });
 });
