@@ -74,12 +74,14 @@ function CommandDialogPopup({ className, children, ...props }: CommandDialogPrim
 
 function Command({
   autoHighlight = "always",
+  highlightItemOnHover = false,
   keepHighlight = true,
   ...props
 }: React.ComponentProps<typeof Autocomplete>) {
   return (
     <Autocomplete
       autoHighlight={autoHighlight}
+      highlightItemOnHover={highlightItemOnHover}
       inline
       keepHighlight={keepHighlight}
       open
@@ -164,7 +166,14 @@ function CommandCollection({ ...props }: React.ComponentProps<typeof Autocomplet
 
 function CommandItem({ className, ...props }: React.ComponentProps<typeof AutocompleteItem>) {
   return (
-    <AutocompleteItem className={cn("py-1.5", className)} data-slot="command-item" {...props} />
+    <AutocompleteItem
+      className={cn(
+        "py-1.5 transition-colors hover:bg-accent/70 hover:text-accent-foreground",
+        className,
+      )}
+      data-slot="command-item"
+      {...props}
+    />
   );
 }
 

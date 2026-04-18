@@ -49,6 +49,7 @@ import {
   resolveInitialServerAuthGateState,
   updatePrimaryEnvironmentDescriptor,
 } from "../environments/primary";
+import { useWorktreeTerminalPresenceStore } from "../worktreeTerminalPresenceStore";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
@@ -95,6 +96,8 @@ function RootRouteView() {
         <AuthenticatedTracingBootstrap />
         <ServerStateBootstrap />
         <EnvironmentConnectionManagerBootstrap />
+        <DesktopControlRouter />
+        <WorktreeTerminalPresenceBootstrap />
         <EventRouter />
         <WebSocketConnectionCoordinator />
         <SlowRpcAckToastCoordinator />
@@ -181,6 +184,8 @@ function errorDetails(error: unknown): string {
   }
 }
 
+const WORKTREE_TERMINAL_POLL_INTERVAL_MS = 3_000;
+
 function ServerStateBootstrap() {
   useEffect(() => startServerStateSync(getPrimaryEnvironmentConnection().client.server), []);
 
@@ -201,6 +206,92 @@ function EnvironmentConnectionManagerBootstrap() {
   useEffect(() => {
     return startEnvironmentConnectionService(queryClient);
   }, [queryClient]);
+
+  return null;
+}
+
+function DesktopControlRouter() {
+  useEffect(() => {
+    if (!window.desktopBridge?.focusAppWindow) {
+      return;
+    }
+
+    return getPrimaryEnvironmentConnection().client.desktop.onControlEvent((event) => {
+      if (event.type !== "corkdiff.focusAppRequested") {
+        return;
+      }
+      const focusAppWindow = window.desktopBridge?.focusAppWindow;
+      if (!focusAppWindow) {
+        return;
+      }
+      void focusAppWindow().catch(() => undefined);
+    });
+  }, []);
+
+  return null;
+}
+
+function WorktreeTerminalPresenceBootstrap() {
+  const replaceOpenWorktrees = useWorktreeTerminalPresenceStore(
+    (state) => state.replaceOpenWorktrees,
+  );
+  const clearAll = useWorktreeTerminalPresenceStore((state) => state.clearAll);
+
+  useEffect(() => {
+    const listOpenWorktreeTerminals = window.desktopBridge?.listOpenWorktreeTerminals;
+    if (!listOpenWorktreeTerminals) {
+      clearAll();
+      return;
+    }
+
+    let disposed = false;
+    let syncInFlight = false;
+
+    const syncPresence = async () => {
+      if (disposed || syncInFlight) {
+        return;
+      }
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        return;
+      }
+
+      syncInFlight = true;
+      try {
+        const openTerminals = await listOpenWorktreeTerminals();
+        if (disposed) {
+          return;
+        }
+        replaceOpenWorktrees(openTerminals.map((entry) => entry.worktreePath));
+      } catch {
+        // Keep the previous state if the desktop query fails transiently.
+      } finally {
+        syncInFlight = false;
+      }
+    };
+
+    void syncPresence();
+
+    const intervalId = window.setInterval(() => {
+      void syncPresence();
+    }, WORKTREE_TERMINAL_POLL_INTERVAL_MS);
+
+    const handleVisibilityOrFocus = () => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        return;
+      }
+      void syncPresence();
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityOrFocus);
+    window.addEventListener("focus", handleVisibilityOrFocus);
+
+    return () => {
+      disposed = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", handleVisibilityOrFocus);
+      window.removeEventListener("focus", handleVisibilityOrFocus);
+    };
+  }, [clearAll, replaceOpenWorktrees]);
 
   return null;
 }

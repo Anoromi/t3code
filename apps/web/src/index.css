@@ -6,6 +6,10 @@
 
 @theme inline {
   --animate-skeleton: skeleton 2s -1s infinite linear;
+  --animate-sidebar-worktree-group-settle: sidebar-worktree-group-settle 650ms
+    cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-sidebar-worktree-group-child-enter: sidebar-worktree-group-child-enter 180ms
+    cubic-bezier(0.22, 1, 0.36, 1) both;
   --color-warning-foreground: var(--warning-foreground);
   --color-warning: var(--warning);
   --color-success-foreground: var(--success-foreground);
@@ -43,6 +47,32 @@
       background-position: -200% 0;
     }
   }
+
+  @keyframes sidebar-worktree-group-settle {
+    0% {
+      border-color: color-mix(in srgb, var(--ring) 26%, var(--border));
+      background-color: color-mix(in srgb, var(--muted) 42%, transparent);
+      box-shadow:
+        0 0 0 1px color-mix(in srgb, var(--ring) 14%, transparent),
+        0 12px 32px -20px color-mix(in srgb, var(--ring) 42%, transparent);
+    }
+    100% {
+      border-color: color-mix(in srgb, var(--border) 60%, transparent);
+      background-color: color-mix(in srgb, var(--muted) 20%, transparent);
+      box-shadow: 0 0 0 0 transparent;
+    }
+  }
+
+  @keyframes sidebar-worktree-group-child-enter {
+    from {
+      opacity: 0;
+      transform: translateY(-6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
 }
 
 @layer base {
@@ -65,6 +95,31 @@
 .no-transitions *::after {
   transition-duration: 0s !important;
   animation-duration: 0s !important;
+}
+
+.sidebar-worktree-group-born {
+  animation: var(--animate-sidebar-worktree-group-settle);
+  will-change: transform, opacity, box-shadow, border-color, background-color;
+}
+
+.sidebar-worktree-group-child-enter {
+  opacity: 0;
+  transform: translateY(-6px);
+  animation: var(--animate-sidebar-worktree-group-child-enter);
+  animation-delay: calc(var(--sidebar-group-stagger-index, 0) * 40ms);
+  will-change: opacity, transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-worktree-group-born {
+    animation-duration: 120ms;
+  }
+
+  .sidebar-worktree-group-child-enter {
+    animation: none !important;
+    opacity: 1;
+    transform: none;
+  }
 }
 
 :root {

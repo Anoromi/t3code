@@ -1,5 +1,9 @@
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime";
-import { DEFAULT_RUNTIME_MODE, type ScopedProjectRef } from "@t3tools/contracts";
+import {
+  DEFAULT_RUNTIME_MODE,
+  type CodexReasoningEffort,
+  type ScopedProjectRef,
+} from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
@@ -20,6 +24,8 @@ import { useSettings } from "./useSettings";
 function useNewThreadState() {
   const projects = useStore(useShallow((store) => selectProjectsAcrossEnvironments(store)));
   const projectGroupingSettings = useSettings((settings) => ({
+    defaultCodexFastMode: settings.defaultCodexFastMode,
+    defaultCodexReasoningEffort: settings.defaultCodexReasoningEffort,
     sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
     sidebarProjectGroupingOverrides: settings.sidebarProjectGroupingOverrides,
   }));
@@ -36,13 +42,17 @@ function useNewThreadState() {
         branch?: string | null;
         worktreePath?: string | null;
         envMode?: DraftThreadEnvMode;
+        codexFastMode?: boolean;
+        codexReasoningEffort?: CodexReasoningEffort;
       },
     ): Promise<void> => {
       const {
         getDraftSessionByLogicalProjectKey,
         getDraftSession,
         getDraftThread,
+        getComposerDraft,
         applyStickyState,
+        setProviderModelOptions,
         setDraftThreadContext,
         setLogicalProjectDraftThreadId,
       } = useComposerDraftStore.getState();
@@ -127,6 +137,28 @@ function useNewThreadState() {
           runtimeMode: DEFAULT_RUNTIME_MODE,
         });
         applyStickyState(draftId);
+        const codexFastMode =
+          options?.codexFastMode ?? projectGroupingSettings.defaultCodexFastMode;
+        const codexReasoningEffort =
+          options?.codexReasoningEffort ?? projectGroupingSettings.defaultCodexReasoningEffort;
+        const seededDraft = getComposerDraft(draftId);
+        if (
+          seededDraft?.activeProvider !== "claudeAgent" &&
+          (codexFastMode === true || codexReasoningEffort !== undefined)
+        ) {
+          setProviderModelOptions(
+            draftId,
+            "codex",
+            {
+              ...seededDraft?.modelSelectionByProvider.codex?.options,
+              ...(codexFastMode === true ? { fastMode: true } : {}),
+              ...(codexReasoningEffort !== undefined
+                ? { reasoningEffort: codexReasoningEffort }
+                : {}),
+            },
+            { persistSticky: true },
+          );
+        }
 
         await router.navigate({
           to: "/draft/$draftId",

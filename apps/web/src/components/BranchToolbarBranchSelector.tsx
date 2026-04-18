@@ -17,14 +17,15 @@ import {
 import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
 import { readEnvironmentApi } from "../environmentApi";
 import { gitBranchSearchInfiniteQueryOptions, gitQueryKeys } from "../lib/gitReactQuery";
+import { applyGitBranchSelection, toBranchActionErrorMessage } from "../lib/gitBranchSelection";
 import { useGitStatus } from "../lib/gitStatusState";
 import { newCommandId } from "../lib/utils";
 import { parsePullRequestReference } from "../pullRequestReference";
 import { useStore } from "../store";
 import { createProjectSelectorByRef, createThreadSelectorByRef } from "../storeSelectors";
 import {
-  deriveLocalBranchNameFromRemoteRef,
-  resolveBranchSelectionTarget,
+  dedupeRemoteBranchesWithLocalMatches,
+  EnvMode,
   resolveBranchToolbarValue,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
@@ -54,10 +55,6 @@ interface BranchToolbarBranchSelectorProps {
   onActiveThreadBranchOverrideChange?: (branch: string | null) => void;
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest?: () => void;
-}
-
-function toBranchActionErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "An error occurred.";
 }
 
 function getBranchTriggerLabel(input: {
@@ -222,7 +219,10 @@ export function BranchToolbarBranchSelector({
     }),
   );
   const branches = useMemo(
-    () => branchesSearchData?.pages.flatMap((page) => page.branches) ?? [],
+    () =>
+      dedupeRemoteBranchesWithLocalMatches(
+        branchesSearchData?.pages.flatMap((page) => page.branches) ?? [],
+      ),
     [branchesSearchData?.pages],
   );
   const currentGitBranch =
@@ -316,47 +316,29 @@ export function BranchToolbarBranchSelector({
       return;
     }
 
-    const selectionTarget = resolveBranchSelectionTarget({
-      activeProjectCwd,
-      activeWorktreePath,
-      branch,
-    });
-
-    if (selectionTarget.reuseExistingWorktree) {
-      setThreadBranch(branch.name, selectionTarget.nextWorktreePath);
-      setIsBranchMenuOpen(false);
-      onComposerFocusRequest?.();
-      return;
-    }
-
-    const selectedBranchName = branch.isRemote
-      ? deriveLocalBranchNameFromRemoteRef(branch.name)
-      : branch.name;
-
     setIsBranchMenuOpen(false);
     onComposerFocusRequest?.();
 
     runBranchAction(async () => {
-      const previousBranch = resolvedActiveBranch;
-      setOptimisticBranch(selectedBranchName);
-      try {
-        const checkoutResult = await api.git.checkout({
-          cwd: selectionTarget.checkoutCwd,
-          branch: branch.name,
-        });
-        const nextBranchName = branch.isRemote
-          ? (checkoutResult.branch ?? selectedBranchName)
-          : selectedBranchName;
-        setOptimisticBranch(nextBranchName);
-        setThreadBranch(nextBranchName, selectionTarget.nextWorktreePath);
-      } catch (error) {
-        setOptimisticBranch(previousBranch);
-        toastManager.add({
-          type: "error",
-          title: "Failed to checkout branch.",
-          description: toBranchActionErrorMessage(error),
-        });
-      }
+      await applyGitBranchSelection({
+        activeProjectCwd,
+        activeWorktreePath,
+        api,
+        branch,
+        branchCwd,
+        effectiveEnvMode,
+        envLocked,
+        onSetThreadBranch: setThreadBranch,
+        onSetOptimisticBranch: setOptimisticBranch,
+        onBranchActionError: (title, description) => {
+          toastManager.add({
+            type: "error",
+            title,
+            description,
+          });
+        },
+        queryClient,
+      });
     });
   };
 

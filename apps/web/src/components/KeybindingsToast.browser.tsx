@@ -99,14 +99,6 @@ function createBaseServerConfig(): ServerConfig {
       providers: {
         codex: { enabled: true, binaryPath: "", homePath: "", customModels: [] },
         claudeAgent: { enabled: true, binaryPath: "", customModels: [], launchArgs: "" },
-        cursor: { enabled: true, binaryPath: "", apiEndpoint: "", customModels: [] },
-        opencode: {
-          enabled: true,
-          binaryPath: "",
-          serverUrl: "",
-          serverPassword: "",
-          customModels: [],
-        },
       },
     },
   };
@@ -125,6 +117,7 @@ function createMinimalSnapshot(): OrchestrationReadModel {
           model: "gpt-5",
         },
         scripts: [],
+        worktreeGroupTitles: [],
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
         deletedAt: null,
@@ -143,6 +136,7 @@ function createMinimalSnapshot(): OrchestrationReadModel {
         runtimeMode: "full-access",
         branch: "main",
         worktreePath: null,
+        forkOrigin: null,
         latestTurn: null,
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,

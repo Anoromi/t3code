@@ -889,6 +889,9 @@ export default function ChatView(props: ChatViewProps) {
   const [pendingServerThreadEnvMode, setPendingServerThreadEnvMode] =
     useState<DraftThreadEnvMode | null>(null);
   const [pendingServerThreadBranch, setPendingServerThreadBranch] = useState<string | null>();
+  const [pendingServerWorktreeBranch, setPendingServerWorktreeBranch] = useState<string | null>(
+    null,
+  );
   const [lastInvokedScriptByProjectId, setLastInvokedScriptByProjectId] = useLocalStorage(
     LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
     {},
@@ -1682,7 +1685,15 @@ export default function ChatView(props: ChatViewProps) {
     [branchesQuery.data?.pages],
   );
   const canShowWorktreeSlashCommand =
-    isLocalDraftThread && !envLocked && (activeThread?.worktreePath ?? null) === null;
+    (isLocalDraftThread ||
+      Boolean(
+        isServerThread &&
+        activeThread &&
+        activeThread.messages.length === 0 &&
+        activeThread.worktreePath === null &&
+        !envLocked,
+      )) &&
+    (activeThread?.worktreePath ?? null) === null;
   const keybindings = useServerKeybindings();
   const availableEditors = useServerAvailableEditors();
   const modelOptionsByProvider = useMemo(
@@ -2618,7 +2629,9 @@ export default function ChatView(props: ChatViewProps) {
   const envMode: DraftThreadEnvMode = canOverrideServerThreadEnvMode
     ? (pendingServerThreadEnvMode ?? draftThread?.envMode ?? derivedEnvMode)
     : derivedEnvMode;
-  const pendingWorktreeBranch = draftThread?.pendingWorktreeBranch ?? null;
+  const pendingWorktreeBranch = canOverrideServerThreadEnvMode
+    ? pendingServerWorktreeBranch
+    : (draftThread?.pendingWorktreeBranch ?? null);
   const activeThreadBranch =
     canOverrideServerThreadEnvMode && pendingServerThreadBranch !== undefined
       ? pendingServerThreadBranch
@@ -2631,6 +2644,7 @@ export default function ChatView(props: ChatViewProps) {
   useEffect(() => {
     setPendingServerThreadEnvMode(null);
     setPendingServerThreadBranch(undefined);
+    setPendingServerWorktreeBranch(null);
   }, [activeThread?.id]);
 
   useEffect(() => {
@@ -2639,6 +2653,7 @@ export default function ChatView(props: ChatViewProps) {
     }
     setPendingServerThreadEnvMode(null);
     setPendingServerThreadBranch(undefined);
+    setPendingServerWorktreeBranch(null);
   }, [canOverrideServerThreadEnvMode]);
 
   useEffect(() => {
@@ -4077,6 +4092,9 @@ export default function ChatView(props: ChatViewProps) {
     (mode: DraftThreadEnvMode) => {
       if (canOverrideServerThreadEnvMode) {
         setPendingServerThreadEnvMode(mode);
+        if (mode === "local") {
+          setPendingServerWorktreeBranch(null);
+        }
         scheduleComposerFocus();
         return;
       }
@@ -4095,6 +4113,7 @@ export default function ChatView(props: ChatViewProps) {
       draftThread?.worktreePath,
       isLocalDraftThread,
       setPendingServerThreadEnvMode,
+      setPendingServerWorktreeBranch,
       scheduleComposerFocus,
       setDraftThreadContext,
     ],
@@ -4161,6 +4180,12 @@ export default function ChatView(props: ChatViewProps) {
         if (!canShowWorktreeSlashCommand) {
           return false;
         }
+        if (canOverrideServerThreadEnvMode) {
+          setPendingServerThreadEnvMode("worktree");
+          setPendingServerWorktreeBranch(item.branchName);
+          clearComposerConfigCommand();
+          return true;
+        }
         setDraftThreadContext(composerDraftTarget, {
           pendingWorktreeBranch: item.branchName,
           worktreePath: null,
@@ -4210,6 +4235,7 @@ export default function ChatView(props: ChatViewProps) {
     [
       activeProject,
       activeWorktreePath,
+      canOverrideServerThreadEnvMode,
       canShowWorktreeSlashCommand,
       clearComposerConfigCommand,
       composerDraftTarget,
@@ -4219,6 +4245,8 @@ export default function ChatView(props: ChatViewProps) {
       onEnvModeChange,
       queryClient,
       setDraftThreadContext,
+      setPendingServerThreadEnvMode,
+      setPendingServerWorktreeBranch,
       setThreadBranchFromComposer,
     ],
   );
