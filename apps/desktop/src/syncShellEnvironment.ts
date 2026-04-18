@@ -69,6 +69,7 @@ export function syncShellEnvironment(
     if (platform !== "darwin" && platform !== "linux") return;
 
     for (const shell of listLoginShellCandidates(platform, env.SHELL, options.userShell)) {
+      env.SHELL = shell;
       try {
         Object.assign(shellEnvironment, readEnvironment(shell, LOGIN_SHELL_ENV_NAMES));
         if (shellEnvironment.PATH) {

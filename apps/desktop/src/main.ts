@@ -21,6 +21,7 @@ import {
 import type { MenuItemConstructorOptions, OpenDialogOptions } from "electron";
 import type {
   ClientSettings,
+  DesktopDaemonStatus,
   DesktopTheme,
   DesktopAppBranding,
   DesktopServerExposureMode,
@@ -34,6 +35,11 @@ import type {
 import { autoUpdater } from "electron-updater";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
+import {
+  resolveDesktopDaemonPaths,
+  resolveDesktopStateDir,
+  writeDesktopDaemonRecord,
+} from "@t3tools/shared/desktopDaemon";
 import { RotatingFileSink } from "@t3tools/shared/logging";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { DEFAULT_DESKTOP_BACKEND_PORT, resolveDesktopBackendPort } from "./backendPort.ts";
@@ -57,10 +63,10 @@ import { isBackendReadinessAborted, waitForHttpReady } from "./backendReadiness.
 import { showDesktopConfirmDialog } from "./confirmDialog.ts";
 import { resolveDesktopServerExposure } from "./serverExposure.ts";
 import { syncShellEnvironment } from "./syncShellEnvironment.ts";
-import { waitForBackendStartupReady } from "./backendStartupReadiness.ts";
 import { getAutoUpdateDisabledReason, shouldBroadcastDownloadProgress } from "./updateState.ts";
 import { doesVersionMatchDesktopUpdateChannel } from "./updateChannels.ts";
 import { ServerListeningDetector } from "./serverListeningDetector.ts";
+import { acquireDesktopDaemonController, createDesktopDaemonRecord } from "./desktopDaemon.ts";
 import {
   createInitialDesktopUpdateState,
   reduceDesktopUpdateStateOnCheckFailure,
@@ -73,6 +79,7 @@ import {
   reduceDesktopUpdateStateOnNoUpdate,
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine.ts";
+import { createExternalCorkdiffManager } from "./externalCorkdiff.ts";
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch.ts";
 import { resolveDesktopAppBranding } from "./appBranding.ts";
 import {
@@ -80,6 +87,7 @@ import {
   resolveBackendCwdForEnv,
   sanitizeBackendChildEnv,
 } from "./desktopE2eRuntime.ts";
+import { createWorktreeTerminalLauncher } from "./worktreeTerminal.ts";
 
 syncShellEnvironment();
 
@@ -88,6 +96,10 @@ const CONFIRM_CHANNEL = "desktop:confirm";
 const SET_THEME_CHANNEL = "desktop:set-theme";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
+const TOGGLE_EXTERNAL_CORKDIFF_CHANNEL = "desktop:toggle-external-corkdiff";
+const OPEN_WORKTREE_TERMINAL_CHANNEL = "desktop:open-worktree-terminal";
+const LIST_OPEN_WORKTREE_TERMINALS_CHANNEL = "desktop:list-open-worktree-terminals";
+const FOCUS_APP_WINDOW_CHANNEL = "desktop:focus-app-window";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
 const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
@@ -111,6 +123,11 @@ const STATE_DIR = Path.join(BASE_DIR, "userdata");
 const DESKTOP_SETTINGS_PATH = Path.join(STATE_DIR, "desktop-settings.json");
 const CLIENT_SETTINGS_PATH = Path.join(STATE_DIR, "client-settings.json");
 const SAVED_ENVIRONMENT_REGISTRY_PATH = Path.join(STATE_DIR, "saved-environments.json");
+const DESKTOP_DAEMON_STATE_DIR = resolveDesktopStateDir({
+  baseDir: BASE_DIR,
+  stateDirOverride: process.env.T3CODE_STATE_DIR,
+});
+const DESKTOP_DAEMON_PATHS = resolveDesktopDaemonPaths(DESKTOP_DAEMON_STATE_DIR);
 const DESKTOP_SCHEME = "t3";
 const ROOT_DIR = Path.resolve(__dirname, "../../..");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
@@ -200,6 +217,8 @@ type WindowTitleBarOptions = Pick<
   BrowserWindowConstructorOptions,
   "titleBarOverlay" | "titleBarStyle" | "trafficLightPosition"
 >;
+const DESKTOP_DAEMON_INSTANCE_ID = Crypto.randomUUID();
+const DESKTOP_DAEMON_STARTED_AT = new Date().toISOString();
 
 type DesktopUpdateErrorContext = DesktopUpdateState["errorContext"];
 type LinuxDesktopNamedApp = Electron.App & {
@@ -229,6 +248,13 @@ let restoreStdIoCapture: (() => void) | null = null;
 let backendObservabilitySettings = readPersistedBackendObservabilitySettings();
 let desktopSettings = readDesktopSettings(DESKTOP_SETTINGS_PATH, app.getVersion());
 let desktopServerExposureMode: DesktopServerExposureMode = desktopSettings.serverExposureMode;
+let desktopDaemonController: { close: () => Promise<void> } | null = null;
+let desktopDaemonCleanupPromise: Promise<void> | null = null;
+let pendingMainWindowFocus = false;
+const externalCorkdiffManager = createExternalCorkdiffManager({
+  getMainWindow: () => mainWindow,
+});
+const worktreeTerminalLauncher = createWorktreeTerminalLauncher();
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
 const expectedBackendExitChildren = new WeakSet<ChildProcess.ChildProcess>();
@@ -445,6 +471,7 @@ async function waitForBackendHttpReady(
 
   try {
     await waitForHttpReady(baseUrl, {
+      path: "/.well-known/t3/environment",
       ...options,
       signal: controller.signal,
     });
@@ -461,13 +488,51 @@ function cancelBackendReadinessWait(): void {
 }
 
 async function waitForBackendWindowReady(baseUrl: string): Promise<"listening" | "http"> {
-  return await waitForBackendStartupReady({
-    listeningPromise: backendListeningDetector?.promise ?? null,
-    waitForHttpReady: () =>
-      waitForBackendHttpReady(baseUrl, {
-        timeoutMs: 60_000,
-      }),
-    cancelHttpWait: cancelBackendReadinessWait,
+  const httpReadyPromise = waitForBackendHttpReady(baseUrl, {
+    timeoutMs: 60_000,
+  });
+  const listeningPromise = backendListeningDetector?.promise;
+
+  if (!listeningPromise) {
+    await httpReadyPromise;
+    return "http";
+  }
+
+  return await new Promise<"listening" | "http">((resolve, reject) => {
+    let settled = false;
+
+    const settleResolve = (source: "listening" | "http") => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      if (source === "listening") {
+        cancelBackendReadinessWait();
+      }
+      resolve(source);
+    };
+
+    const settleReject = (error: unknown) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      reject(error);
+    };
+
+    listeningPromise.then(
+      () => settleResolve("listening"),
+      (error) => settleReject(error),
+    );
+    httpReadyPromise.then(
+      () => settleResolve("http"),
+      (error) => {
+        if (settled && isBackendReadinessAborted(error)) {
+          return;
+        }
+        settleReject(error);
+      },
+    );
   });
 }
 
@@ -485,6 +550,7 @@ function ensureInitialBackendWindowOpen(): void {
       }
       mainWindow = createWindow();
       writeDesktopLogHeader("bootstrap main window created");
+      void writeDesktopDaemonStatus("ready");
     })
     .catch((error) => {
       if (isBackendReadinessAborted(error)) {
@@ -502,6 +568,21 @@ function ensureInitialBackendWindowOpen(): void {
     });
 
   backendInitialWindowOpenInFlight = nextOpen;
+}
+
+function getSafeNonEmptyString(rawValue: unknown): string | null {
+  if (typeof rawValue !== "string") {
+    return null;
+  }
+  const normalized = rawValue.trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function getSafeNullableString(rawValue: unknown): string | null {
+  if (rawValue === null || rawValue === undefined) {
+    return null;
+  }
+  return getSafeNonEmptyString(rawValue);
 }
 
 function writeDesktopStreamChunk(
@@ -732,6 +813,29 @@ function resolveBackendEntry(): string {
   return Path.join(resolveAppRoot(), "apps/server/dist/bin.mjs");
 }
 
+function resolveBackendExecutable(): {
+  command: string;
+  env: NodeJS.ProcessEnv;
+} {
+  const configuredNodeExecutable = process.env.T3CODE_NODE_EXECUTABLE?.trim();
+  if (configuredNodeExecutable) {
+    return {
+      command: configuredNodeExecutable,
+      env: backendChildEnv(),
+    };
+  }
+
+  return {
+    command: process.execPath,
+    env: {
+      ...backendChildEnv(),
+      // In Electron main, process.execPath points to the Electron binary.
+      // Run the child in Node mode so this backend process does not become a GUI app instance.
+      ELECTRON_RUN_AS_NODE: "1",
+    },
+  };
+}
+
 function resolveBackendCwd(): string {
   return resolveBackendCwdForEnv(process.env, () =>
     !app.isPackaged ? resolveAppRoot() : OS.homedir(),
@@ -797,8 +901,82 @@ function handleFatalStartupError(stage: string, error: unknown): void {
     dialog.showErrorBox("T3 Code failed to start", `Stage: ${stage}\n${message}${detail}`);
   }
   stopBackend();
+  void cleanupDesktopDaemon();
   restoreStdIoCapture?.();
   app.quit();
+}
+
+function focusBrowserWindow(window: BrowserWindow): void {
+  if (window.isMinimized()) {
+    window.restore();
+  }
+  window.show();
+  window.focus();
+}
+
+function requestMainWindowFocus(): void {
+  pendingMainWindowFocus = true;
+  if (mainWindow) {
+    pendingMainWindowFocus = false;
+    focusBrowserWindow(mainWindow);
+    return;
+  }
+  if (!app.isReady()) {
+    return;
+  }
+  mainWindow = createWindow();
+  pendingMainWindowFocus = false;
+  focusBrowserWindow(mainWindow);
+}
+
+function flushPendingMainWindowFocus(): void {
+  if (!pendingMainWindowFocus || !mainWindow) {
+    return;
+  }
+  pendingMainWindowFocus = false;
+  focusBrowserWindow(mainWindow);
+}
+
+async function writeDesktopDaemonStatus(status: DesktopDaemonStatus): Promise<void> {
+  if (!desktopDaemonController || backendWsUrl.length === 0 || backendBootstrapToken.length === 0) {
+    return;
+  }
+  await writeDesktopDaemonRecord(
+    DESKTOP_DAEMON_PATHS,
+    createDesktopDaemonRecord({
+      instanceId: DESKTOP_DAEMON_INSTANCE_ID,
+      pid: process.pid,
+      startedAt: DESKTOP_DAEMON_STARTED_AT,
+      baseDir: BASE_DIR,
+      stateDir: DESKTOP_DAEMON_STATE_DIR,
+      wsUrl: backendWsUrl,
+      authToken: backendBootstrapToken,
+      controlEndpoint: DESKTOP_DAEMON_PATHS.controlEndpoint,
+      status,
+    }),
+  );
+}
+
+async function cleanupDesktopDaemon(): Promise<void> {
+  if (!desktopDaemonController) {
+    return;
+  }
+  if (desktopDaemonCleanupPromise) {
+    await desktopDaemonCleanupPromise;
+    return;
+  }
+
+  const controller = desktopDaemonController;
+  desktopDaemonController = null;
+  desktopDaemonCleanupPromise = controller
+    .close()
+    .catch((error) => {
+      console.error("[desktop] failed to clean up desktop daemon", error);
+    })
+    .finally(() => {
+      desktopDaemonCleanupPromise = null;
+    });
+  await desktopDaemonCleanupPromise;
 }
 
 function registerDesktopProtocol(): void {
@@ -873,6 +1051,7 @@ function handleCheckForUpdatesMenuClick(): void {
     appImage: process.env.APPIMAGE,
     disabledByEnv: process.env.T3CODE_DISABLE_AUTO_UPDATE === "1",
     hasUpdateFeedConfig,
+    packageChannel: process.env.T3CODE_DESKTOP_PACKAGE_CHANNEL,
   });
   if (disabledReason) {
     console.info("[desktop-updater] Manual update check requested, but updates are disabled.");
@@ -1037,6 +1216,11 @@ function resolveIconPath(ext: "ico" | "icns" | "png"): string | null {
  * lose their Chromium profile data (localStorage, cookies, sessions).
  */
 function resolveUserDataPath(): string {
+  const configuredStateDir = process.env.T3CODE_STATE_DIR?.trim();
+  if (isDevelopment && configuredStateDir) {
+    return Path.join(Path.resolve(configuredStateDir), "electron-user-data");
+  }
+
   const appDataBase =
     process.platform === "win32"
       ? process.env.APPDATA || Path.join(OS.homedir(), "AppData", "Roaming")
@@ -1151,6 +1335,7 @@ function shouldEnableAutoUpdates(): boolean {
       appImage: process.env.APPIMAGE,
       disabledByEnv: process.env.T3CODE_DISABLE_AUTO_UPDATE === "1",
       hasUpdateFeedConfig,
+      packageChannel: process.env.T3CODE_DESKTOP_PACKAGE_CHANNEL,
     }) === null
   );
 }
@@ -1382,18 +1567,18 @@ function startBackend(): void {
   }
 
   const captureBackendLogs = !isDevelopment;
-  const child = ChildProcess.spawn(process.execPath, [backendEntry, "--bootstrap-fd", "3"], {
-    cwd: resolveBackendCwd(),
-    // In Electron main, process.execPath points to the Electron binary.
-    // Run the child in Node mode so this backend process does not become a GUI app instance.
-    env: {
-      ...backendChildEnv(),
-      ELECTRON_RUN_AS_NODE: "1",
+  const backendExecutable = resolveBackendExecutable();
+  const child = ChildProcess.spawn(
+    backendExecutable.command,
+    [backendEntry, "--bootstrap-fd", "3"],
+    {
+      cwd: resolveBackendCwd(),
+      env: backendExecutable.env,
+      stdio: captureBackendLogs
+        ? ["ignore", "pipe", "pipe", "pipe"]
+        : ["ignore", "inherit", "inherit", "pipe"],
     },
-    stdio: captureBackendLogs
-      ? ["ignore", "pipe", "pipe", "pipe"]
-      : ["ignore", "inherit", "inherit", "pipe"],
-  });
+  );
   const bootstrapStream = child.stdio[3];
   if (bootstrapStream && "write" in bootstrapStream) {
     bootstrapStream.write(
@@ -1421,6 +1606,7 @@ function startBackend(): void {
   const listeningDetector = new ServerListeningDetector();
   backendListeningDetector = listeningDetector;
   backendProcess = child;
+  void writeDesktopDaemonStatus(mainWindow ? "ready" : "starting");
   let backendSessionClosed = false;
   const closeBackendSession = (details: string) => {
     if (backendSessionClosed) return;
@@ -1435,6 +1621,7 @@ function startBackend(): void {
 
   child.once("spawn", () => {
     restartAttempt = 0;
+    void writeDesktopDaemonStatus(mainWindow ? "ready" : "starting");
   });
 
   child.on("error", (error) => {
@@ -1786,6 +1973,55 @@ function registerIpcHandlers(): void {
     }
   });
 
+  ipcMain.removeHandler(TOGGLE_EXTERNAL_CORKDIFF_CHANNEL);
+  ipcMain.handle(TOGGLE_EXTERNAL_CORKDIFF_CHANNEL, async (_event, rawInput: unknown) => {
+    if (typeof rawInput !== "object" || rawInput === null) {
+      throw new Error("Invalid external Corkdiff launch request.");
+    }
+
+    const record = rawInput as {
+      cwd?: unknown;
+      serverUrl?: unknown;
+      token?: unknown;
+      threadId?: unknown;
+    };
+
+    return externalCorkdiffManager.toggle({
+      cwd: getSafeNonEmptyString(record.cwd) ?? "",
+      serverUrl: getSafeNonEmptyString(record.serverUrl) ?? "",
+      token: getSafeNullableString(record.token),
+      threadId: getSafeNonEmptyString(record.threadId) ?? "",
+    });
+  });
+
+  ipcMain.removeHandler(OPEN_WORKTREE_TERMINAL_CHANNEL);
+  ipcMain.handle(OPEN_WORKTREE_TERMINAL_CHANNEL, async (_event, rawInput: unknown) => {
+    if (typeof rawInput !== "object" || rawInput === null) {
+      throw new Error("Invalid worktree terminal launch request.");
+    }
+
+    const record = rawInput as {
+      cwd?: unknown;
+    };
+
+    return worktreeTerminalLauncher.open({
+      cwd: getSafeNonEmptyString(record.cwd) ?? "",
+      rootDir: ROOT_DIR,
+    });
+  });
+
+  ipcMain.removeHandler(LIST_OPEN_WORKTREE_TERMINALS_CHANNEL);
+  ipcMain.handle(LIST_OPEN_WORKTREE_TERMINALS_CHANNEL, async () => {
+    return worktreeTerminalLauncher.listOpen({
+      rootDir: ROOT_DIR,
+    });
+  });
+
+  ipcMain.removeHandler(FOCUS_APP_WINDOW_CHANNEL);
+  ipcMain.handle(FOCUS_APP_WINDOW_CHANNEL, async () => {
+    externalCorkdiffManager.focusAppWindow();
+  });
+
   ipcMain.removeHandler(UPDATE_GET_STATE_CHANNEL);
   ipcMain.handle(UPDATE_GET_STATE_CHANNEL, async () => updateState);
 
@@ -2000,7 +2236,6 @@ function createWindow(): BrowserWindow {
     window.setTitle(APP_DISPLAY_NAME);
     emitUpdateState();
   });
-
   let initialRevealScheduled = false;
   const revealInitialWindow = () => {
     if (initialRevealScheduled) {
@@ -2008,6 +2243,7 @@ function createWindow(): BrowserWindow {
     }
     initialRevealScheduled = true;
     revealWindow(window);
+    flushPendingMainWindowFocus();
   };
 
   window.once("ready-to-show", revealInitialWindow);
@@ -2037,6 +2273,24 @@ configureAppIdentity();
 
 async function bootstrap(): Promise<void> {
   writeDesktopLogHeader("bootstrap start");
+  if (!desktopDaemonController) {
+    const controller = await acquireDesktopDaemonController({
+      paths: DESKTOP_DAEMON_PATHS,
+      onFocus: () => {
+        requestMainWindowFocus();
+      },
+    });
+    if (controller.kind === "secondary") {
+      writeDesktopLogHeader(
+        `desktop daemon already active for stateDir=${DESKTOP_DAEMON_STATE_DIR}; focusing existing instance`,
+      );
+      isQuitting = true;
+      app.quit();
+      return;
+    }
+    desktopDaemonController = controller;
+  }
+
   const configuredBackendPort = resolveConfiguredDesktopBackendPort(process.env.T3CODE_PORT);
   if (isDevelopment && configuredBackendPort === undefined) {
     throw new Error("T3CODE_PORT is required in desktop development.");
@@ -2076,6 +2330,7 @@ async function bootstrap(): Promise<void> {
       "bootstrap fell back to local-only because no advertised network host was available",
     );
   }
+  await writeDesktopDaemonStatus("starting");
 
   registerIpcHandlers();
   writeDesktopLogHeader("bootstrap ipc handlers registered");
@@ -2085,9 +2340,11 @@ async function bootstrap(): Promise<void> {
   if (isDevelopment) {
     mainWindow = createWindow();
     writeDesktopLogHeader("bootstrap main window created");
-    void waitForBackendWindowReady(backendHttpUrl)
-      .then((source) => {
-        writeDesktopLogHeader(`bootstrap backend ready source=${source}`);
+    flushPendingMainWindowFocus();
+    await writeDesktopDaemonStatus("ready");
+    void waitForBackendHttpReady(backendHttpUrl)
+      .then(() => {
+        writeDesktopLogHeader("bootstrap backend ready");
       })
       .catch((error) => {
         if (isBackendReadinessAborted(error)) {
@@ -2111,6 +2368,7 @@ app.on("before-quit", () => {
   clearUpdatePollTimer();
   cancelBackendReadinessWait();
   stopBackend();
+  void cleanupDesktopDaemon();
   restoreStdIoCapture?.();
 });
 
@@ -2160,6 +2418,7 @@ if (process.platform !== "win32") {
     clearUpdatePollTimer();
     cancelBackendReadinessWait();
     stopBackend();
+    void cleanupDesktopDaemon();
     restoreStdIoCapture?.();
     app.quit();
   });
@@ -2170,6 +2429,7 @@ if (process.platform !== "win32") {
     writeDesktopLogHeader("SIGTERM received");
     clearUpdatePollTimer();
     stopBackend();
+    void cleanupDesktopDaemon();
     restoreStdIoCapture?.();
     app.quit();
   });
