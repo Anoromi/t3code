@@ -8,6 +8,7 @@ import {
   type EnvironmentApi,
   type MessageId,
   type OrchestrationReadModel,
+  type OrchestrationThreadActivity,
   type ProjectId,
   type ServerConfig,
   type ServerLifecycleWelcomePayload,
@@ -66,6 +67,8 @@ vi.mock("../lib/gitStatusState", () => ({
 const THREAD_ID = "thread-browser-test" as ThreadId;
 const THREAD_TITLE = "Browser test thread";
 const ARCHIVED_SECONDARY_THREAD_ID = "thread-secondary-project-archived" as ThreadId;
+const MIDDLE_THREAD_ID = "thread-browser-test-middle" as ThreadId;
+const OLDER_THREAD_ID = "thread-browser-test-older" as ThreadId;
 const PROJECT_ID = "project-1" as ProjectId;
 const SECOND_PROJECT_ID = "project-2" as ProjectId;
 const LOCAL_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
@@ -90,6 +93,9 @@ const NOW_ISO = "2026-03-04T12:00:00.000Z";
 const BASE_TIME_MS = Date.parse(NOW_ISO);
 const ATTACHMENT_SVG = "<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'></svg>";
 const ADD_PROJECT_SUBMENU_PLACEHOLDER = "Enter path (e.g. ~/projects/my-app)";
+const NEWEST_THREAD_TITLE = "Newest browser thread";
+const MIDDLE_THREAD_TITLE = "Middle browser thread";
+const OLDER_THREAD_TITLE = "Older browser thread";
 
 interface TestFixture {
   snapshot: OrchestrationReadModel;
@@ -273,11 +279,31 @@ function createTerminalContext(input: {
   };
 }
 
+function makeThreadActivity(
+  input: Omit<OrchestrationThreadActivity, "id" | "turnId" | "sequence"> & {
+    id: string;
+    turnId?: TurnId | null;
+    sequence?: number;
+  },
+): OrchestrationThreadActivity {
+  return {
+    id: EventId.make(input.id),
+    turnId: input.turnId ?? null,
+    kind: input.kind,
+    tone: input.tone,
+    summary: input.summary,
+    payload: input.payload,
+    ...(input.sequence !== undefined ? { sequence: input.sequence } : {}),
+    createdAt: input.createdAt,
+  };
+}
+
 function createSnapshotForTargetUser(options: {
   targetMessageId: MessageId;
   targetText: string;
   targetAttachmentCount?: number;
   sessionStatus?: OrchestrationSessionStatus;
+  activities?: ReadonlyArray<OrchestrationThreadActivity>;
 }): OrchestrationReadModel {
   const messages: Array<OrchestrationReadModel["threads"][number]["messages"][number]> = [];
 
@@ -326,6 +352,7 @@ function createSnapshotForTargetUser(options: {
           model: "gpt-5",
         },
         scripts: [],
+        worktreeGroupTitles: [],
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
         deletedAt: null,
@@ -344,13 +371,14 @@ function createSnapshotForTargetUser(options: {
         runtimeMode: "full-access",
         branch: "main",
         worktreePath: null,
+        forkOrigin: null,
         latestTurn: null,
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
         archivedAt: null,
         deletedAt: null,
         messages,
-        activities: [],
+        activities: options.activities ?? [],
         proposedPlans: [],
         checkpoints: [],
         session: {
@@ -409,6 +437,7 @@ function addThreadToSnapshot(
         runtimeMode: "full-access",
         branch: "main",
         worktreePath: null,
+        forkOrigin: null,
         latestTurn: null,
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
@@ -632,6 +661,68 @@ function createProjectlessSnapshot(): OrchestrationReadModel {
   };
 }
 
+function createSnapshotWithRecentThreads(): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-navigation-command-target" as MessageId,
+    targetText: "navigation command target",
+  });
+  const baseThread = snapshot.threads[0];
+  if (!baseThread) {
+    throw new Error("Expected the base snapshot to include a thread.");
+  }
+  const baseSession = baseThread.session;
+  if (!baseSession) {
+    throw new Error("Expected the base snapshot thread to include a session.");
+  }
+  const middleSession: OrchestrationReadModel["threads"][number]["session"] = {
+    ...baseSession,
+    threadId: MIDDLE_THREAD_ID,
+    updatedAt: "2026-03-04T10:55:00.000Z",
+  };
+  const olderSession: OrchestrationReadModel["threads"][number]["session"] = {
+    ...baseSession,
+    threadId: OLDER_THREAD_ID,
+    updatedAt: "2026-03-04T09:55:00.000Z",
+  };
+
+  const newestThread: OrchestrationReadModel["threads"][number] = {
+    ...baseThread,
+    title: NEWEST_THREAD_TITLE,
+    createdAt: "2026-03-04T11:45:00.000Z",
+    updatedAt: "2026-03-04T11:55:00.000Z",
+  };
+  const middleThread: OrchestrationReadModel["threads"][number] = {
+    ...baseThread,
+    id: MIDDLE_THREAD_ID,
+    title: MIDDLE_THREAD_TITLE,
+    createdAt: "2026-03-04T10:45:00.000Z",
+    updatedAt: "2026-03-04T10:55:00.000Z",
+    messages: [],
+    activities: [],
+    proposedPlans: [],
+    checkpoints: [],
+    session: middleSession,
+  };
+  const olderThread: OrchestrationReadModel["threads"][number] = {
+    ...baseThread,
+    id: OLDER_THREAD_ID,
+    title: OLDER_THREAD_TITLE,
+    createdAt: "2026-03-04T09:45:00.000Z",
+    updatedAt: "2026-03-04T09:55:00.000Z",
+    messages: [],
+    activities: [],
+    proposedPlans: [],
+    checkpoints: [],
+    session: olderSession,
+  };
+
+  return {
+    ...snapshot,
+    threads: [newestThread, middleThread, olderThread],
+    updatedAt: "2026-03-04T11:55:00.000Z",
+  };
+}
+
 function withProjectScripts(
   snapshot: OrchestrationReadModel,
   scripts: OrchestrationReadModel["projects"][number]["scripts"],
@@ -657,6 +748,7 @@ function setDraftThreadWithoutWorktree(): void {
         interactionMode: "default",
         branch: null,
         worktreePath: null,
+        pendingWorktreeBranch: null,
         envMode: "local",
       },
     },
@@ -744,6 +836,7 @@ function createSnapshotWithSecondaryProject(options?: {
           runtimeMode: "full-access",
           branch: "release/docs-portal",
           worktreePath: null,
+          forkOrigin: null,
           latestTurn: null,
           createdAt: isoAt(30),
           updatedAt: isoAt(31),
@@ -776,6 +869,7 @@ function createSnapshotWithSecondaryProject(options?: {
           runtimeMode: "full-access",
           branch: "release/docs-archive",
           worktreePath: null,
+          forkOrigin: null,
           latestTurn: null,
           createdAt: isoAt(24),
           updatedAt: isoAt(25),
@@ -1384,6 +1478,29 @@ function dispatchChatNewShortcut(): void {
   );
 }
 
+function dispatchNavigationCommandMenuShortcut(): void {
+  const useMetaForMod = isMacPlatform(navigator.platform);
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "k",
+      metaKey: useMetaForMod,
+      ctrlKey: !useMetaForMod,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
+function dispatchKey(target: EventTarget, key: string): void {
+  target.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
 async function triggerChatNewShortcutUntilPath(
   router: ReturnType<typeof getRouter>,
   predicate: (pathname: string) => boolean,
@@ -1450,6 +1567,107 @@ function getCommandPaletteLegendEntries(): string[] {
         .join(" "),
     )
     .filter((value) => value.length > 0);
+}
+
+async function openNavigationCommandMenu(): Promise<HTMLInputElement> {
+  dispatchNavigationCommandMenuShortcut();
+  return waitForElement(
+    () => document.querySelector<HTMLInputElement>('input[placeholder="Search threads..."]'),
+    "Unable to find the navigation command menu input.",
+  );
+}
+
+async function waitForHighlightedCommandItem(expectedText: string): Promise<HTMLElement> {
+  return waitForElement(() => {
+    const highlighted = document.querySelector<HTMLElement>(
+      '[data-slot="command-item"][data-highlighted]',
+    );
+    if (!highlighted?.textContent?.includes(expectedText)) {
+      return null;
+    }
+    return highlighted;
+  }, `Unable to find highlighted command item containing "${expectedText}".`);
+}
+
+async function moveCommandHighlightTo(
+  input: HTMLInputElement,
+  expectedText: string,
+  maxArrowDownPresses = 4,
+): Promise<HTMLElement> {
+  for (let pressCount = 0; pressCount < maxArrowDownPresses; pressCount += 1) {
+    dispatchKey(input, "ArrowDown");
+    await waitForLayout();
+    const highlighted = document.querySelector<HTMLElement>(
+      '[data-slot="command-item"][data-highlighted]',
+    );
+    if (highlighted?.textContent?.includes(expectedText)) {
+      return highlighted;
+    }
+  }
+
+  return waitForHighlightedCommandItem(expectedText);
+}
+
+async function waitForCommandItem(expectedText: string): Promise<HTMLElement> {
+  return waitForElement(
+    () =>
+      Array.from(document.querySelectorAll<HTMLElement>('[data-slot="command-item"]')).find(
+        (item) => item.textContent?.includes(expectedText),
+      ) ?? null,
+    `Unable to find command item containing "${expectedText}".`,
+  );
+}
+
+function dispatchHover(target: HTMLElement): void {
+  target.dispatchEvent(
+    new PointerEvent("pointermove", {
+      bubbles: true,
+      cancelable: true,
+      pointerType: "mouse",
+    }),
+  );
+  target.dispatchEvent(
+    new MouseEvent("mousemove", {
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
+function findDispatchCommand(commandType: string) {
+  return wsRequests.find((request) => {
+    if (request._tag !== ORCHESTRATION_WS_METHODS.dispatchCommand) {
+      return false;
+    }
+    const command = request.command;
+    return (
+      typeof command === "object" &&
+      command !== null &&
+      "type" in command &&
+      command.type === commandType
+    );
+  });
+}
+
+async function waitForImagesToLoad(scope: ParentNode): Promise<void> {
+  const images = Array.from(scope.querySelectorAll("img"));
+  if (images.length === 0) {
+    return;
+  }
+
+  await Promise.all(
+    images.map(
+      (image) =>
+        new Promise<void>((resolve) => {
+          if (image.complete) {
+            resolve();
+            return;
+          }
+          image.addEventListener("load", () => resolve(), { once: true });
+          image.addEventListener("error", () => resolve(), { once: true });
+        }),
+    ),
+  );
 }
 
 async function dispatchInputKey(
@@ -2066,6 +2284,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           branch: null,
           worktreePath: null,
           envMode: "local",
+          pendingWorktreeBranch: null,
         },
       },
       logicalProjectDraftThreadKeyByLogicalProjectKey: {
@@ -2145,6 +2364,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           branch: "feature/draft",
           worktreePath: "/repo/worktrees/feature-draft",
           envMode: "worktree",
+          pendingWorktreeBranch: null,
         },
       },
       logicalProjectDraftThreadKeyByLogicalProjectKey: {
@@ -2210,6 +2430,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           interactionMode: "default",
           branch: null,
           worktreePath: null,
+          pendingWorktreeBranch: null,
           envMode: "local",
         },
       },
@@ -2337,6 +2558,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           runtimeMode: "full-access",
           interactionMode: "default",
           branch: "main",
+          pendingWorktreeBranch: null,
           worktreePath: null,
           envMode: "worktree",
         },
@@ -2721,6 +2943,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           runtimeMode: "full-access",
           interactionMode: "default",
           branch: "main",
+          pendingWorktreeBranch: null,
           worktreePath: null,
           envMode: "worktree",
         },
@@ -2860,6 +3083,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           branch: "main",
           worktreePath: null,
           envMode: "worktree",
+          pendingWorktreeBranch: null,
         },
         [activeDraftId]: {
           threadId: THREAD_ID,
@@ -2872,6 +3096,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           branch: "main",
           worktreePath: null,
           envMode: "worktree",
+          pendingWorktreeBranch: null,
         },
       },
       logicalProjectDraftThreadKeyByLogicalProjectKey: {
@@ -2998,6 +3223,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
           branch: "feature/selected",
           worktreePath: null,
           envMode: "worktree",
+          pendingWorktreeBranch: null,
         },
       },
       logicalProjectDraftThreadKeyByLogicalProjectKey: {
@@ -3458,6 +3684,193 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("renders stale pending user input as a recovered prompt", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-recovered-render" as MessageId,
+        targetText: "recovered render",
+        activities: [
+          makeThreadActivity({
+            id: "activity-user-input-requested-recovery",
+            createdAt: isoAt(10_000),
+            kind: "user-input.requested",
+            summary: "User input requested",
+            tone: "info",
+            payload: {
+              requestId: "req-recovery-render",
+              questions: [
+                {
+                  id: "sandbox_mode",
+                  header: "Sandbox",
+                  question: "Which mode should be used?",
+                  options: [
+                    {
+                      label: "workspace-write",
+                      description: "Allow workspace writes only",
+                    },
+                  ],
+                },
+              ],
+            },
+          }),
+          makeThreadActivity({
+            id: "activity-user-input-failed-recovery",
+            createdAt: isoAt(10_001),
+            kind: "provider.user-input.respond.failed",
+            summary: "Provider user input response failed",
+            tone: "error",
+            payload: {
+              requestId: "req-recovery-render",
+              detail:
+                "Stale pending user-input request: req-recovery-render. Provider callback state does not survive app restarts or recovered sessions. Restart the turn to continue.",
+            },
+          }),
+        ],
+      }),
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("Recovered Prompt");
+          expect(document.body.textContent).toContain(
+            "The app was restarted before this answer could be delivered. Submit these answers as a new turn.",
+          );
+          expect(document.body.textContent).toContain("Restart from this prompt");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("submits a stale recovered prompt as a new turn instead of responding to the dead callback", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-recovered-submit" as MessageId,
+        targetText: "recovered submit",
+        activities: [
+          makeThreadActivity({
+            id: "activity-user-input-requested-submit",
+            createdAt: isoAt(10_000),
+            kind: "user-input.requested",
+            summary: "User input requested",
+            tone: "info",
+            payload: {
+              requestId: "req-recovery-submit",
+              questions: [
+                {
+                  id: "sandbox_mode",
+                  header: "Sandbox",
+                  question: "Which mode should be used?",
+                  options: [
+                    {
+                      label: "workspace-write",
+                      description: "Allow workspace writes only",
+                    },
+                  ],
+                },
+              ],
+            },
+          }),
+          makeThreadActivity({
+            id: "activity-user-input-failed-submit",
+            createdAt: isoAt(10_001),
+            kind: "provider.user-input.respond.failed",
+            summary: "Provider user input response failed",
+            tone: "error",
+            payload: {
+              requestId: "req-recovery-submit",
+              detail: "Unknown pending user-input request: req-recovery-submit",
+            },
+          }),
+        ],
+      }),
+    });
+
+    try {
+      await page.getByRole("button", { name: "workspace-write" }).click();
+
+      await vi.waitFor(
+        () => {
+          const request = findDispatchCommand("thread.turn.start");
+          expect(request).toBeTruthy();
+          const command = request?.command as {
+            message?: { text?: string };
+          };
+          expect(command.message?.text).toContain(
+            "The app restarted while you were waiting for answers to these. No need to reprompt the user.",
+          );
+          expect(command.message?.text).toContain("Sandbox: Which mode should be used?");
+          expect(command.message?.text).toContain("Answer: workspace-write");
+          expect(findDispatchCommand("thread.user-input.respond")).toBeUndefined();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps live pending prompts on the user-input response path", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-live-submit" as MessageId,
+        targetText: "live submit",
+        activities: [
+          makeThreadActivity({
+            id: "activity-user-input-requested-live",
+            createdAt: isoAt(10_000),
+            kind: "user-input.requested",
+            summary: "User input requested",
+            tone: "info",
+            payload: {
+              requestId: "req-live-submit",
+              questions: [
+                {
+                  id: "sandbox_mode",
+                  header: "Sandbox",
+                  question: "Which mode should be used?",
+                  options: [
+                    {
+                      label: "workspace-write",
+                      description: "Allow workspace writes only",
+                    },
+                  ],
+                },
+              ],
+            },
+          }),
+        ],
+      }),
+    });
+
+    try {
+      await page.getByRole("button", { name: "workspace-write" }).click();
+
+      await vi.waitFor(
+        () => {
+          const request = findDispatchCommand("thread.user-input.respond");
+          expect(request).toBeTruthy();
+          const command = request?.command as {
+            requestId?: string;
+            answers?: Record<string, string>;
+          };
+          expect(command.requestId).toBe("req-live-submit");
+          expect(command.answers?.sandbox_mode).toBe("workspace-write");
+          expect(findDispatchCommand("thread.turn.start")).toBeUndefined();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("hides the archive action when the pointer leaves a thread row", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -3814,7 +4227,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await mounted.cleanup();
     }
   });
-
   it("hydrates the provider alongside a sticky claude model", async () => {
     useComposerDraftStore.setState({
       stickyModelSelectionByProvider: {
@@ -3979,7 +4391,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await mounted.cleanup();
     }
   });
-
   it("creates a new thread from the global chat.new shortcut", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -5186,6 +5597,63 @@ describe("ChatView timeline estimator parity (full app)", () => {
         "Shortcut should create a fresh draft instead of reusing the promoted thread.",
       );
       expect(freshThreadPath).not.toBe(promotedThreadPath);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps command menu selection stable on hover while preserving keyboard and click selection", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithRecentThreads(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "navigation.commandMenu",
+              shortcut: {
+                key: "k",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                modKey: true,
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+
+      const menuInput = await openNavigationCommandMenu();
+      await moveCommandHighlightTo(menuInput, MIDDLE_THREAD_TITLE);
+      const olderThreadItem = await waitForCommandItem(OLDER_THREAD_TITLE);
+
+      dispatchHover(olderThreadItem);
+      await waitForHighlightedCommandItem(MIDDLE_THREAD_TITLE);
+
+      dispatchKey(menuInput, "Enter");
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${MIDDLE_THREAD_ID}`,
+        "Enter should open the keyboard-selected thread.",
+      );
+
+      await openNavigationCommandMenu();
+      const olderThreadItemAgain = await waitForCommandItem(OLDER_THREAD_TITLE);
+
+      dispatchHover(olderThreadItemAgain);
+
+      olderThreadItemAgain.click();
+      await waitForURL(
+        mounted.router,
+        (path) => path === `/${OLDER_THREAD_ID}`,
+        "Click should open the clicked thread even after hover stops changing selection.",
+      );
     } finally {
       await mounted.cleanup();
     }

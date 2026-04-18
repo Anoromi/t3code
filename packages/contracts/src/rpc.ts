@@ -2,8 +2,9 @@ import { Schema } from "effect";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
-import { OpenError, OpenInEditorInput } from "./editor.ts";
 import { AuthAccessStreamEvent } from "./auth.ts";
+import { PositiveInt, ThreadId } from "./baseSchemas.ts";
+import { OpenError, OpenInEditorInput } from "./editor.ts";
 import {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
@@ -125,7 +126,24 @@ export const WS_METHODS = {
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
+  subscribeDesktopControl: "subscribeDesktopControl",
+  desktopRequestCorkdiffAppFocus: "desktop.requestCorkdiffAppFocus",
 } as const;
+
+export const DesktopRequestCorkdiffAppFocusInput = Schema.Struct({
+  threadId: ThreadId,
+});
+
+export const DesktopRequestCorkdiffAppFocusResult = Schema.Struct({
+  accepted: Schema.Literal(true),
+});
+
+export const DesktopControlEvent = Schema.Struct({
+  type: Schema.Literal("corkdiff.focusAppRequested"),
+  threadId: ThreadId,
+  workspaceId: Schema.optional(PositiveInt),
+});
+export type DesktopControlEvent = typeof DesktopControlEvent.Type;
 
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
   payload: ServerUpsertKeybindingInput,
@@ -292,6 +310,12 @@ export const WsOrchestrationDispatchCommandRpc = Rpc.make(
   },
 );
 
+export const WsOrchestrationGetSnapshotRpc = Rpc.make(ORCHESTRATION_WS_METHODS.getSnapshot, {
+  payload: OrchestrationRpcSchemas.getSnapshot.input,
+  success: OrchestrationRpcSchemas.getSnapshot.output,
+  error: OrchestrationGetSnapshotError,
+});
+
 export const WsOrchestrationGetTurnDiffRpc = Rpc.make(ORCHESTRATION_WS_METHODS.getTurnDiff, {
   payload: OrchestrationGetTurnDiffInput,
   success: OrchestrationRpcSchemas.getTurnDiff.output,
@@ -355,6 +379,20 @@ export const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess,
   stream: true,
 });
 
+export const WsDesktopRequestCorkdiffAppFocusRpc = Rpc.make(
+  WS_METHODS.desktopRequestCorkdiffAppFocus,
+  {
+    payload: DesktopRequestCorkdiffAppFocusInput,
+    success: DesktopRequestCorkdiffAppFocusResult,
+  },
+);
+
+export const WsSubscribeDesktopControlRpc = Rpc.make(WS_METHODS.subscribeDesktopControl, {
+  payload: Schema.Struct({}),
+  success: DesktopControlEvent,
+  stream: true,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -387,7 +425,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,
+  WsDesktopRequestCorkdiffAppFocusRpc,
+  WsSubscribeDesktopControlRpc,
   WsOrchestrationDispatchCommandRpc,
+  WsOrchestrationGetSnapshotRpc,
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,
   WsOrchestrationReplayEventsRpc,

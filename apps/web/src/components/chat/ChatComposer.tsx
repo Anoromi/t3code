@@ -1,6 +1,8 @@
 import type {
   ApprovalRequestId,
+  CodexReasoningEffort,
   EnvironmentId,
+  GitBranch,
   ModelSelection,
   ProjectEntry,
   ProviderApprovalDecision,
@@ -16,7 +18,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
 } from "@t3tools/contracts";
-import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
+import { normalizeModelSlug } from "@t3tools/shared/model";
 import {
   forwardRef,
   memo,
@@ -34,9 +36,11 @@ import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import {
   clampCollapsedComposerCursor,
   type ComposerTrigger,
+  composerTriggersEqual,
   collapseExpandedComposerCursor,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
+  parseComposerMenuSlashCommandQuery,
   replaceTextRange,
 } from "../../composer-logic";
 import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
@@ -70,7 +74,6 @@ import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
 import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { searchSlashCommandItems } from "./composerSlashCommandSearch";
 import {
-  getComposerProviderControls,
   getComposerProviderState,
   renderProviderTraitsMenuContent,
   renderProviderTraitsPicker,
@@ -99,7 +102,11 @@ import { resolveSelectableProvider, getProviderModels } from "../../providerMode
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import type { SessionPhase, Thread } from "../../types";
 import type { PendingUserInputDraftAnswer } from "../../pendingUserInput";
-import type { PendingApproval, PendingUserInput } from "../../session-logic";
+import type {
+  PendingApproval,
+  PendingUserInput,
+  RecoverablePendingUserInput,
+} from "../../session-logic";
 import { deriveLatestContextWindowSnapshot } from "../../lib/contextWindow";
 import { formatProviderSkillDisplayName } from "../../providerSkillPresentation";
 import { searchProviderSkills } from "../../providerSkillSearch";
@@ -129,7 +136,53 @@ const runtimeModeConfig: Record<
 
 const runtimeModeOptions = Object.keys(runtimeModeConfig) as RuntimeMode[];
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
+const CODEX_REASONING_LABEL_BY_OPTION: Record<CodexReasoningEffort, string> = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra High",
+};
+const CODEX_REASONING_SHORT_ALIAS_BY_OPTION: Record<CodexReasoningEffort, string> = {
+  low: "l",
+  medium: "m",
+  high: "h",
+  xhigh: "xh",
+};
+const CODEX_REASONING_OPTIONS = [
+  "xhigh",
+  "high",
+  "medium",
+  "low",
+] as const satisfies readonly CodexReasoningEffort[];
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
+
+function isWorktreeModeQuery(query: string): boolean {
+  const normalizedQuery = query.trim().toLowerCase();
+  return (
+    normalizedQuery.length === 0 ||
+    "local".startsWith(normalizedQuery) ||
+    "worktree".startsWith(normalizedQuery)
+  );
+}
+
+function describeBranchCommandItem(branch: GitBranch, activeProjectCwd: string): string {
+  if (branch.current) {
+    return "Current branch";
+  }
+  if (branch.worktreePath && branch.worktreePath !== activeProjectCwd) {
+    return "Reuse existing worktree";
+  }
+  if (branch.worktreePath === activeProjectCwd) {
+    return "Checked out in the project root";
+  }
+  if (branch.isRemote) {
+    return "Checkout remote branch";
+  }
+  if (branch.isDefault) {
+    return "Switch to default branch";
+  }
+  return "Switch branch";
+}
 
 const extendReplacementRangeForTrailingSpace = (
   text: string,
@@ -160,7 +213,6 @@ const terminalContextIdListsEqual = (
   contexts.length === ids.length && contexts.every((context, index) => context.id === ids[index]);
 
 const ComposerFooterModeControls = memo(function ComposerFooterModeControls(props: {
-  showInteractionModeToggle: boolean;
   interactionMode: ProviderInteractionMode;
   runtimeMode: RuntimeMode;
   showPlanToggle: boolean;
@@ -177,29 +229,25 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
     <>
       <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
 
-      {props.showInteractionModeToggle ? (
-        <>
-          <Button
-            variant="ghost"
-            className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
-            size="sm"
-            type="button"
-            onClick={props.onToggleInteractionMode}
-            title={
-              props.interactionMode === "plan"
-                ? "Plan mode — click to return to normal build mode"
-                : "Default mode — click to enter plan mode"
-            }
-          >
-            <BotIcon />
-            <span className="sr-only sm:not-sr-only">
-              {props.interactionMode === "plan" ? "Plan" : "Build"}
-            </span>
-          </Button>
+      <Button
+        variant="ghost"
+        className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+        size="sm"
+        type="button"
+        onClick={props.onToggleInteractionMode}
+        title={
+          props.interactionMode === "plan"
+            ? "Plan mode — click to return to normal build mode"
+            : "Default mode — click to enter plan mode"
+        }
+      >
+        <BotIcon />
+        <span className="sr-only sm:not-sr-only">
+          {props.interactionMode === "plan" ? "Plan" : "Build"}
+        </span>
+      </Button>
 
-          <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-        </>
-      ) : null}
+      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
 
       <Select
         value={props.runtimeMode}
@@ -275,6 +323,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
     canAdvance: boolean;
     isResponding: boolean;
     isComplete: boolean;
+    isRecoveryMode: boolean;
   } | null;
   isRunning: boolean;
   showPlanFollowUpPrompt: boolean;
@@ -372,7 +421,8 @@ export interface ChatComposerProps {
   // Pending approvals / inputs
   activePendingApproval: PendingApproval | null;
   pendingApprovals: PendingApproval[];
-  pendingUserInputs: PendingUserInput[];
+  activePendingUserInput: PendingUserInput | RecoverablePendingUserInput | null;
+  activePendingUserInputMode: "live" | "recovery" | null;
   activePendingProgress: {
     questionIndex: number;
     isLastQuestion: boolean;
@@ -385,6 +435,7 @@ export interface ChatComposerProps {
   activePendingDraftAnswers: Record<string, PendingUserInputDraftAnswer>;
   activePendingQuestionIndex: number;
   respondingRequestIds: ApprovalRequestId[];
+  respondingUserInputRequestIds: ApprovalRequestId[];
 
   // Plan
   showPlanFollowUpPrompt: boolean;
@@ -411,6 +462,10 @@ export interface ChatComposerProps {
   resolvedTheme: "light" | "dark";
   settings: UnifiedSettings;
   gitCwd: string | null;
+  activeProjectCwd: string | null;
+  gitBranches: ReadonlyArray<GitBranch>;
+  canShowWorktreeSlashCommand: boolean;
+  threadForkReady: boolean;
 
   // Refs the parent needs kept in sync
   promptRef: React.MutableRefObject<string>;
@@ -445,6 +500,8 @@ export interface ChatComposerProps {
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
   handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
   togglePlanSidebar: () => void;
+  onForkThread: () => void;
+  onApplyComposerConfigCommandItem: (item: ComposerCommandItem) => Promise<boolean>;
 
   focusComposer: () => void;
   scheduleComposerFocus: () => void;
@@ -475,13 +532,15 @@ export const ChatComposer = memo(
       isPreparingWorktree,
       activePendingApproval,
       pendingApprovals,
-      pendingUserInputs,
+      activePendingUserInput,
+      activePendingUserInputMode,
       activePendingProgress,
       activePendingResolvedAnswers,
       activePendingIsResponding,
       activePendingDraftAnswers,
       activePendingQuestionIndex,
       respondingRequestIds,
+      respondingUserInputRequestIds,
       showPlanFollowUpPrompt,
       activeProposedPlan,
       activePlan,
@@ -498,6 +557,10 @@ export const ChatComposer = memo(
       resolvedTheme,
       settings,
       gitCwd,
+      activeProjectCwd,
+      gitBranches,
+      canShowWorktreeSlashCommand,
+      threadForkReady,
       promptRef,
       composerImagesRef,
       composerTerminalContextsRef,
@@ -516,6 +579,8 @@ export const ChatComposer = memo(
       handleRuntimeModeChange,
       handleInteractionModeChange,
       togglePlanSidebar,
+      onForkThread,
+      onApplyComposerConfigCommandItem,
       focusComposer,
       scheduleComposerFocus,
       setThreadError,
@@ -549,6 +614,9 @@ export const ChatComposer = memo(
     );
     const syncComposerDraftPersistedAttachments = useComposerDraftStore(
       (store) => store.syncPersistedAttachments,
+    );
+    const setComposerDraftProviderModelOptions = useComposerDraftStore(
+      (store) => store.setProviderModelOptions,
     );
     const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
 
@@ -594,15 +662,17 @@ export const ChatComposer = memo(
 
     const selectedPromptEffort = composerProviderState.promptEffort;
     const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
-    const composerProviderControls = useMemo(
-      () => getComposerProviderControls(selectedProvider),
-      [selectedProvider],
-    );
     const selectedModelSelection = useMemo<ModelSelection>(
-      () => createModelSelection(selectedProvider, selectedModel, selectedModelOptionsForDispatch),
+      () => ({
+        provider: selectedProvider,
+        model: selectedModel,
+        ...(selectedModelOptionsForDispatch ? { options: selectedModelOptionsForDispatch } : {}),
+      }),
       [selectedModel, selectedModelOptionsForDispatch, selectedProvider],
     );
     const selectedModelForPicker = selectedModel;
+    const selectedCodexModelOptions = composerModelOptions?.codex;
+    const selectedCodexFastModeEnabled = selectedCodexModelOptions?.fastMode === true;
     const modelOptionsByProvider = useMemo<
       Record<ProviderKind, ReadonlyArray<ServerProvider["models"][number]>>
     >(
@@ -610,9 +680,6 @@ export const ChatComposer = memo(
         codex: providerStatuses.find((provider) => provider.provider === "codex")?.models ?? [],
         claudeAgent:
           providerStatuses.find((provider) => provider.provider === "claudeAgent")?.models ?? [],
-        opencode:
-          providerStatuses.find((provider) => provider.provider === "opencode")?.models ?? [],
-        cursor: providerStatuses.find((provider) => provider.provider === "cursor")?.models ?? [],
       }),
       [providerStatuses],
     );
@@ -622,6 +689,55 @@ export const ChatComposer = memo(
         ? selectedModelForPicker
         : (normalizeModelSlug(selectedModelForPicker, selectedProvider) ?? selectedModelForPicker);
     }, [modelOptionsByProvider, selectedModelForPicker, selectedProvider]);
+    const toggleCodexFastMode = useCallback(() => {
+      if (selectedProvider !== "codex") {
+        return;
+      }
+
+      setComposerDraftProviderModelOptions(
+        composerDraftTarget,
+        "codex",
+        {
+          ...selectedCodexModelOptions,
+          fastMode: !selectedCodexFastModeEnabled,
+        },
+        { persistSticky: true },
+      );
+      scheduleComposerFocus();
+    }, [
+      composerDraftTarget,
+      scheduleComposerFocus,
+      selectedCodexFastModeEnabled,
+      selectedCodexModelOptions,
+      selectedProvider,
+      setComposerDraftProviderModelOptions,
+    ]);
+    const applyCodexReasoningEffort = useCallback(
+      (effort: CodexReasoningEffort) => {
+        if (selectedProvider !== "codex") {
+          return;
+        }
+
+        setComposerDraftProviderModelOptions(
+          composerDraftTarget,
+          "codex",
+          {
+            ...selectedCodexModelOptions,
+            reasoningEffort: effort,
+          },
+          { persistSticky: true },
+        );
+        scheduleComposerFocus();
+      },
+      [
+        composerDraftTarget,
+        scheduleComposerFocus,
+        selectedCodexModelOptions,
+        selectedProvider,
+        setComposerDraftProviderModelOptions,
+      ],
+    );
+
     const searchableModelOptions = useMemo(
       () =>
         AVAILABLE_PROVIDER_OPTIONS.filter(
@@ -671,6 +787,8 @@ export const ChatComposer = memo(
     const composerEditorRef = useRef<ComposerPromptEditorHandle>(null);
     const composerFormRef = useRef<HTMLFormElement>(null);
     const composerFormHeightRef = useRef(0);
+    const composerCursorRef = useRef(composerCursor);
+    const composerTriggerRef = useRef<ComposerTrigger | null>(composerTrigger);
     const composerSelectLockRef = useRef(false);
     const composerMenuOpenRef = useRef(false);
     const composerMenuItemsRef = useRef<ComposerCommandItem[]>([]);
@@ -695,6 +813,10 @@ export const ChatComposer = memo(
     // ------------------------------------------------------------------
     const composerTriggerKind = composerTrigger?.kind ?? null;
     const pathTriggerQuery = composerTrigger?.kind === "path" ? composerTrigger.query : "";
+    const composerMenuSlashCommand =
+      composerTrigger?.kind === "slash-command"
+        ? parseComposerMenuSlashCommandQuery(composerTrigger.query)
+        : null;
     const isPathTrigger = composerTriggerKind === "path";
     const [debouncedPathQuery, composerPathQueryDebouncer] = useDebouncedValue(
       pathTriggerQuery,
@@ -726,6 +848,88 @@ export const ChatComposer = memo(
         }));
       }
       if (composerTrigger.kind === "slash-command") {
+        if (composerMenuSlashCommand?.command === "reasoning" && selectedProvider === "codex") {
+          const query = composerMenuSlashCommand.valueQuery.toLowerCase();
+          return CODEX_REASONING_OPTIONS.filter((effort) => {
+            if (!query) {
+              return true;
+            }
+            const shortAlias = CODEX_REASONING_SHORT_ALIAS_BY_OPTION[effort];
+            return effort.startsWith(query) || shortAlias === query;
+          }).map((effort) => ({
+            id: `reasoning:${effort}`,
+            type: "reasoning" as const,
+            effort,
+            label: `/reasoning ${effort}`,
+            description: `${CODEX_REASONING_LABEL_BY_OPTION[effort]} - alias: /r ${CODEX_REASONING_SHORT_ALIAS_BY_OPTION[effort]}`,
+          }));
+        }
+
+        if (composerMenuSlashCommand?.command === "worktree") {
+          const rawQuery = composerMenuSlashCommand.valueQuery.trim();
+          const query = rawQuery.toLowerCase();
+          if (!canShowWorktreeSlashCommand) {
+            return [];
+          }
+          if (isWorktreeModeQuery(rawQuery)) {
+            return (
+              [
+                {
+                  id: "worktree-mode:local",
+                  type: "worktree-mode",
+                  mode: "local",
+                  label: "/worktree local",
+                  description: "Run in the project root",
+                },
+                {
+                  id: "worktree-mode:worktree",
+                  type: "worktree-mode",
+                  mode: "worktree",
+                  label: "/worktree worktree",
+                  description: "Create and run in a new worktree",
+                },
+              ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "worktree-mode" }>>
+            ).filter((item) => query.length === 0 || item.mode.startsWith(query));
+          }
+
+          const matchingBranches = gitBranches
+            .filter((branch) => branch.name.toLowerCase().includes(query))
+            .map((branch) => ({
+              id: `branch:${branch.name}:${branch.worktreePath ?? ""}`,
+              type: "branch" as const,
+              branch,
+              label: branch.name,
+              description: describeBranchCommandItem(branch, activeProjectCwd ?? ""),
+            }));
+          const hasExactMatch = gitBranches.some((branch) => branch.name.toLowerCase() === query);
+          const syntheticItem =
+            rawQuery.length === 0 || hasExactMatch
+              ? []
+              : [
+                  {
+                    id: `named-worktree:${rawQuery}`,
+                    type: "named-worktree-target" as const,
+                    branchName: rawQuery,
+                    label: `/worktree ${rawQuery}`,
+                    description: `Set ${rawQuery} as the new worktree branch name`,
+                  },
+                ];
+          return [...syntheticItem, ...matchingBranches];
+        }
+
+        if (composerMenuSlashCommand?.command === "branch") {
+          const query = composerMenuSlashCommand.valueQuery.toLowerCase();
+          return gitBranches
+            .filter((branch) => query.length === 0 || branch.name.toLowerCase().includes(query))
+            .map((branch) => ({
+              id: `branch:${branch.name}:${branch.worktreePath ?? ""}`,
+              type: "branch" as const,
+              branch,
+              label: branch.name,
+              description: describeBranchCommandItem(branch, activeProjectCwd ?? ""),
+            }));
+        }
+
         const builtInSlashCommandItems = [
           {
             id: "slash:model",
@@ -748,6 +952,55 @@ export const ChatComposer = memo(
             label: "/default",
             description: "Switch this thread back to normal build mode",
           },
+          ...(threadForkReady
+            ? [
+                {
+                  id: "slash:fork",
+                  type: "slash-command",
+                  command: "fork",
+                  label: "/fork",
+                  description: "Fork this thread from its current settled state",
+                } as const,
+              ]
+            : []),
+          {
+            id: "slash:branch",
+            type: "slash-command",
+            command: "branch",
+            label: "/branch",
+            description: "Select branch or worktree base for this thread",
+          },
+          ...(canShowWorktreeSlashCommand
+            ? [
+                {
+                  id: "slash:worktree",
+                  type: "slash-command",
+                  command: "worktree",
+                  label: "/worktree",
+                  description: "Choose local repo or a new worktree",
+                } as const,
+              ]
+            : []),
+          ...(selectedProvider === "codex"
+            ? [
+                {
+                  id: "slash:fast",
+                  type: "slash-command",
+                  command: "fast",
+                  label: "/fast",
+                  description: selectedCodexFastModeEnabled
+                    ? "Turn off Codex fast mode"
+                    : "Turn on Codex fast mode",
+                } as const,
+                {
+                  id: "slash:reasoning",
+                  type: "slash-command",
+                  command: "reasoning",
+                  label: "/reasoning",
+                  description: "Set Codex reasoning effort for this thread",
+                } as const,
+              ]
+            : []),
         ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
         const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).map(
           (command) => ({
@@ -801,10 +1054,16 @@ export const ChatComposer = memo(
           description: `${providerLabel} · ${slug}`,
         }));
     }, [
+      activeProjectCwd,
+      canShowWorktreeSlashCommand,
+      composerMenuSlashCommand,
       composerTrigger,
+      gitBranches,
       searchableModelOptions,
       selectedProvider,
+      selectedCodexFastModeEnabled,
       selectedProviderStatus,
+      threadForkReady,
       workspaceEntries,
     ]);
 
@@ -837,10 +1096,9 @@ export const ChatComposer = memo(
     );
 
     const isComposerApprovalState = activePendingApproval !== null;
-    const activePendingUserInput = pendingUserInputs[0] ?? null;
     const hasComposerHeader =
       isComposerApprovalState ||
-      pendingUserInputs.length > 0 ||
+      activePendingUserInput !== null ||
       (showPlanFollowUpPrompt && activeProposedPlan !== null);
 
     const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
@@ -930,9 +1188,15 @@ export const ChatComposer = memo(
               canAdvance: activePendingProgress.canAdvance,
               isResponding: activePendingIsResponding,
               isComplete: Boolean(activePendingResolvedAnswers),
+              isRecoveryMode: activePendingUserInputMode === "recovery",
             }
           : null,
-      [activePendingIsResponding, activePendingProgress, activePendingResolvedAnswers],
+      [
+        activePendingIsResponding,
+        activePendingProgress,
+        activePendingResolvedAnswers,
+        activePendingUserInputMode,
+      ],
     );
 
     // ------------------------------------------------------------------
@@ -996,6 +1260,14 @@ export const ChatComposer = memo(
       promptRef.current = prompt;
       setComposerCursor((existing) => clampCollapsedComposerCursor(prompt, existing));
     }, [prompt, promptRef]);
+
+    useEffect(() => {
+      composerCursorRef.current = composerCursor;
+    }, [composerCursor]);
+
+    useEffect(() => {
+      composerTriggerRef.current = composerTrigger;
+    }, [composerTrigger]);
 
     useEffect(() => {
       composerImagesRef.current = composerImages;
@@ -1229,36 +1501,58 @@ export const ChatComposer = memo(
         cursorAdjacentToMention: boolean,
         terminalContextIds: string[],
       ) => {
-        if (activePendingProgress?.activeQuestion && pendingUserInputs.length > 0) {
-          setComposerCursor(nextCursor);
-          setComposerTrigger(
-            cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
-          );
-          onChangeActivePendingUserInputCustomAnswer(
-            activePendingProgress.activeQuestion.id,
-            nextPrompt,
-            nextCursor,
-            expandedCursor,
-            cursorAdjacentToMention,
-          );
+        const nextTrigger = cursorAdjacentToMention
+          ? null
+          : detectComposerTrigger(nextPrompt, expandedCursor);
+        const triggerChanged = !composerTriggersEqual(composerTriggerRef.current, nextTrigger);
+        const promptChanged = promptRef.current !== nextPrompt;
+        composerCursorRef.current = nextCursor;
+        promptRef.current = nextPrompt;
+
+        if (activePendingProgress?.activeQuestion && activePendingUserInput) {
+          if (triggerChanged) {
+            composerTriggerRef.current = nextTrigger;
+            setComposerTrigger(nextTrigger);
+          }
+          if (promptChanged || triggerChanged) {
+            setComposerCursor(nextCursor);
+          }
+          if (promptChanged) {
+            onChangeActivePendingUserInputCustomAnswer(
+              activePendingProgress.activeQuestion.id,
+              nextPrompt,
+              nextCursor,
+              expandedCursor,
+              cursorAdjacentToMention,
+            );
+          }
           return;
         }
-        promptRef.current = nextPrompt;
-        setPrompt(nextPrompt);
-        if (!terminalContextIdListsEqual(composerTerminalContexts, terminalContextIds)) {
+
+        if (promptChanged) {
+          setPrompt(nextPrompt);
+        }
+        const terminalContextsChanged = !terminalContextIdListsEqual(
+          composerTerminalContexts,
+          terminalContextIds,
+        );
+        if (terminalContextsChanged) {
           setComposerDraftTerminalContexts(
             composerDraftTarget,
             syncTerminalContextsByIds(composerTerminalContexts, terminalContextIds),
           );
         }
-        setComposerCursor(nextCursor);
-        setComposerTrigger(
-          cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
-        );
+        if (triggerChanged) {
+          composerTriggerRef.current = nextTrigger;
+          setComposerTrigger(nextTrigger);
+        }
+        if (promptChanged || terminalContextsChanged || triggerChanged) {
+          setComposerCursor(nextCursor);
+        }
       },
       [
         activePendingProgress?.activeQuestion,
-        pendingUserInputs.length,
+        activePendingUserInput,
         onChangeActivePendingUserInputCustomAnswer,
         promptRef,
         setPrompt,
@@ -1329,13 +1623,14 @@ export const ChatComposer = memo(
       if (editorSnapshot) {
         return editorSnapshot;
       }
+      const currentCursor = composerCursorRef.current;
       return {
         value: promptRef.current,
-        cursor: composerCursor,
-        expandedCursor: expandCollapsedComposerCursor(promptRef.current, composerCursor),
+        cursor: currentCursor,
+        expandedCursor: expandCollapsedComposerCursor(promptRef.current, currentCursor),
         terminalContextIds: composerTerminalContexts.map((context) => context.id),
       };
-    }, [composerCursor, composerTerminalContexts, promptRef]);
+    }, [composerTerminalContexts, promptRef]);
 
     const resolveActiveComposerTrigger = useCallback((): {
       snapshot: { value: string; cursor: number; expandedCursor: number };
@@ -1394,13 +1689,72 @@ export const ChatComposer = memo(
             }
             return;
           }
-          void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
+          if (
+            item.command === "reasoning" ||
+            item.command === "branch" ||
+            item.command === "worktree"
+          ) {
+            if (item.command === "reasoning" && selectedProvider !== "codex") {
+              return;
+            }
+            const replacement = `/${item.command} `;
+            const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+              snapshot.value,
+              trigger.rangeEnd,
+              replacement,
+            );
+            const applied = applyPromptReplacement(
+              trigger.rangeStart,
+              replacementRangeEnd,
+              replacement,
+              { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+            );
+            if (applied) {
+              setComposerHighlightedItemId(null);
+            }
+            return;
+          }
+          if (item.command === "fast") {
+            if (selectedProvider !== "codex") {
+              return;
+            }
+            toggleCodexFastMode();
+          } else if (item.command === "fork") {
+            onForkThread();
+          } else {
+            void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
+          }
           const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
             expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
           });
           if (applied) {
             setComposerHighlightedItemId(null);
           }
+          return;
+        }
+        if (item.type === "reasoning") {
+          if (selectedProvider !== "codex") {
+            return;
+          }
+          applyCodexReasoningEffort(item.effort);
+          const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+            expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+          });
+          if (applied) {
+            setComposerHighlightedItemId(null);
+          }
+          return;
+        }
+        if (
+          item.type === "worktree-mode" ||
+          item.type === "branch" ||
+          item.type === "named-worktree-target"
+        ) {
+          void onApplyComposerConfigCommandItem(item).then((applied) => {
+            if (applied) {
+              setComposerHighlightedItemId(null);
+            }
+          });
           return;
         }
         if (item.type === "provider-slash-command") {
@@ -1439,6 +1793,9 @@ export const ChatComposer = memo(
           }
           return;
         }
+        if (item.type !== "model") {
+          return;
+        }
         onProviderModelSelect(item.provider, item.model);
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -1448,10 +1805,15 @@ export const ChatComposer = memo(
         }
       },
       [
+        applyCodexReasoningEffort,
         applyPromptReplacement,
         handleInteractionModeChange,
+        onApplyComposerConfigCommandItem,
+        onForkThread,
         onProviderModelSelect,
         resolveActiveComposerTrigger,
+        selectedProvider,
+        toggleCodexFastMode,
       ],
     );
 
@@ -1521,7 +1883,7 @@ export const ChatComposer = memo(
     // ------------------------------------------------------------------
     const addComposerImages = (files: File[]) => {
       if (!activeThreadId || files.length === 0) return;
-      if (pendingUserInputs.length > 0) {
+      if (activePendingUserInput) {
         toastManager.add({
           type: "error",
           title: "Attach images after answering plan questions.",
@@ -1643,23 +2005,27 @@ export const ChatComposer = memo(
         }) => {
           const promptForState = options?.prompt ?? promptRef.current;
           const cursor = clampCollapsedComposerCursor(promptForState, options?.cursor ?? 0);
+          const nextTrigger = options?.detectTrigger
+            ? detectComposerTrigger(
+                promptForState,
+                expandCollapsedComposerCursor(promptForState, cursor),
+              )
+            : null;
           setComposerHighlightedItemId(null);
+          composerCursorRef.current = cursor;
+          composerTriggerRef.current = nextTrigger;
           setComposerCursor(cursor);
-          setComposerTrigger(
-            options?.detectTrigger
-              ? detectComposerTrigger(
-                  promptForState,
-                  expandCollapsedComposerCursor(promptForState, cursor),
-                )
-              : null,
-          );
+          setComposerTrigger(nextTrigger);
         },
         addTerminalContext: (selection: TerminalContextSelection) => {
           if (!activeThread) return;
           const snapshot = composerEditorRef.current?.readSnapshot() ?? {
             value: promptRef.current,
-            cursor: composerCursor,
-            expandedCursor: expandCollapsedComposerCursor(promptRef.current, composerCursor),
+            cursor: composerCursorRef.current,
+            expandedCursor: expandCollapsedComposerCursor(
+              promptRef.current,
+              composerCursorRef.current,
+            ),
             terminalContextIds: composerTerminalContexts.map((context) => context.id),
           };
           const insertion = insertInlineTerminalContextPlaceholder(
@@ -1704,7 +2070,6 @@ export const ChatComposer = memo(
       [
         activeThread,
         composerDraftTarget,
-        composerCursor,
         composerTerminalContexts,
         insertComposerDraftTerminalContext,
         promptRef,
@@ -1753,11 +2118,12 @@ export const ChatComposer = memo(
                   pendingCount={pendingApprovals.length}
                 />
               </div>
-            ) : pendingUserInputs.length > 0 ? (
+            ) : activePendingUserInput ? (
               <div className="rounded-t-[19px] border-b border-border/65 bg-muted/20">
                 <ComposerPendingUserInputPanel
-                  pendingUserInputs={pendingUserInputs}
-                  respondingRequestIds={respondingRequestIds}
+                  prompt={activePendingUserInput}
+                  mode={activePendingUserInputMode ?? "live"}
+                  respondingRequestIds={respondingUserInputRequestIds}
                   answers={activePendingDraftAnswers}
                   questionIndex={activePendingQuestionIndex}
                   onToggleOption={onSelectActivePendingUserInputOption}
@@ -1799,7 +2165,7 @@ export const ChatComposer = memo(
               )}
 
               {!isComposerApprovalState &&
-                pendingUserInputs.length === 0 &&
+                activePendingUserInput === null &&
                 composerImages.length > 0 && (
                   <div className="mb-3 flex flex-wrap gap-2">
                     {composerImages.map((image) => (
@@ -1876,7 +2242,7 @@ export const ChatComposer = memo(
                 }
                 cursor={composerCursor}
                 terminalContexts={
-                  !isComposerApprovalState && pendingUserInputs.length === 0
+                  !isComposerApprovalState && activePendingUserInput === null
                     ? composerTerminalContexts
                     : []
                 }
@@ -1942,7 +2308,6 @@ export const ChatComposer = memo(
                       planSidebarLabel={planSidebarLabel}
                       planSidebarOpen={planSidebarOpen}
                       runtimeMode={runtimeMode}
-                      showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
                       traitsMenuContent={providerTraitsMenuContent}
                       onToggleInteractionMode={toggleInteractionMode}
                       onTogglePlanSidebar={togglePlanSidebar}
@@ -1960,9 +2325,6 @@ export const ChatComposer = memo(
                         </>
                       ) : null}
                       <ComposerFooterModeControls
-                        showInteractionModeToggle={
-                          composerProviderControls.showInteractionModeToggle
-                        }
                         interactionMode={interactionMode}
                         runtimeMode={runtimeMode}
                         showPlanToggle={showPlanSidebarToggle}
@@ -1990,7 +2352,7 @@ export const ChatComposer = memo(
                     pendingAction={pendingPrimaryAction}
                     isRunning={phase === "running"}
                     showPlanFollowUpPrompt={
-                      pendingUserInputs.length === 0 && showPlanFollowUpPrompt
+                      activePendingUserInput === null && showPlanFollowUpPrompt
                     }
                     promptHasText={prompt.trim().length > 0}
                     isSendBusy={isSendBusy}

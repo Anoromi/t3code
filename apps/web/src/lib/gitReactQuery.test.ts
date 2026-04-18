@@ -15,6 +15,7 @@ import { EnvironmentId, type GitListBranchesResult } from "@t3tools/contracts";
 
 import {
   gitBranchSearchInfiniteQueryOptions,
+  gitCreateWorktreeMutationOptions,
   gitMutationKeys,
   gitPreparePullRequestThreadMutationOptions,
   gitPullMutationOptions,
@@ -87,6 +88,23 @@ describe("git mutation options", () => {
     expect(options.mutationKey).toEqual(
       gitMutationKeys.preparePullRequestThread(ENVIRONMENT_A, "/repo/a"),
     );
+  });
+
+  it("allows createWorktree mutations without a newBranch override", () => {
+    const options = gitCreateWorktreeMutationOptions({
+      environmentId: ENVIRONMENT_A,
+      queryClient,
+    });
+    const input: Parameters<NonNullable<typeof options.mutationFn>>[0] = {
+      cwd: "/repo/a",
+      path: null,
+      branch: "feature/existing",
+    };
+    expect(input).toEqual({
+      cwd: "/repo/a",
+      path: null,
+      branch: "feature/existing",
+    });
   });
 });
 

@@ -10,17 +10,20 @@ import {
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path } from "effect";
+import { Effect, FileSystem, Layer, Path, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
+import { ProviderSessionRuntimeRepositoryLive } from "../../persistence/Layers/ProviderSessionRuntime.ts";
 import {
   makeSqlitePersistenceLive,
   SqlitePersistenceMemory,
 } from "../../persistence/Layers/Sqlite.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { RepositoryIdentityResolverLive } from "../../project/Layers/RepositoryIdentityResolver.ts";
+import { ProviderSessionDirectoryLive } from "../../provider/Layers/ProviderSessionDirectory.ts";
+import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import {
   ORCHESTRATION_PROJECTOR_NAMES,
@@ -2165,20 +2168,46 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
 );
 
 const engineLayer = it.layer(
-  OrchestrationEngineLive.pipe(
-    Layer.provide(OrchestrationProjectionSnapshotQueryLive),
-    Layer.provide(OrchestrationProjectionPipelineLive),
-    Layer.provide(OrchestrationEventStoreLive),
-    Layer.provide(OrchestrationCommandReceiptRepositoryLive),
-    Layer.provide(RepositoryIdentityResolverLive),
-    Layer.provideMerge(SqlitePersistenceMemory),
-    Layer.provideMerge(
-      ServerConfig.layerTest(process.cwd(), {
-        prefix: "t3-projection-pipeline-engine-dispatch-",
-      }),
-    ),
-    Layer.provideMerge(NodeServices.layer),
-  ),
+  (() => {
+    const providerServiceLayer = Layer.succeed(ProviderService, {
+      startSession: () => Effect.die("ProviderService.startSession should not be used in test"),
+      forkThread: () => Effect.die("ProviderService.forkThread should not be used in test"),
+      sendTurn: () => Effect.die("ProviderService.sendTurn should not be used in test"),
+      interruptTurn: () => Effect.die("ProviderService.interruptTurn should not be used in test"),
+      respondToRequest: () =>
+        Effect.die("ProviderService.respondToRequest should not be used in test"),
+      respondToUserInput: () =>
+        Effect.die("ProviderService.respondToUserInput should not be used in test"),
+      stopSession: () => Effect.die("ProviderService.stopSession should not be used in test"),
+      listSessions: () => Effect.succeed([]),
+      getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" as const }),
+      rollbackConversation: () =>
+        Effect.die("ProviderService.rollbackConversation should not be used in test"),
+      archiveThread: () => Effect.die("ProviderService.archiveThread should not be used in test"),
+      streamEvents: Stream.empty,
+    });
+    const providerSessionDirectoryLayer = ProviderSessionDirectoryLive.pipe(
+      Layer.provide(ProviderSessionRuntimeRepositoryLive),
+      Layer.provide(SqlitePersistenceMemory),
+    );
+
+    return OrchestrationEngineLive.pipe(
+      Layer.provide(OrchestrationProjectionSnapshotQueryLive),
+      Layer.provide(OrchestrationProjectionPipelineLive),
+      Layer.provide(OrchestrationEventStoreLive),
+      Layer.provide(OrchestrationCommandReceiptRepositoryLive),
+      Layer.provide(RepositoryIdentityResolverLive),
+      Layer.provide(providerServiceLayer),
+      Layer.provide(providerSessionDirectoryLayer),
+      Layer.provideMerge(SqlitePersistenceMemory),
+      Layer.provideMerge(
+        ServerConfig.layerTest(process.cwd(), {
+          prefix: "t3-projection-pipeline-engine-dispatch-",
+        }),
+      ),
+      Layer.provideMerge(NodeServices.layer),
+    );
+  })(),
 );
 
 engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {

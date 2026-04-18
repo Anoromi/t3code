@@ -100,6 +100,69 @@ it.layer(NodeServices.layer)("readBootstrapEnvelope", (it) => {
     }),
   );
 
+  it.effect("reads a bootstrap envelope from an inherited pipe fd", () =>
+    Effect.gen(function* () {
+      const scriptPath = path.join(process.cwd(), `tmp-bootstrap-child-${crypto.randomUUID()}.ts`);
+      yield* Effect.acquireRelease(
+        Effect.sync(() =>
+          NFS.writeFileSync(
+            scriptPath,
+            [
+              'import * as Effect from "effect/Effect";',
+              'import * as Option from "effect/Option";',
+              'import { Schema } from "effect";',
+              'import { readBootstrapEnvelope } from "./src/bootstrap.ts";',
+              "const result = await Effect.runPromise(",
+              "  readBootstrapEnvelope(Schema.Struct({ mode: Schema.String }), 3, { timeoutMs: 1000 }),",
+              ");",
+              "console.log(JSON.stringify(Option.isSome(result) ? result.value : null));",
+              "",
+            ].join("\n"),
+            "utf8",
+          ),
+        ),
+        () => Effect.sync(() => NFS.rmSync(scriptPath, { force: true })),
+      );
+
+      const result = yield* Effect.promise<string>(
+        () =>
+          new Promise((resolve, reject) => {
+            const child = spawn("bun", ["run", scriptPath], {
+              cwd: process.cwd(),
+              stdio: ["ignore", "pipe", "inherit", "pipe"],
+            });
+            const stdout = child.stdout;
+            const bootstrapInput = child.stdio[3];
+
+            if (!stdout || !bootstrapInput || !("write" in bootstrapInput)) {
+              reject(new Error("child process bootstrap streams were not available"));
+              return;
+            }
+
+            let stdoutText = "";
+            stdout.on("data", (chunk) => {
+              stdoutText += chunk.toString();
+            });
+            child.once("error", reject);
+            child.once("exit", (code) => {
+              if (code === 0) {
+                resolve(stdoutText.trim());
+                return;
+              }
+              reject(new Error(`child exited with code ${code ?? "null"}`));
+            });
+
+            bootstrapInput.write('{"mode":"desktop"}\n');
+            bootstrapInput.end();
+          }),
+      );
+
+      assert.deepStrictEqual(JSON.parse(result), {
+        mode: "desktop",
+      });
+    }),
+  );
+
   it.effect("returns none when the fd is unavailable", () =>
     Effect.gen(function* () {
       const fd = NFS.openSync("/dev/null", "r");

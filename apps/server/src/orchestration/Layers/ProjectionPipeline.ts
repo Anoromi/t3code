@@ -467,6 +467,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             workspaceRoot: event.payload.workspaceRoot,
             defaultModelSelection: event.payload.defaultModelSelection,
             scripts: event.payload.scripts,
+            worktreeGroupTitles: event.payload.worktreeGroupTitles ?? [],
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
             deletedAt: null,
@@ -490,6 +491,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               ? { defaultModelSelection: event.payload.defaultModelSelection }
               : {}),
             ...(event.payload.scripts !== undefined ? { scripts: event.payload.scripts } : {}),
+            ...(event.payload.worktreeGroupTitles !== undefined
+              ? { worktreeGroupTitles: event.payload.worktreeGroupTitles }
+              : {}),
             updatedAt: event.payload.updatedAt,
           });
           return;
@@ -571,6 +575,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             interactionMode: event.payload.interactionMode,
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
+            forkSourceThreadId: null,
+            forkSourceTurnId: null,
+            forkSourceCheckpointTurnCount: null,
+            forkedAt: null,
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
@@ -609,6 +617,67 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...existingRow.value,
             archivedAt: null,
             updatedAt: event.payload.updatedAt,
+          });
+          return;
+        }
+
+        case "thread.forked": {
+          const latestTurnId = event.payload.latestTurn?.turnId ?? null;
+          const latestUserMessageAt =
+            event.payload.messages
+              .filter((message) => message.role === "user")
+              .map((message) => message.createdAt)
+              .toSorted()
+              .at(-1) ?? null;
+          const forkedActivities = event.payload.activities.map((activity) => ({
+            activityId: activity.id,
+            threadId: event.payload.threadId,
+            turnId: activity.turnId,
+            tone: activity.tone,
+            kind: activity.kind,
+            summary: activity.summary,
+            payload: activity.payload,
+            ...(activity.sequence !== undefined ? { sequence: activity.sequence } : {}),
+            createdAt: activity.createdAt,
+          }));
+          const forkedProposedPlans = event.payload.proposedPlans.map((proposedPlan) => ({
+            planId: proposedPlan.id,
+            threadId: event.payload.threadId,
+            turnId: proposedPlan.turnId,
+            planMarkdown: proposedPlan.planMarkdown,
+            implementedAt: proposedPlan.implementedAt,
+            implementationThreadId: proposedPlan.implementationThreadId,
+            createdAt: proposedPlan.createdAt,
+            updatedAt: proposedPlan.updatedAt,
+          }));
+          const pendingUserInputCount = derivePendingUserInputCountFromActivities(forkedActivities);
+          const hasActionableProposedPlan = deriveHasActionableProposedPlan({
+            latestTurnId,
+            proposedPlans: forkedProposedPlans,
+          });
+
+          yield* projectionThreadRepository.upsert({
+            threadId: event.payload.threadId,
+            projectId: event.payload.projectId,
+            title: event.payload.title,
+            modelSelection: event.payload.modelSelection,
+            runtimeMode: event.payload.runtimeMode,
+            interactionMode: event.payload.interactionMode,
+            branch: event.payload.branch,
+            worktreePath: event.payload.worktreePath,
+            forkSourceThreadId: event.payload.forkOrigin.sourceThreadId,
+            forkSourceTurnId: event.payload.forkOrigin.sourceTurnId,
+            forkSourceCheckpointTurnCount: event.payload.forkOrigin.sourceCheckpointTurnCount,
+            forkedAt: event.payload.forkOrigin.forkedAt,
+            latestTurnId,
+            createdAt: event.payload.createdAt,
+            updatedAt: event.payload.updatedAt,
+            archivedAt: null,
+            latestUserMessageAt,
+            pendingApprovalCount: 0,
+            pendingUserInputCount,
+            hasActionableProposedPlan: hasActionableProposedPlan ? 1 : 0,
+            deletedAt: null,
           });
           return;
         }
@@ -794,6 +863,28 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
+        case "thread.forked": {
+          yield* Effect.forEach(
+            event.payload.messages,
+            (message) =>
+              projectionThreadMessageRepository.upsert({
+                messageId: message.id,
+                threadId: event.payload.threadId,
+                turnId: message.turnId,
+                role: message.role,
+                text: message.text,
+                ...(message.attachments !== undefined
+                  ? { attachments: [...message.attachments] }
+                  : {}),
+                isStreaming: message.streaming,
+                createdAt: message.createdAt,
+                updatedAt: message.updatedAt,
+              }),
+            { concurrency: 1 },
+          ).pipe(Effect.asVoid);
+          return;
+        }
+
         case "thread.reverted": {
           const existingRows = yield* projectionThreadMessageRepository.listByThreadId({
             threadId: event.payload.threadId,
@@ -847,6 +938,24 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             createdAt: event.payload.proposedPlan.createdAt,
             updatedAt: event.payload.proposedPlan.updatedAt,
           });
+          return;
+
+        case "thread.forked":
+          yield* Effect.forEach(
+            event.payload.proposedPlans,
+            (proposedPlan) =>
+              projectionThreadProposedPlanRepository.upsert({
+                planId: proposedPlan.id,
+                threadId: event.payload.threadId,
+                turnId: proposedPlan.turnId,
+                planMarkdown: proposedPlan.planMarkdown,
+                implementedAt: proposedPlan.implementedAt,
+                implementationThreadId: proposedPlan.implementationThreadId,
+                createdAt: proposedPlan.createdAt,
+                updatedAt: proposedPlan.updatedAt,
+              }),
+            { concurrency: 1 },
+          ).pipe(Effect.asVoid);
           return;
 
         case "thread.reverted": {
@@ -903,6 +1012,25 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           });
           return;
 
+        case "thread.forked":
+          yield* Effect.forEach(
+            event.payload.activities,
+            (activity) =>
+              projectionThreadActivityRepository.upsert({
+                activityId: activity.id,
+                threadId: event.payload.threadId,
+                turnId: activity.turnId,
+                tone: activity.tone,
+                kind: activity.kind,
+                summary: activity.summary,
+                payload: activity.payload,
+                ...(activity.sequence !== undefined ? { sequence: activity.sequence } : {}),
+                createdAt: activity.createdAt,
+              }),
+            { concurrency: 1 },
+          ).pipe(Effect.asVoid);
+          return;
+
         case "thread.reverted": {
           const existingRows = yield* projectionThreadActivityRepository.listByThreadId({
             threadId: event.payload.threadId,
@@ -938,6 +1066,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const applyThreadSessionsProjection: ProjectorDefinition["apply"] = Effect.fn(
       "applyThreadSessionsProjection",
     )(function* (event, _attachmentSideEffects) {
+      if (event.type === "thread.forked") {
+        yield* projectionThreadSessionRepository.deleteByThreadId({
+          threadId: event.payload.threadId,
+        });
+        return;
+      }
       if (event.type !== "thread.session-set") {
         return;
       }
@@ -956,6 +1090,34 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       "applyThreadTurnsProjection",
     )(function* (event, _attachmentSideEffects) {
       switch (event.type) {
+        case "thread.forked": {
+          yield* Effect.forEach(
+            event.payload.turns,
+            (turn) =>
+              projectionTurnRepository.upsertByTurnId({
+                threadId: event.payload.threadId,
+                turnId: turn.turnId,
+                pendingMessageId: turn.pendingMessageId,
+                sourceProposedPlanThreadId: turn.sourceProposedPlanThreadId,
+                sourceProposedPlanId: turn.sourceProposedPlanId,
+                assistantMessageId: turn.assistantMessageId,
+                state: turn.state,
+                requestedAt: turn.requestedAt,
+                startedAt: turn.startedAt,
+                completedAt: turn.completedAt,
+                checkpointTurnCount: turn.checkpointTurnCount,
+                checkpointRef: turn.checkpointRef,
+                checkpointStatus: turn.checkpointStatus,
+                checkpointFiles: turn.checkpointFiles.map((file) => ({ ...file })),
+              }),
+            { concurrency: 1 },
+          ).pipe(Effect.asVoid);
+          yield* projectionTurnRepository.deletePendingTurnStartByThreadId({
+            threadId: event.payload.threadId,
+          });
+          return;
+        }
+
         case "thread.turn-start-requested": {
           yield* projectionTurnRepository.replacePendingTurnStart({
             threadId: event.payload.threadId,

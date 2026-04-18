@@ -73,6 +73,32 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }),
   );
 
+  it.effect("includes the navigation command menu in default keybindings", () =>
+    Effect.sync(() => {
+      assert.isTrue(
+        DEFAULT_KEYBINDINGS.some(
+          (rule) =>
+            rule.command === "navigation.commandMenu" &&
+            rule.key === "mod+e" &&
+            rule.when === "!terminalFocus",
+        ),
+      );
+    }),
+  );
+
+  it.effect("includes the worktree terminal command in default keybindings", () =>
+    Effect.sync(() => {
+      assert.isTrue(
+        DEFAULT_KEYBINDINGS.some(
+          (rule) =>
+            rule.command === "terminal.worktree.open" &&
+            rule.key === "mod+t" &&
+            rule.when === "!terminalFocus",
+        ),
+      );
+    }),
+  );
+
   it.effect("compiles valid rule with parsed when AST", () =>
     Effect.sync(() => {
       const compiled = compileResolvedKeybindingRule({

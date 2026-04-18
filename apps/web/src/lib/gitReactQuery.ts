@@ -63,6 +63,26 @@ function invalidateGitBranchQueries(
   return queryClient.invalidateQueries({ queryKey: gitQueryKeys.branches(environmentId, cwd) });
 }
 
+export function gitBranchesQueryOptions(input: {
+  environmentId: EnvironmentId | null;
+  cwd: string | null;
+}) {
+  return queryOptions({
+    queryKey: gitQueryKeys.branches(input.environmentId, input.cwd),
+    queryFn: async () => {
+      if (!input.cwd) throw new Error("Git branches are unavailable.");
+      if (!input.environmentId) throw new Error("Git branches are unavailable.");
+      const api = ensureEnvironmentApi(input.environmentId);
+      return api.git.listBranches({ cwd: input.cwd, limit: GIT_BRANCHES_PAGE_SIZE });
+    },
+    enabled: input.cwd !== null && input.environmentId !== null,
+    staleTime: GIT_BRANCHES_STALE_TIME_MS,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
+    refetchInterval: GIT_BRANCHES_REFETCH_INTERVAL_MS,
+  });
+}
+
 export function gitBranchSearchInfiniteQueryOptions(input: {
   environmentId: EnvironmentId | null;
   cwd: string | null;

@@ -69,6 +69,7 @@ function makeReadModel(
         workspaceRoot: "/tmp/provider-reaper-project",
         defaultModelSelection,
         scripts: [],
+        worktreeGroupTitles: [],
         createdAt: now,
         updatedAt: now,
         deletedAt: null,
@@ -83,6 +84,7 @@ function makeReadModel(
       runtimeMode: "full-access" as const,
       branch: null,
       worktreePath: null,
+      forkOrigin: null,
       createdAt: now,
       updatedAt: now,
       archivedAt: null,
@@ -133,6 +135,7 @@ describe("ProviderSessionReaper", () => {
 
     const providerService: ProviderServiceShape = {
       startSession: () => unsupported(),
+      forkThread: () => unsupported(),
       sendTurn: () => unsupported(),
       interruptTurn: () => unsupported(),
       respondToRequest: () => unsupported(),
@@ -141,6 +144,7 @@ describe("ProviderSessionReaper", () => {
       listSessions: () => Effect.succeed([]),
       getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
       rollbackConversation: () => unsupported(),
+      archiveThread: () => unsupported(),
       streamEvents: Stream.empty,
     };
 

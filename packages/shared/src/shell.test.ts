@@ -10,6 +10,7 @@ import {
   readEnvironmentFromWindowsShell,
   readPathFromLaunchctl,
   readPathFromLoginShell,
+  resolveLoginShell,
   resolveKnownWindowsCliDirs,
   resolveWindowsEnvironment,
 } from "./shell.ts";
@@ -100,6 +101,27 @@ describe("readPathFromLaunchctl", () => {
   });
 });
 
+describe("resolveLoginShell", () => {
+  it("keeps explicit non-nix shell paths", () => {
+    expect(resolveLoginShell("linux", "/bin/zsh")).toBe("/bin/zsh");
+  });
+
+  it("rewrites non-interactive nix bash paths to the system bash on linux", () => {
+    expect(resolveLoginShell("linux", "/nix/store/hash-bash-5.3/bin/bash")).toBe(
+      "/run/current-system/sw/bin/bash",
+    );
+    expect(resolveLoginShell("linux", "/nix/store/hash-bash-5.3/bin/sh")).toBe(
+      "/run/current-system/sw/bin/sh",
+    );
+  });
+
+  it("keeps nix bash-interactive paths unchanged on linux", () => {
+    expect(resolveLoginShell("linux", "/nix/store/hash-bash-interactive-5.3/bin/bash")).toBe(
+      "/nix/store/hash-bash-interactive-5.3/bin/bash",
+    );
+  });
+});
+
 describe("readEnvironmentFromLoginShell", () => {
   it("extracts multiple environment variables from a login shell command", () => {
     const execFile = vi.fn<
@@ -177,6 +199,16 @@ describe("listLoginShellCandidates", () => {
 
   it("falls back to the platform default when no shells are available", () => {
     expect(listLoginShellCandidates("linux", undefined, "")).toEqual(["/bin/bash"]);
+  });
+
+  it("normalizes non-interactive nix bash paths on linux", () => {
+    expect(
+      listLoginShellCandidates(
+        "linux",
+        "/nix/store/hash-bash-5.3/bin/bash",
+        "/nix/store/hash-bash-5.3/bin/sh",
+      ),
+    ).toEqual(["/run/current-system/sw/bin/bash", "/run/current-system/sw/bin/sh", "/bin/bash"]);
   });
 });
 

@@ -1,4 +1,4 @@
-import { CommandId, EventId, ProjectId } from "@t3tools/contracts";
+import { CommandId, EventId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, Layer, Schema, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -65,6 +65,211 @@ layer("OrchestrationEventStore", (it) => {
     }),
   );
 
+  it.effect("replays legacy project.created rows without defaultModelSelection", () =>
+    Effect.gen(function* () {
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = new Date().toISOString();
+
+      yield* sql`
+        INSERT INTO orchestration_events (
+          event_id,
+          aggregate_kind,
+          stream_id,
+          stream_version,
+          event_type,
+          occurred_at,
+          command_id,
+          causation_event_id,
+          correlation_id,
+          actor_kind,
+          payload_json,
+          metadata_json
+        )
+        VALUES (
+          ${EventId.make("evt-store-legacy-project-created")},
+          ${"project"},
+          ${ProjectId.make("project-legacy-project-created")},
+          ${0},
+          ${"project.created"},
+          ${now},
+          ${CommandId.make("cmd-store-legacy-project-created")},
+          ${null},
+          ${null},
+          ${"server"},
+          ${JSON.stringify({
+            projectId: "project-legacy-project-created",
+            title: "Legacy Project",
+            workspaceRoot: "/tmp/project-legacy-project-created",
+            scripts: [],
+            createdAt: now,
+            updatedAt: now,
+          })},
+          ${"{}"}
+        )
+      `;
+
+      const replayed = yield* Stream.runCollect(eventStore.readFromSequence(0, 10)).pipe(
+        Effect.map((chunk) => Array.from(chunk)),
+      );
+
+      const legacyEvent = replayed.find(
+        (event) => event.aggregateId === ProjectId.make("project-legacy-project-created"),
+      );
+      assert.ok(legacyEvent);
+      assert.equal(legacyEvent.type, "project.created");
+      if (legacyEvent.type === "project.created") {
+        assert.equal(legacyEvent.payload.defaultModelSelection, null);
+      }
+    }),
+  );
+
+  it.effect("replays legacy thread.created rows with a plain model field", () =>
+    Effect.gen(function* () {
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = new Date().toISOString();
+
+      yield* sql`
+        INSERT INTO orchestration_events (
+          event_id,
+          aggregate_kind,
+          stream_id,
+          stream_version,
+          event_type,
+          occurred_at,
+          command_id,
+          causation_event_id,
+          correlation_id,
+          actor_kind,
+          payload_json,
+          metadata_json
+        )
+        VALUES (
+          ${EventId.make("evt-store-legacy-thread-created")},
+          ${"thread"},
+          ${ThreadId.make("thread-legacy-thread-created")},
+          ${0},
+          ${"thread.created"},
+          ${now},
+          ${CommandId.make("cmd-store-legacy-thread-created")},
+          ${null},
+          ${null},
+          ${"server"},
+          ${JSON.stringify({
+            threadId: "thread-legacy-thread-created",
+            projectId: "project-legacy-project-created",
+            title: "Legacy Thread",
+            model: "gpt-5",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          })},
+          ${"{}"}
+        )
+      `;
+
+      const replayed = yield* Stream.runCollect(eventStore.readFromSequence(0, 20)).pipe(
+        Effect.map((chunk) => Array.from(chunk)),
+      );
+
+      const legacyEvent = replayed.find(
+        (event) => event.aggregateId === ThreadId.make("thread-legacy-thread-created"),
+      );
+      assert.ok(legacyEvent);
+      assert.equal(legacyEvent.type, "thread.created");
+      if (legacyEvent.type === "thread.created") {
+        assert.deepStrictEqual(legacyEvent.payload.modelSelection, {
+          provider: "codex",
+          model: "gpt-5",
+        });
+      }
+    }),
+  );
+
+  it.effect("replays legacy thread.forked rows as thread.created events", () =>
+    Effect.gen(function* () {
+      const eventStore = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = new Date().toISOString();
+
+      yield* sql`
+        INSERT INTO orchestration_events (
+          event_id,
+          aggregate_kind,
+          stream_id,
+          stream_version,
+          event_type,
+          occurred_at,
+          command_id,
+          causation_event_id,
+          correlation_id,
+          actor_kind,
+          payload_json,
+          metadata_json
+        )
+        VALUES (
+          ${EventId.make("evt-store-legacy-thread-forked")},
+          ${"thread"},
+          ${ThreadId.make("thread-legacy-thread-forked")},
+          ${0},
+          ${"thread.forked"},
+          ${now},
+          ${CommandId.make("cmd-store-legacy-thread-forked")},
+          ${null},
+          ${null},
+          ${"server"},
+          ${JSON.stringify({
+            threadId: "thread-legacy-thread-forked",
+            projectId: "project-legacy-project-created",
+            title: "Legacy Forked Thread",
+            model: "gpt-5.4",
+            forkOrigin: {
+              sourceThreadId: "thread-source",
+              sourceTurnId: "turn-source",
+              sourceCheckpointTurnCount: 3,
+              forkedAt: now,
+            },
+            latestTurn: {
+              turnId: "turn-source",
+              state: "completed",
+              requestedAt: now,
+              startedAt: now,
+              completedAt: now,
+              assistantMessageId: "message-source",
+            },
+            messages: [],
+            activities: [],
+            checkpoints: [],
+            turns: [],
+            createdAt: now,
+            updatedAt: now,
+          })},
+          ${"{}"}
+        )
+      `;
+
+      const replayed = yield* Stream.runCollect(eventStore.readFromSequence(0, 20)).pipe(
+        Effect.map((chunk) => Array.from(chunk)),
+      );
+
+      const legacyEvent = replayed.find(
+        (event) => event.aggregateId === ThreadId.make("thread-legacy-thread-forked"),
+      );
+      assert.ok(legacyEvent);
+      assert.equal(legacyEvent.type, "thread.created");
+      if (legacyEvent.type === "thread.created") {
+        assert.deepStrictEqual(legacyEvent.payload.modelSelection, {
+          provider: "codex",
+          model: "gpt-5.4",
+        });
+        assert.equal(legacyEvent.payload.runtimeMode, "full-access");
+        assert.equal(legacyEvent.payload.interactionMode, "default");
+      }
+    }),
+  );
+
   it.effect("fails with PersistenceDecodeError when stored json is invalid", () =>
     Effect.gen(function* () {
       const eventStore = yield* OrchestrationEventStore;
@@ -113,6 +318,62 @@ layer("OrchestrationEventStore", (it) => {
             "OrchestrationEventStore.readFromSequence:decodeRows",
           ),
         );
+      }
+    }),
+  );
+
+  it.effect("round-trips thread.forked events without checkpoint ancestry", () =>
+    Effect.gen(function* () {
+      const eventStore = yield* OrchestrationEventStore;
+      const now = new Date().toISOString();
+
+      const appended = yield* eventStore.append({
+        type: "thread.forked",
+        eventId: EventId.make("evt-thread-forked-roundtrip"),
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-forked-roundtrip"),
+        occurredAt: now,
+        commandId: CommandId.make("cmd-thread-forked-roundtrip"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-thread-forked-roundtrip"),
+        metadata: {},
+        payload: {
+          threadId: ThreadId.make("thread-forked-roundtrip"),
+          projectId: ProjectId.make("project-roundtrip"),
+          title: "Fork: Roundtrip",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5",
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          forkOrigin: {
+            sourceThreadId: ThreadId.make("thread-source-roundtrip"),
+            sourceTurnId: null,
+            sourceCheckpointTurnCount: null,
+            forkedAt: now,
+          },
+          latestTurn: null,
+          messages: [],
+          proposedPlans: [],
+          activities: [],
+          checkpoints: [],
+          turns: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+
+      const replayed = yield* Stream.runCollect(
+        eventStore.readFromSequence(appended.sequence - 1, 10),
+      ).pipe(Effect.map((chunk) => Array.from(chunk)));
+      const forkedEvent = replayed.find((event) => event.eventId === appended.eventId);
+      assert.equal(forkedEvent?.type, "thread.forked");
+      if (forkedEvent?.type === "thread.forked") {
+        assert.equal(forkedEvent.payload.forkOrigin.sourceTurnId, null);
+        assert.equal(forkedEvent.payload.forkOrigin.sourceCheckpointTurnCount, null);
       }
     }),
   );

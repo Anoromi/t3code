@@ -1,4 +1,6 @@
 import {
+  type CodexReasoningEffort,
+  type GitBranch,
   type ProjectEntry,
   type ProviderKind,
   type ServerProviderSkill,
@@ -47,6 +49,13 @@ export type ComposerCommandItem =
     }
   | {
       id: string;
+      type: "reasoning";
+      effort: CodexReasoningEffort;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
       type: "model";
       provider: ProviderKind;
       model: string;
@@ -58,6 +67,27 @@ export type ComposerCommandItem =
       type: "skill";
       provider: ProviderKind;
       skill: ServerProviderSkill;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "branch";
+      branch: GitBranch;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "worktree-mode";
+      mode: "local" | "worktree";
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "named-worktree-target";
+      branchName: string;
       label: string;
       description: string;
     };
@@ -99,7 +129,9 @@ function groupCommandItems(
     return [{ id: "default", label: null, items }];
   }
 
-  const builtInItems = items.filter((item) => item.type === "slash-command");
+  const builtInItems = items.filter(
+    (item) => item.type === "slash-command" || item.type === "reasoning",
+  );
   const providerItems = items.filter((item) => item.type === "provider-slash-command");
 
   const groups: ComposerCommandGroup[] = [];
@@ -258,6 +290,26 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       {props.item.type === "model" ? (
         <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
           model
+        </Badge>
+      ) : null}
+      {props.item.type === "reasoning" ? (
+        <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+          reasoning
+        </Badge>
+      ) : null}
+      {props.item.type === "branch" ? (
+        <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+          branch
+        </Badge>
+      ) : null}
+      {props.item.type === "worktree-mode" ? (
+        <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+          worktree
+        </Badge>
+      ) : null}
+      {props.item.type === "named-worktree-target" ? (
+        <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
+          worktree
         </Badge>
       ) : null}
       <span className="flex min-w-0 flex-1 items-center gap-2">

@@ -20,6 +20,8 @@ import type {
   ProviderSendTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
+  ProviderThreadForkInput,
+  ProviderThreadForkResult,
   ProviderStopSessionInput,
   ThreadId,
   ProviderTurnStartResult,
@@ -41,6 +43,13 @@ export interface ProviderServiceShape {
     threadId: ThreadId,
     input: ProviderSessionStartInput,
   ) => Effect.Effect<ProviderSession, ProviderServiceError>;
+
+  /**
+   * Fork a provider thread into a new provider-backed thread lineage.
+   */
+  readonly forkThread: (
+    input: ProviderThreadForkInput,
+  ) => Effect.Effect<ProviderThreadForkResult, ProviderServiceError>;
 
   /**
    * Send a provider turn.
@@ -97,6 +106,15 @@ export interface ProviderServiceShape {
   readonly rollbackConversation: (input: {
     readonly threadId: ThreadId;
     readonly numTurns: number;
+  }) => Effect.Effect<void, ProviderServiceError>;
+
+  /**
+   * Archive a provider thread by provider resume cursor.
+   */
+  readonly archiveThread: (input: {
+    readonly threadId: ThreadId;
+    readonly provider: ProviderKind;
+    readonly resumeCursor: unknown;
   }) => Effect.Effect<void, ProviderServiceError>;
 
   /**

@@ -1,12 +1,17 @@
 import {
+  type KeybindingCommand,
   type EnvironmentId,
+  type GitBranch,
+  type ResolvedKeybindingsConfig,
   ProjectId,
   type ModelSelection,
+  type OrchestrationLatestTurn,
   type ProviderKind,
   type ScopedThreadRef,
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
+import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadSession } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import { Schema } from "effect";
@@ -17,6 +22,9 @@ import {
   type TerminalContextDraft,
 } from "../lib/terminalContext";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
+import { resolveShortcutCommand, type ShortcutEventLike } from "../keybindings";
+
+export { buildTemporaryWorktreeBranchName };
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
@@ -43,9 +51,11 @@ export function buildLocalDraftThread(
     error,
     createdAt: draftThread.createdAt,
     archivedAt: null,
+    updatedAt: draftThread.createdAt,
     latestTurn: null,
     branch: draftThread.branch,
     worktreePath: draftThread.worktreePath,
+    forkOrigin: null,
     turnDiffSummaries: [],
     activities: [],
     proposedPlans: [],
@@ -102,6 +112,33 @@ export function reconcileMountedTerminalThreadIds(input: {
   return nextThreadIds;
 }
 
+export function resolveChatViewShortcutCommand(input: {
+  event: ShortcutEventLike;
+  keybindings: ResolvedKeybindingsConfig;
+  terminalFocus: boolean;
+  terminalOpen: boolean;
+  preferExternalDiff: boolean;
+}): KeybindingCommand | null {
+  if (input.preferExternalDiff) {
+    const desktopDiffCommand = resolveShortcutCommand(input.event, input.keybindings, {
+      context: {
+        terminalFocus: false,
+        terminalOpen: input.terminalOpen,
+      },
+    });
+    if (desktopDiffCommand === "diff.toggle") {
+      return desktopDiffCommand;
+    }
+  }
+
+  return resolveShortcutCommand(input.event, input.keybindings, {
+    context: {
+      terminalFocus: input.terminalFocus,
+      terminalOpen: input.terminalOpen,
+    },
+  });
+}
+
 export function revokeBlobPreviewUrl(previewUrl: string | undefined): void {
   if (!previewUrl || typeof URL === "undefined" || !previewUrl.startsWith("blob:")) {
     return;
@@ -139,6 +176,75 @@ export interface PullRequestDialogState {
   key: number;
 }
 
+type ForkableThread = Pick<
+  Thread,
+  | "messages"
+  | "activities"
+  | "proposedPlans"
+  | "turnDiffSummaries"
+  | "latestTurn"
+  | "session"
+  | "modelSelection"
+>;
+
+export function threadSupportsCodexFork(thread: ForkableThread | null): boolean {
+  if (thread === null) {
+    return false;
+  }
+  return (thread.session?.provider ?? thread.modelSelection.provider) === "codex";
+}
+
+export function hasForkableThreadHistory(thread: ForkableThread | null): boolean {
+  if (thread === null) {
+    return false;
+  }
+  return (
+    thread.messages.length > 0 ||
+    thread.activities.length > 0 ||
+    thread.proposedPlans.length > 0 ||
+    thread.turnDiffSummaries.length > 0 ||
+    thread.latestTurn !== null
+  );
+}
+
+export function latestTurnIsForkSettled(latestTurn: OrchestrationLatestTurn | null): boolean {
+  if (latestTurn === null) {
+    return true;
+  }
+  if (latestTurn.state === "running") {
+    return false;
+  }
+  if (latestTurn.startedAt !== null && latestTurn.completedAt === null) {
+    return false;
+  }
+  return true;
+}
+
+export function isThreadForkReady(options: {
+  thread: ForkableThread | null;
+  isServerThread: boolean;
+  phase: SessionPhase | null;
+  isSendBusy: boolean;
+  isConnecting: boolean;
+  isRevertingCheckpoint: boolean;
+}): boolean {
+  if (!options.isServerThread || !hasForkableThreadHistory(options.thread)) {
+    return false;
+  }
+  if (
+    options.phase === "running" ||
+    options.isSendBusy ||
+    options.isConnecting ||
+    options.isRevertingCheckpoint
+  ) {
+    return false;
+  }
+  if (!latestTurnIsForkSettled(options.thread?.latestTurn ?? null)) {
+    return false;
+  }
+  return options.thread?.session?.orchestrationStatus !== "running";
+}
+
 export function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -161,6 +267,77 @@ export function resolveSendEnvMode(input: {
   isGitRepo: boolean;
 }): DraftThreadEnvMode {
   return input.isGitRepo ? input.requestedEnvMode : "local";
+}
+
+export type PendingWorktreeAction =
+  | {
+      kind: "create-worktree";
+      branch: string;
+      newBranch: string;
+    }
+  | {
+      kind: "error";
+      message: string;
+    };
+
+function normalizeBranchName(branch: string | null | undefined): string | null {
+  const normalized = branch?.trim() ?? "";
+  return normalized.length > 0 ? normalized : null;
+}
+
+function findCurrentLocalBranch(gitBranches: ReadonlyArray<GitBranch>): string | null {
+  return gitBranches.find((branch) => !branch.isRemote && branch.current)?.name ?? null;
+}
+
+export function resolvePendingWorktreeAction(input: {
+  baseBranch: string | null;
+  pendingWorktreeBranch: string | null;
+  gitBranches: ReadonlyArray<GitBranch>;
+}): PendingWorktreeAction {
+  const baseBranch =
+    normalizeBranchName(input.baseBranch) ??
+    normalizeBranchName(findCurrentLocalBranch(input.gitBranches));
+  if (baseBranch === null) {
+    return {
+      kind: "error",
+      message: "Select a base branch before sending in New worktree mode.",
+    };
+  }
+
+  const pendingWorktreeBranch = normalizeBranchName(input.pendingWorktreeBranch);
+  if (pendingWorktreeBranch !== null) {
+    const localBranch = input.gitBranches.find(
+      (branch) => !branch.isRemote && branch.name === pendingWorktreeBranch,
+    );
+    if (localBranch) {
+      return {
+        kind: "error",
+        message: `Branch "${pendingWorktreeBranch}" already exists locally. Pick a different worktree branch name or use that branch directly.`,
+      };
+    }
+
+    const remoteBranch = input.gitBranches.find(
+      (branch) => branch.isRemote && branch.name === pendingWorktreeBranch,
+    );
+    if (remoteBranch) {
+      return {
+        kind: "error",
+        message: `Branch "${pendingWorktreeBranch}" already exists on a remote. Pick a different worktree branch name or create/check out the branch first.`,
+      };
+    }
+
+    return {
+      kind: "create-worktree",
+      branch: baseBranch,
+      newBranch: pendingWorktreeBranch,
+    };
+  }
+
+  return {
+    kind: "create-worktree",
+    branch: baseBranch,
+    newBranch: buildTemporaryWorktreeBranchName(),
+  };
 }
 
 export function cloneComposerImageForRetry(

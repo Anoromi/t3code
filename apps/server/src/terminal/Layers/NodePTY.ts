@@ -115,7 +115,7 @@ export const layer = Layer.effect(
         yield* ensureNodePtySpawnHelperExecutableCached;
         const ptyProcess = yield* Effect.try({
           try: () =>
-            nodePty.spawn(input.shell, input.args ?? [], {
+            nodePty.spawn(input.file, [...(input.args ?? [])], {
               cwd: input.cwd,
               cols: input.cols,
               rows: input.rows,

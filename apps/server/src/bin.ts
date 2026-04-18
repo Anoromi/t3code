@@ -10,6 +10,23 @@ import packageJson from "../package.json" with { type: "json" };
 
 const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
+const knownSubcommands = new Set(["start", "serve", "auth", "project"]);
+const rawArgv = process.argv.slice(2);
+const normalizedArgv =
+  rawArgv.length === 0
+    ? ["start"]
+    : knownSubcommands.has(rawArgv[0] ?? "") ||
+        rawArgv[0] === "--help" ||
+        rawArgv[0] === "-h" ||
+        rawArgv[0] === "--version" ||
+        rawArgv[0] === "-v"
+      ? rawArgv
+      : rawArgv[0]?.startsWith("-")
+        ? ["start", ...rawArgv]
+        : ["start", ...rawArgv];
+
+process.argv.splice(2, process.argv.length - 2, ...normalizedArgv);
+
 Command.run(cli, { version: packageJson.version }).pipe(
   Effect.scoped,
   Effect.provide(CliRuntimeLayer),

@@ -1,5 +1,3 @@
-import * as Option from "effect/Option";
-import * as Arr from "effect/Array";
 import {
   ApprovalRequestId,
   isToolLifecycleItemType,
@@ -22,7 +20,7 @@ import type {
   TurnDiffSummary,
 } from "./types";
 
-export type ProviderPickerKind = ProviderKind;
+export type ProviderPickerKind = ProviderKind | "cursor";
 
 export const PROVIDER_OPTIONS: Array<{
   value: ProviderPickerKind;
@@ -31,8 +29,7 @@ export const PROVIDER_OPTIONS: Array<{
 }> = [
   { value: "codex", label: "Codex", available: true },
   { value: "claudeAgent", label: "Claude", available: true },
-  { value: "opencode", label: "OpenCode", available: true },
-  { value: "cursor", label: "Cursor", available: true },
+  { value: "cursor", label: "Cursor", available: false },
 ];
 
 export interface WorkLogEntry {
@@ -52,7 +49,6 @@ export interface WorkLogEntry {
 interface DerivedWorkLogEntry extends WorkLogEntry {
   activityKind: OrchestrationThreadActivity["kind"];
   collapseKey?: string;
-  toolCallId?: string;
 }
 
 export interface PendingApproval {
@@ -66,6 +62,14 @@ export interface PendingUserInput {
   requestId: ApprovalRequestId;
   createdAt: string;
   questions: ReadonlyArray<UserInputQuestion>;
+}
+
+export interface RecoverablePendingUserInput {
+  requestId: ApprovalRequestId;
+  createdAt: string;
+  failedAt: string;
+  questions: ReadonlyArray<UserInputQuestion>;
+  failureDetail: string;
 }
 
 export interface ActivePlanState {
@@ -188,7 +192,8 @@ function isStalePendingRequestFailureDetail(detail: string | undefined): boolean
     normalized.includes("stale pending user-input request") ||
     normalized.includes("unknown pending approval request") ||
     normalized.includes("unknown pending permission request") ||
-    normalized.includes("unknown pending user-input request")
+    normalized.includes("unknown pending user-input request") ||
+    normalized.includes("unknown pending user input request")
   );
 }
 
@@ -347,6 +352,83 @@ export function derivePendingUserInputs(
   );
 }
 
+export function deriveRecoverableUserInputPrompt(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+  messages: ReadonlyArray<ChatMessage>,
+  session: SessionActivityState | null,
+): RecoverablePendingUserInput | null {
+  if (session?.orchestrationStatus === "running") {
+    return null;
+  }
+
+  const openByRequestId = new Map<ApprovalRequestId, PendingUserInput>();
+  const ordered = [...activities].toSorted(compareActivitiesByOrder);
+  let latestRecoverable: RecoverablePendingUserInput | null = null;
+
+  for (const activity of ordered) {
+    const payload =
+      activity.payload && typeof activity.payload === "object"
+        ? (activity.payload as Record<string, unknown>)
+        : null;
+    const requestId =
+      payload && typeof payload.requestId === "string"
+        ? ApprovalRequestId.make(payload.requestId)
+        : null;
+    const detail = payload && typeof payload.detail === "string" ? payload.detail : undefined;
+
+    if (activity.kind === "user-input.requested" && requestId) {
+      const questions = parseUserInputQuestions(payload);
+      if (!questions) {
+        continue;
+      }
+      openByRequestId.set(requestId, {
+        requestId,
+        createdAt: activity.createdAt,
+        questions,
+      });
+      continue;
+    }
+
+    if (activity.kind === "user-input.resolved" && requestId) {
+      openByRequestId.delete(requestId);
+      continue;
+    }
+
+    if (
+      activity.kind === "provider.user-input.respond.failed" &&
+      requestId &&
+      detail &&
+      isStalePendingRequestFailureDetail(detail)
+    ) {
+      const pending = openByRequestId.get(requestId);
+      if (!pending) {
+        continue;
+      }
+      latestRecoverable = {
+        requestId,
+        createdAt: pending.createdAt,
+        failedAt: activity.createdAt,
+        questions: pending.questions,
+        failureDetail: detail,
+      };
+      openByRequestId.delete(requestId);
+    }
+  }
+
+  if (!latestRecoverable) {
+    return null;
+  }
+
+  const supersededByLaterUserMessage = messages.some(
+    (message) => message.role === "user" && message.createdAt > latestRecoverable.failedAt,
+  );
+  if (supersededByLaterUserMessage) {
+    return null;
+  }
+
+  return latestRecoverable;
+}
+
 export function deriveActivePlanState(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   latestTurnId: TurnId | undefined,
@@ -355,12 +437,12 @@ export function deriveActivePlanState(
   const allPlanActivities = ordered.filter((activity) => activity.kind === "turn.plan.updated");
   // Prefer plan from the current turn; fall back to the most recent plan from any turn
   // so that TodoWrite tasks persist across follow-up messages.
-  const latest = Option.firstSomeOf([
-    ...(latestTurnId
-      ? Arr.findLast(allPlanActivities, (activity) => activity.turnId === latestTurnId)
-      : Option.none()),
-    Arr.last(allPlanActivities),
-  ]).pipe(Option.getOrNull);
+  const latest =
+    (latestTurnId
+      ? allPlanActivities.filter((activity) => activity.turnId === latestTurnId).at(-1)
+      : undefined) ??
+    allPlanActivities.at(-1) ??
+    null;
   if (!latest) {
     return null;
   }
@@ -518,15 +600,6 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       ? payload.detail
       : null;
   const taskLabel = taskSummary || taskDetailAsLabel;
-  const detail = isTaskActivity
-    ? !taskDetailAsLabel &&
-      payload &&
-      typeof payload.detail === "string" &&
-      payload.detail.length > 0
-      ? stripTrailingExitCode(payload.detail).output
-      : null
-    : extractToolDetail(payload, title ?? activity.summary);
-  const toolCallId = isTaskActivity ? null : extractToolCallId(payload);
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
     createdAt: activity.createdAt,
@@ -541,8 +614,16 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   };
   const itemType = extractWorkLogItemType(payload);
   const requestKind = extractWorkLogRequestKind(payload);
-  if (detail) {
-    entry.detail = detail;
+  if (
+    !taskDetailAsLabel &&
+    payload &&
+    typeof payload.detail === "string" &&
+    payload.detail.length > 0
+  ) {
+    const detail = stripTrailingExitCode(payload.detail).output;
+    if (detail) {
+      entry.detail = detail;
+    }
   }
   if (commandPreview.command) {
     entry.command = commandPreview.command;
@@ -561,9 +642,6 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   }
   if (requestKind) {
     entry.requestKind = requestKind;
-  }
-  if (toolCallId) {
-    entry.toolCallId = toolCallId;
   }
   const collapseKey = deriveToolLifecycleCollapseKey(entry);
   if (collapseKey) {
@@ -600,16 +678,7 @@ function shouldCollapseToolLifecycleEntries(
   if (previous.activityKind === "tool.completed") {
     return false;
   }
-  if (previous.collapseKey !== undefined && previous.collapseKey === next.collapseKey) {
-    return true;
-  }
-  return (
-    previous.toolCallId !== undefined &&
-    next.toolCallId === undefined &&
-    previous.itemType === next.itemType &&
-    normalizeCompactToolLabel(previous.toolTitle ?? previous.label) ===
-      normalizeCompactToolLabel(next.toolTitle ?? next.label)
-  );
+  return previous.collapseKey !== undefined && previous.collapseKey === next.collapseKey;
 }
 
 function mergeDerivedWorkLogEntries(
@@ -624,7 +693,6 @@ function mergeDerivedWorkLogEntries(
   const itemType = next.itemType ?? previous.itemType;
   const requestKind = next.requestKind ?? previous.requestKind;
   const collapseKey = next.collapseKey ?? previous.collapseKey;
-  const toolCallId = next.toolCallId ?? previous.toolCallId;
   return {
     ...previous,
     ...next,
@@ -636,7 +704,6 @@ function mergeDerivedWorkLogEntries(
     ...(itemType ? { itemType } : {}),
     ...(requestKind ? { requestKind } : {}),
     ...(collapseKey ? { collapseKey } : {}),
-    ...(toolCallId ? { toolCallId } : {}),
   };
 }
 
@@ -654,9 +721,6 @@ function mergeChangedFiles(
 function deriveToolLifecycleCollapseKey(entry: DerivedWorkLogEntry): string | undefined {
   if (entry.activityKind !== "tool.updated" && entry.activityKind !== "tool.completed") {
     return undefined;
-  }
-  if (entry.toolCallId) {
-    return `tool:${entry.toolCallId}`;
   }
   const normalizedLabel = normalizeCompactToolLabel(entry.toolTitle ?? entry.label);
   const detail = entry.detail?.trim() ?? "";
@@ -693,10 +757,6 @@ function asTrimmedString(value: unknown): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
-}
-
-function asNumber(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function trimMatchingOuterQuotes(value: string): string {
@@ -880,111 +940,6 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
 
 function extractToolTitle(payload: Record<string, unknown> | null): string | null {
   return asTrimmedString(payload?.title);
-}
-
-function extractToolCallId(payload: Record<string, unknown> | null): string | null {
-  const data = asRecord(payload?.data);
-  return asTrimmedString(data?.toolCallId);
-}
-
-function normalizeInlinePreview(value: string): string {
-  return value.replace(/\s+/g, " ").trim();
-}
-
-function truncateInlinePreview(value: string, maxLength = 84): string {
-  if (value.length <= maxLength) {
-    return value;
-  }
-  return `${value.slice(0, maxLength - 1).trimEnd()}…`;
-}
-
-function normalizePreviewForComparison(value: string | null | undefined): string | null {
-  const normalized = asTrimmedString(value);
-  if (!normalized) {
-    return null;
-  }
-  return normalizeCompactToolLabel(normalizeInlinePreview(normalized)).toLowerCase();
-}
-
-function summarizeToolTextOutput(value: string): string | null {
-  const lines = value
-    .split(/\r?\n/u)
-    .map((line) => normalizeInlinePreview(line))
-    .filter((line) => line.length > 0);
-  const firstLine = lines.find((line) => line !== "```");
-  if (firstLine) {
-    return truncateInlinePreview(firstLine);
-  }
-  if (lines.length > 1) {
-    return `${lines.length.toLocaleString()} lines`;
-  }
-  return null;
-}
-
-function summarizeToolRawOutput(payload: Record<string, unknown> | null): string | null {
-  const data = asRecord(payload?.data);
-  const rawOutput = asRecord(data?.rawOutput);
-  if (!rawOutput) {
-    return null;
-  }
-
-  const totalFiles = asNumber(rawOutput.totalFiles);
-  if (totalFiles !== null) {
-    const suffix = rawOutput.truncated === true ? "+" : "";
-    return `${totalFiles.toLocaleString()} file${totalFiles === 1 ? "" : "s"}${suffix}`;
-  }
-
-  const content = asTrimmedString(rawOutput.content);
-  if (content) {
-    return summarizeToolTextOutput(content);
-  }
-
-  const stdout = asTrimmedString(rawOutput.stdout);
-  if (stdout) {
-    return summarizeToolTextOutput(stdout);
-  }
-
-  return null;
-}
-
-function isCommandToolDetail(payload: Record<string, unknown> | null, heading: string): boolean {
-  const data = asRecord(payload?.data);
-  const kind = asTrimmedString(data?.kind)?.toLowerCase();
-  const title = asTrimmedString(payload?.title ?? heading)?.toLowerCase();
-  return (
-    extractWorkLogItemType(payload) === "command_execution" ||
-    kind === "execute" ||
-    title === "terminal" ||
-    title === "ran command"
-  );
-}
-
-function extractToolDetail(
-  payload: Record<string, unknown> | null,
-  heading: string,
-): string | null {
-  const rawDetail = asTrimmedString(payload?.detail);
-  const detail = rawDetail ? stripTrailingExitCode(rawDetail).output : null;
-  const normalizedHeading = normalizePreviewForComparison(heading);
-  const normalizedDetail = normalizePreviewForComparison(detail);
-
-  if (detail && normalizedHeading !== normalizedDetail) {
-    return detail;
-  }
-
-  if (isCommandToolDetail(payload, heading)) {
-    return null;
-  }
-
-  const rawOutputSummary = summarizeToolRawOutput(payload);
-  if (rawOutputSummary) {
-    const normalizedRawOutputSummary = normalizePreviewForComparison(rawOutputSummary);
-    if (normalizedRawOutputSummary !== normalizedHeading) {
-      return rawOutputSummary;
-    }
-  }
-
-  return null;
 }
 
 function stripTrailingExitCode(value: string): {

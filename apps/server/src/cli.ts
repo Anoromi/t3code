@@ -22,6 +22,7 @@ import {
   Schema,
   SchemaIssue,
   SchemaTransformation,
+  Stream,
 } from "effect";
 import { Argument, Command, Flag, GlobalFlag } from "effect/unstable/cli";
 import {
@@ -57,6 +58,9 @@ import { OrchestrationEngineService } from "./orchestration/Services/Orchestrati
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
+import { ProviderSessionRuntimeRepositoryLive } from "./persistence/Layers/ProviderSessionRuntime.ts";
+import { ProviderSessionDirectoryLive } from "./provider/Layers/ProviderSessionDirectory.ts";
+import { ProviderService, type ProviderServiceShape } from "./provider/Services/ProviderService.ts";
 import { RepositoryIdentityResolverLive } from "./project/Layers/RepositoryIdentityResolver.ts";
 import { getAutoBootstrapDefaultModelSelection } from "./serverRuntimeStartup.ts";
 import {
@@ -489,10 +493,36 @@ type ProjectCliDispatchCommand = Extract<
   { type: "project.create" | "project.meta.update" | "project.delete" }
 >;
 
+const unsupportedProjectCliProviderOperation = (operation: string) =>
+  Effect.die(`${operation} is not available in the offline project CLI runtime`);
+
+const ProjectCliProviderSupportLive = Layer.mergeAll(
+  ProviderSessionDirectoryLive.pipe(Layer.provide(ProviderSessionRuntimeRepositoryLive)),
+  Layer.succeed(ProviderService, {
+    startSession: () => unsupportedProjectCliProviderOperation("ProviderService.startSession"),
+    forkThread: () => unsupportedProjectCliProviderOperation("ProviderService.forkThread"),
+    sendTurn: () => unsupportedProjectCliProviderOperation("ProviderService.sendTurn"),
+    interruptTurn: () => unsupportedProjectCliProviderOperation("ProviderService.interruptTurn"),
+    respondToRequest: () =>
+      unsupportedProjectCliProviderOperation("ProviderService.respondToRequest"),
+    respondToUserInput: () =>
+      unsupportedProjectCliProviderOperation("ProviderService.respondToUserInput"),
+    stopSession: () => unsupportedProjectCliProviderOperation("ProviderService.stopSession"),
+    listSessions: () => Effect.succeed([]),
+    getCapabilities: () =>
+      unsupportedProjectCliProviderOperation("ProviderService.getCapabilities"),
+    rollbackConversation: () =>
+      unsupportedProjectCliProviderOperation("ProviderService.rollbackConversation"),
+    archiveThread: () => unsupportedProjectCliProviderOperation("ProviderService.archiveThread"),
+    streamEvents: Stream.empty,
+  } satisfies ProviderServiceShape),
+);
+
 const ProjectCliRuntimeLive = Layer.mergeAll(
   WorkspacePathsLive,
   OrchestrationLayerLive.pipe(
     Layer.provideMerge(RepositoryIdentityResolverLive),
+    Layer.provideMerge(ProjectCliProviderSupportLive),
     Layer.provideMerge(SqlitePersistenceLayerLive),
   ),
 );
@@ -1131,3 +1161,5 @@ export const cli = Command.make("t3", { ...sharedServerCommandFlags }).pipe(
   Command.withHandler((flags) => runServerCommand(flags)),
   Command.withSubcommands([startCommand, serveCommand, authCommand, projectCommand]),
 );
+
+export { serveCommand };

@@ -42,7 +42,13 @@ import {
   type UserInputQuestion,
   ClaudeAgentEffort,
 } from "@t3tools/contracts";
-import { applyClaudePromptEffortPrefix, resolveEffort, trimOrNull } from "@t3tools/shared/model";
+import {
+  applyClaudePromptEffortPrefix,
+  getDefaultEffort,
+  hasEffortLevel,
+  resolveApiModelId,
+  trimOrNull,
+} from "@t3tools/shared/model";
 import {
   Cause,
   DateTime,
@@ -61,7 +67,7 @@ import {
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { getClaudeModelCapabilities, resolveClaudeApiModelId } from "./ClaudeProvider.ts";
+import { getClaudeModelCapabilities } from "./ClaudeProvider.ts";
 import {
   ProviderAdapterProcessError,
   ProviderAdapterRequestError,
@@ -224,6 +230,20 @@ function getEffectiveClaudeAgentEffort(
     return "max";
   }
   return effort;
+}
+
+function resolveClaudeSessionEffort(
+  caps: ReturnType<typeof getClaudeModelCapabilities>,
+  raw: string | null | undefined,
+): ClaudeAgentEffort | null {
+  const trimmed = typeof raw === "string" ? raw.trim() : null;
+  if (!trimmed) {
+    return (getDefaultEffort(caps) ?? null) as ClaudeAgentEffort | null;
+  }
+  if (caps.promptInjectedEffortLevels.includes(trimmed) || !hasEffortLevel(caps, trimmed)) {
+    return null;
+  }
+  return trimmed as ClaudeAgentEffort;
 }
 
 function isClaudeInterruptedMessage(message: string): boolean {
@@ -2824,9 +2844,8 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const modelSelection =
         input.modelSelection?.provider === "claudeAgent" ? input.modelSelection : undefined;
       const caps = getClaudeModelCapabilities(modelSelection?.model);
-      const apiModelId = modelSelection ? resolveClaudeApiModelId(modelSelection) : undefined;
-      const effort = (resolveEffort(caps, modelSelection?.options?.effort) ??
-        null) as ClaudeAgentEffort | null;
+      const apiModelId = modelSelection ? resolveApiModelId(modelSelection) : undefined;
+      const effort = resolveClaudeSessionEffort(caps, modelSelection?.options?.effort);
       const fastMode = modelSelection?.options?.fastMode === true && caps.supportsFastMode;
       const thinking =
         typeof modelSelection?.options?.thinking === "boolean" && caps.supportsThinkingToggle
@@ -2848,13 +2867,7 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(apiModelId ? { model: apiModelId } : {}),
         pathToClaudeCodeExecutable: claudeBinaryPath,
         settingSources: [...CLAUDE_SETTING_SOURCES],
-        // The SDK type lags the CLI here: Opus 4.7 accepts `xhigh` even though
-        // the published `Options["effort"]` union currently stops at `max`.
-        ...(effectiveEffort
-          ? {
-              effort: effectiveEffort as unknown as NonNullable<ClaudeQueryOptions["effort"]>,
-            }
-          : {}),
+        ...(effectiveEffort ? { effort: effectiveEffort } : {}),
         ...(permissionMode ? { permissionMode } : {}),
         ...(permissionMode === "bypassPermissions"
           ? { allowDangerouslySkipPermissions: true }
@@ -3007,14 +3020,12 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     }
 
     if (modelSelection?.model) {
-      const apiModelId = resolveClaudeApiModelId(modelSelection);
-      if (context.currentApiModelId !== apiModelId) {
-        yield* Effect.tryPromise({
-          try: () => context.query.setModel(apiModelId),
-          catch: (cause) => toRequestError(input.threadId, "turn/setModel", cause),
-        });
-        context.currentApiModelId = apiModelId;
-      }
+      const apiModelId = resolveApiModelId(modelSelection);
+      yield* Effect.tryPromise({
+        try: () => context.query.setModel(apiModelId),
+        catch: (cause) => toRequestError(input.threadId, "turn/setModel", cause),
+      });
+      context.currentApiModelId = apiModelId;
       context.session = {
         ...context.session,
         model: modelSelection.model,
@@ -3098,6 +3109,15 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     },
   );
 
+  const forkThread: ClaudeAdapterShape["forkThread"] = (input) =>
+    Effect.fail(
+      new ProviderAdapterValidationError({
+        provider: PROVIDER,
+        operation: "forkThread",
+        issue: `Provider '${PROVIDER}' does not support true thread forking for '${input.sourceThreadId}'.`,
+      }),
+    );
+
   const readThread: ClaudeAdapterShape["readThread"] = Effect.fn("readThread")(
     function* (threadId) {
       const context = yield* requireSession(threadId);
@@ -3114,6 +3134,15 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       return yield* snapshotThread(context);
     },
   );
+
+  const archiveThread: ClaudeAdapterShape["archiveThread"] = (threadId, _resumeCursor) =>
+    Effect.fail(
+      new ProviderAdapterValidationError({
+        provider: PROVIDER,
+        operation: "archiveThread",
+        issue: `Provider '${PROVIDER}' does not support remote thread archival for '${threadId}'.`,
+      }),
+    );
 
   const respondToRequest: ClaudeAdapterShape["respondToRequest"] = Effect.fn("respondToRequest")(
     function* (threadId, requestId, decision) {
@@ -3194,10 +3223,12 @@ const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       sessionModelSwitch: "in-session",
     },
     startSession,
+    forkThread,
     sendTurn,
     interruptTurn,
     readThread,
     rollbackThread,
+    archiveThread,
     respondToRequest,
     respondToUserInput,
     stopSession,

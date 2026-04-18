@@ -7,6 +7,8 @@ import type {
   ProviderRuntimeEvent,
   ProviderSendTurnInput,
   ProviderSession,
+  ProviderThreadForkInput,
+  ProviderThreadForkResult,
   ProviderTurnStartResult,
 } from "@t3tools/contracts";
 import {
@@ -18,6 +20,7 @@ import {
   TurnId,
 } from "@t3tools/contracts";
 import { it, assert, vi } from "@effect/vitest";
+import { assertFailure } from "@effect/vitest/utils";
 
 import { Effect, Fiber, Layer, Metric, Option, PubSub, Ref, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -167,6 +170,29 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
       Effect.succeed({ threadId, turns: [] }),
   );
 
+  const forkThread = vi.fn(
+    (
+      input: ProviderThreadForkInput,
+    ): Effect.Effect<ProviderThreadForkResult, ProviderAdapterError> =>
+      Effect.succeed({
+        provider,
+        resumeCursor: { opaque: `fork-${String(input.targetThreadId)}` },
+        runtimeMode: "full-access",
+        runtimePayload: {
+          cwd: process.cwd(),
+          modelSelection: {
+            provider,
+            model: provider === "codex" ? "gpt-5.4" : "claude-sonnet-4-5",
+          },
+        },
+      }),
+  );
+
+  const archiveThread = vi.fn(
+    (_threadId: ThreadId, _resumeCursor: unknown): Effect.Effect<void, ProviderAdapterError> =>
+      Effect.void,
+  );
+
   const stopAll = vi.fn(
     (): Effect.Effect<void, ProviderAdapterError> =>
       Effect.sync(() => {
@@ -180,6 +206,7 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
       sessionModelSwitch: "in-session",
     },
     startSession,
+    forkThread,
     sendTurn,
     interruptTurn,
     respondToRequest,
@@ -189,6 +216,7 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
     hasSession,
     readThread,
     rollbackThread,
+    archiveThread,
     stopAll,
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
@@ -224,6 +252,8 @@ function makeFakeCodexAdapter(provider: ProviderKind = "codex") {
     hasSession,
     readThread,
     rollbackThread,
+    forkThread,
+    archiveThread,
     stopAll,
   };
 }
@@ -245,17 +275,14 @@ const hasMetricSnapshot = (
 function makeProviderServiceLayer() {
   const codex = makeFakeCodexAdapter();
   const claude = makeFakeCodexAdapter("claudeAgent");
-  const cursor = makeFakeCodexAdapter("cursor");
   const registry: typeof ProviderAdapterRegistry.Service = {
     getByProvider: (provider) =>
       provider === "codex"
         ? Effect.succeed(codex.adapter)
         : provider === "claudeAgent"
           ? Effect.succeed(claude.adapter)
-          : provider === "cursor"
-            ? Effect.succeed(cursor.adapter)
-            : Effect.fail(new ProviderUnsupportedError({ provider })),
-    listProviders: () => Effect.succeed(["codex", "claudeAgent", "cursor"]),
+          : Effect.fail(new ProviderUnsupportedError({ provider })),
+    listProviders: () => Effect.succeed(["codex", "claudeAgent"]),
   };
 
   const providerAdapterLayer = Layer.succeed(ProviderAdapterRegistry, registry);
@@ -282,7 +309,6 @@ function makeProviderServiceLayer() {
   return {
     codex,
     claude,
-    cursor,
     layer,
   };
 }
@@ -337,62 +363,6 @@ it.effect("ProviderServiceLive rejects new sessions for disabled providers", () 
 );
 
 const routing = makeProviderServiceLayer();
-
-it.effect("ProviderServiceLive writes canonical events to the emitting thread segment", () =>
-  Effect.gen(function* () {
-    const codex = makeFakeCodexAdapter();
-    const canonicalEvents: ProviderRuntimeEvent[] = [];
-    const canonicalThreadIds: Array<string | null> = [];
-    const registry: typeof ProviderAdapterRegistry.Service = {
-      getByProvider: (provider) =>
-        provider === "codex"
-          ? Effect.succeed(codex.adapter)
-          : Effect.fail(new ProviderUnsupportedError({ provider })),
-      listProviders: () => Effect.succeed(["codex"]),
-    };
-    const runtimeRepositoryLayer = ProviderSessionRuntimeRepositoryLive.pipe(
-      Layer.provide(SqlitePersistenceMemory),
-    );
-    const directoryLayer = ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer));
-    const providerLayer = makeProviderServiceLive({
-      canonicalEventLogger: {
-        filePath: "memory://provider-canonical-events",
-        write: (event, threadId) => {
-          canonicalEvents.push(event as ProviderRuntimeEvent);
-          canonicalThreadIds.push(threadId ?? null);
-          return Effect.void;
-        },
-        close: () => Effect.void,
-      },
-    }).pipe(
-      Layer.provide(Layer.succeed(ProviderAdapterRegistry, registry)),
-      Layer.provide(directoryLayer),
-      Layer.provide(defaultServerSettingsLayer),
-      Layer.provide(AnalyticsService.layerTest),
-    );
-
-    yield* Effect.gen(function* () {
-      yield* ProviderService;
-      yield* sleep(10);
-      codex.emit({
-        eventId: asEventId("evt-canonical-thread-segment"),
-        provider: "codex",
-        threadId: asThreadId("thread-canonical-thread-segment"),
-        createdAt: new Date().toISOString(),
-        type: "turn.completed",
-        payload: {
-          state: "completed",
-        },
-      });
-      yield* sleep(20);
-    }).pipe(Effect.provide(providerLayer));
-
-    assert.equal(canonicalEvents.length, 1);
-    assert.equal(canonicalEvents[0]?.threadId, "thread-canonical-thread-segment");
-    assert.deepEqual(canonicalThreadIds, ["thread-canonical-thread-segment"]);
-  }).pipe(Effect.provide(NodeServices.layer)),
-);
-
 it.effect("ProviderServiceLive keeps persisted resumable sessions on startup", () =>
   Effect.gen(function* () {
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3-provider-service-"));
@@ -633,31 +603,20 @@ routing.layer("ProviderServiceLive routing", (it) => {
       });
 
       yield* provider.stopSession({ threadId: session.threadId });
-      routing.codex.startSession.mockClear();
-      routing.codex.sendTurn.mockClear();
-
-      yield* provider.sendTurn({
-        threadId: session.threadId,
-        input: "after-stop",
-        attachments: [],
-      });
-
-      assert.equal(routing.codex.startSession.mock.calls.length, 1);
-      const resumedStartInput = routing.codex.startSession.mock.calls[0]?.[0];
-      assert.equal(typeof resumedStartInput === "object" && resumedStartInput !== null, true);
-      if (resumedStartInput && typeof resumedStartInput === "object") {
-        const startPayload = resumedStartInput as {
-          provider?: string;
-          cwd?: string;
-          resumeCursor?: unknown;
-          threadId?: string;
-        };
-        assert.equal(startPayload.provider, "codex");
-        assert.equal(startPayload.cwd, "/tmp/project");
-        assert.deepEqual(startPayload.resumeCursor, session.resumeCursor);
-        assert.equal(startPayload.threadId, session.threadId);
-      }
-      assert.equal(routing.codex.sendTurn.mock.calls.length, 1);
+      const sendAfterStop = yield* Effect.result(
+        provider.sendTurn({
+          threadId: session.threadId,
+          input: "after-stop",
+          attachments: [],
+        }),
+      );
+      assertFailure(
+        sendAfterStop,
+        new ProviderValidationError({
+          operation: "ProviderService.sendTurn",
+          issue: `Cannot route thread '${session.threadId}' because no persisted provider binding exists.`,
+        }),
+      );
     }),
   );
 
@@ -698,57 +657,6 @@ routing.layer("ProviderServiceLive routing", (it) => {
       assert.equal(routing.codex.rollbackThread.mock.calls.length, 1);
       const rollbackCall = routing.codex.rollbackThread.mock.calls[0];
       assert.equal(rollbackCall?.[1], 1);
-    }),
-  );
-
-  it.effect("preserves the persisted binding when stopping a session", () =>
-    Effect.gen(function* () {
-      const provider = yield* ProviderService;
-      const runtimeRepository = yield* ProviderSessionRuntimeRepository;
-
-      const initial = yield* provider.startSession(asThreadId("thread-reap-preserve"), {
-        provider: "codex",
-        threadId: asThreadId("thread-reap-preserve"),
-        cwd: "/tmp/project-reap-preserve",
-        runtimeMode: "full-access",
-      });
-
-      yield* provider.stopSession({ threadId: initial.threadId });
-
-      const persistedAfterStop = yield* runtimeRepository.getByThreadId({
-        threadId: initial.threadId,
-      });
-      assert.equal(Option.isSome(persistedAfterStop), true);
-      if (Option.isSome(persistedAfterStop)) {
-        assert.equal(persistedAfterStop.value.status, "stopped");
-        assert.deepEqual(persistedAfterStop.value.resumeCursor, initial.resumeCursor);
-      }
-
-      routing.codex.startSession.mockClear();
-      routing.codex.sendTurn.mockClear();
-
-      yield* provider.sendTurn({
-        threadId: initial.threadId,
-        input: "resume after reap",
-        attachments: [],
-      });
-
-      assert.equal(routing.codex.startSession.mock.calls.length, 1);
-      const resumedStartInput = routing.codex.startSession.mock.calls[0]?.[0];
-      assert.equal(typeof resumedStartInput === "object" && resumedStartInput !== null, true);
-      if (resumedStartInput && typeof resumedStartInput === "object") {
-        const startPayload = resumedStartInput as {
-          provider?: string;
-          cwd?: string;
-          resumeCursor?: unknown;
-          threadId?: string;
-        };
-        assert.equal(startPayload.provider, "codex");
-        assert.equal(startPayload.cwd, "/tmp/project-reap-preserve");
-        assert.deepEqual(startPayload.resumeCursor, initial.resumeCursor);
-        assert.equal(startPayload.threadId, initial.threadId);
-      }
-      assert.equal(routing.codex.sendTurn.mock.calls.length, 1);
     }),
   );
 
@@ -809,6 +717,61 @@ routing.layer("ProviderServiceLive routing", (it) => {
           .map((session) => session.provider),
         ["claudeAgent"],
       );
+    }),
+  );
+
+  it.effect("routes thread forks through the persisted source provider binding", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+
+      yield* provider.startSession(asThreadId("thread-fork-source"), {
+        provider: "codex",
+        threadId: asThreadId("thread-fork-source"),
+        cwd: "/tmp/project-fork-source",
+        runtimeMode: "full-access",
+      });
+      routing.codex.forkThread.mockClear();
+
+      const result = yield* provider.forkThread({
+        sourceThreadId: asThreadId("thread-fork-source"),
+        targetThreadId: asThreadId("thread-fork-target"),
+      });
+
+      assert.equal(routing.codex.forkThread.mock.calls.length, 1);
+      assert.deepEqual(routing.codex.forkThread.mock.calls[0]?.[0], {
+        sourceThreadId: asThreadId("thread-fork-source"),
+        targetThreadId: asThreadId("thread-fork-target"),
+      });
+      assert.equal(result.provider, "codex");
+      assert.deepEqual(result.resumeCursor, {
+        opaque: "fork-thread-fork-target",
+      });
+    }),
+  );
+
+  it.effect("archives thread forks through the bound provider adapter", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService;
+
+      yield* provider.startSession(asThreadId("thread-archive-source"), {
+        provider: "codex",
+        threadId: asThreadId("thread-archive-source"),
+        cwd: "/tmp/project-archive-source",
+        runtimeMode: "full-access",
+      });
+      routing.codex.archiveThread.mockClear();
+
+      yield* provider.archiveThread({
+        threadId: asThreadId("thread-archive-target"),
+        provider: "codex",
+        resumeCursor: { opaque: "fork-thread-archive-target" },
+      });
+
+      assert.equal(routing.codex.archiveThread.mock.calls.length, 1);
+      assert.deepEqual(routing.codex.archiveThread.mock.calls[0], [
+        asThreadId("thread-archive-target"),
+        { opaque: "fork-thread-archive-target" },
+      ]);
     }),
   );
 

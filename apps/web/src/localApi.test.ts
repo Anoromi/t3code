@@ -531,6 +531,8 @@ describe("wsApi", () => {
     const clientSettings = {
       confirmThreadArchive: true,
       confirmThreadDelete: false,
+      defaultCodexFastMode: true,
+      defaultCodexReasoningEffort: "high" as const,
       diffWordWrap: true,
       sidebarProjectGroupingMode: "repository_path" as const,
       sidebarProjectGroupingOverrides: {
@@ -588,6 +590,8 @@ describe("wsApi", () => {
     const clientSettings = {
       confirmThreadArchive: true,
       confirmThreadDelete: false,
+      defaultCodexFastMode: true,
+      defaultCodexReasoningEffort: "high" as const,
       diffWordWrap: true,
       sidebarProjectGroupingMode: "repository_path" as const,
       sidebarProjectGroupingOverrides: {

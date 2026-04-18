@@ -1,5 +1,8 @@
 import {
   CommandId,
+  DEFAULT_PROVIDER_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
+  DEFAULT_MODEL_BY_PROVIDER,
   EventId,
   IsoDateTime,
   NonNegativeInt,
@@ -9,6 +12,7 @@ import {
   OrchestrationEventMetadata,
   OrchestrationEventType,
   ProjectId,
+  ThreadForkedPayload,
   ThreadId,
 } from "@t3tools/contracts";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -28,6 +32,10 @@ import {
 const decodeEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
 const EventMetadataFromJsonString = Schema.fromJsonString(OrchestrationEventMetadata);
+const PersistedReadEventType = Schema.Union([
+  OrchestrationEventType,
+  Schema.Literal("thread.forked"),
+]);
 
 const AppendEventRequestSchema = Schema.Struct({
   eventId: EventId,
@@ -56,6 +64,19 @@ const OrchestrationEventPersistedRowSchema = Schema.Struct({
   payload: UnknownFromJsonString,
   metadata: EventMetadataFromJsonString,
 });
+const ReadOrchestrationEventPersistedRowSchema = Schema.Struct({
+  sequence: NonNegativeInt,
+  eventId: EventId,
+  type: PersistedReadEventType,
+  aggregateKind: OrchestrationAggregateKind,
+  aggregateId: Schema.Union([ProjectId, ThreadId]),
+  occurredAt: IsoDateTime,
+  commandId: Schema.NullOr(CommandId),
+  causationEventId: Schema.NullOr(EventId),
+  correlationId: Schema.NullOr(CommandId),
+  payload: UnknownFromJsonString,
+  metadata: EventMetadataFromJsonString,
+});
 
 const ReadFromSequenceRequestSchema = Schema.Struct({
   sequenceExclusive: NonNegativeInt,
@@ -63,6 +84,109 @@ const ReadFromSequenceRequestSchema = Schema.Struct({
 });
 const DEFAULT_READ_FROM_SEQUENCE_LIMIT = 1_000;
 const READ_PAGE_SIZE = 500;
+
+type OrchestrationEventPersistedRow = typeof OrchestrationEventPersistedRowSchema.Type;
+type ReadOrchestrationEventPersistedRow = typeof ReadOrchestrationEventPersistedRowSchema.Type;
+
+function modelSelectionFromLegacyPayload(payload: Record<string, unknown>) {
+  if (
+    Schema.is(Schema.Struct({ provider: Schema.Literal("codex"), model: Schema.String }))(
+      payload.modelSelection,
+    )
+  ) {
+    return payload.modelSelection;
+  }
+
+  const legacyModel =
+    typeof payload.model === "string" && payload.model.trim().length > 0
+      ? payload.model.trim()
+      : DEFAULT_MODEL_BY_PROVIDER.codex;
+
+  return {
+    provider: "codex" as const,
+    model: legacyModel,
+  };
+}
+
+const isCurrentThreadForkedPayload = Schema.is(ThreadForkedPayload);
+
+function normalizePersistedEventRow(
+  row: ReadOrchestrationEventPersistedRow,
+): OrchestrationEventPersistedRow {
+  const payload = row.payload;
+
+  if (
+    row.type === "project.created" &&
+    typeof payload === "object" &&
+    payload !== null &&
+    !("defaultModelSelection" in payload)
+  ) {
+    return {
+      ...row,
+      type: "project.created",
+      payload: {
+        ...payload,
+        defaultModelSelection: null,
+      },
+    };
+  }
+
+  if (
+    (row.type === "thread.created" || row.type === "thread.meta-updated") &&
+    typeof payload === "object" &&
+    payload !== null &&
+    !("modelSelection" in payload)
+  ) {
+    const legacyPayload = payload as Record<string, unknown>;
+
+    return {
+      ...row,
+      type: row.type,
+      payload: {
+        ...legacyPayload,
+        modelSelection: modelSelectionFromLegacyPayload(legacyPayload),
+      },
+    };
+  }
+
+  if (
+    row.type === "thread.forked" &&
+    typeof payload === "object" &&
+    payload !== null &&
+    !isCurrentThreadForkedPayload(payload)
+  ) {
+    const legacyPayload = payload as Record<string, unknown>;
+    const createdAt =
+      typeof legacyPayload.createdAt === "string" ? legacyPayload.createdAt : row.occurredAt;
+    const updatedAt =
+      typeof legacyPayload.updatedAt === "string" ? legacyPayload.updatedAt : createdAt;
+
+    return {
+      ...row,
+      type: "thread.created",
+      payload: {
+        threadId: legacyPayload.threadId,
+        projectId: legacyPayload.projectId,
+        title: legacyPayload.title,
+        modelSelection: modelSelectionFromLegacyPayload(legacyPayload),
+        runtimeMode:
+          legacyPayload.runtimeMode === undefined
+            ? DEFAULT_RUNTIME_MODE
+            : legacyPayload.runtimeMode,
+        interactionMode:
+          legacyPayload.interactionMode === undefined
+            ? DEFAULT_PROVIDER_INTERACTION_MODE
+            : legacyPayload.interactionMode,
+        branch: legacyPayload.branch ?? null,
+        worktreePath: legacyPayload.worktreePath ?? null,
+        createdAt,
+        updatedAt,
+      },
+    };
+  }
+
+  return row as OrchestrationEventPersistedRow;
+}
 
 function inferActorKind(
   event: Omit<OrchestrationEvent, "sequence">,
@@ -156,7 +280,7 @@ const makeEventStore = Effect.gen(function* () {
 
   const readEventRowsFromSequence = SqlSchema.findAll({
     Request: ReadFromSequenceRequestSchema,
-    Result: OrchestrationEventPersistedRowSchema,
+    Result: ReadOrchestrationEventPersistedRowSchema,
     execute: (request) =>
       sql`
         SELECT
@@ -199,7 +323,7 @@ const makeEventStore = Effect.gen(function* () {
         ),
       ),
       Effect.flatMap((row) =>
-        decodeEvent(row).pipe(
+        decodeEvent(normalizePersistedEventRow(row)).pipe(
           Effect.mapError(toPersistenceDecodeError("OrchestrationEventStore.append:rowToEvent")),
         ),
       ),
@@ -230,7 +354,7 @@ const makeEventStore = Effect.gen(function* () {
           ),
           Effect.flatMap((rows) =>
             Effect.forEach(rows, (row) =>
-              decodeEvent(row).pipe(
+              decodeEvent(normalizePersistedEventRow(row)).pipe(
                 Effect.mapError(
                   toPersistenceDecodeError("OrchestrationEventStore.readFromSequence:rowToEvent"),
                 ),

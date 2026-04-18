@@ -335,6 +335,29 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
     }),
   );
 
+  it.effect("spawns direct command terminals without shell resolution", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+
+      const snapshot = yield* manager.open(
+        openInput({
+          terminalId: "corkdiff",
+          command: {
+            file: "nvim",
+            args: ["-c", "CorkDiff t3code thread-1"],
+          },
+        }),
+      );
+
+      assert.equal(snapshot.status, "running");
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+      expect(ptyAdapter.spawnInputs[0]).toMatchObject({
+        file: "nvim",
+        args: ["-c", "CorkDiff t3code thread-1"],
+      });
+    }),
+  );
+
   it.effect("forwards write and resize to active pty process", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
@@ -372,6 +395,34 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
 
       assert.equal(reopened.status, "running");
       expect(process.resizeCalls).toEqual([{ cols: 120, rows: 30 }]);
+    }),
+  );
+
+  it.effect("restarts an existing session when the launch command changes", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+
+      const firstProcess = ptyAdapter.processes[0];
+      expect(firstProcess).toBeDefined();
+      if (!firstProcess) return;
+
+      const reopened = yield* manager.open(
+        openInput({
+          command: {
+            file: "nvim",
+            args: ["-c", "CorkDiff t3code thread-1"],
+          },
+        }),
+      );
+
+      assert.equal(reopened.status, "running");
+      expect(firstProcess.killed).toBe(true);
+      expect(ptyAdapter.spawnInputs).toHaveLength(2);
+      expect(ptyAdapter.spawnInputs[1]).toMatchObject({
+        file: "nvim",
+        args: ["-c", "CorkDiff t3code thread-1"],
+      });
     }),
   );
 
@@ -839,6 +890,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
           : "/definitely/missing-shell -l";
       const { manager, ptyAdapter } = yield* createManager(5, {
         shellResolver: () => missingShell,
+        env: { SHELL: "/bin/sh" },
       });
       ptyAdapter.spawnFailures.push(new Error("posix_spawnp failed."));
 
@@ -846,7 +898,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
 
       assert.equal(snapshot.status, "running");
       expect(ptyAdapter.spawnInputs.length).toBeGreaterThanOrEqual(2);
-      expect(ptyAdapter.spawnInputs[0]?.shell).toBe(
+      expect(ptyAdapter.spawnInputs[0]?.file).toBe(
         process.platform === "win32" ? missingShell : "/definitely/missing-shell",
       );
 
@@ -854,16 +906,16 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
         expect(
           ptyAdapter.spawnInputs.some(
             (input) =>
-              input.shell === "pwsh.exe" ||
-              input.shell === "powershell.exe" ||
-              input.shell === "cmd.exe",
+              input.file === "pwsh.exe" ||
+              input.file === "powershell.exe" ||
+              input.file === "cmd.exe",
           ),
         ).toBe(true);
       } else {
         expect(
           ptyAdapter.spawnInputs
             .slice(1)
-            .some((input) => input.shell !== "/definitely/missing-shell"),
+            .some((input) => input.file !== "/definitely/missing-shell"),
         ).toBe(true);
       }
     }),
@@ -884,7 +936,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
 
       expect(ptyAdapter.spawnInputs[0]).toEqual(
         expect.objectContaining({
-          shell: "pwsh.exe",
+          file: "pwsh.exe",
           args: ["-NoLogo"],
         }),
       );
@@ -909,7 +961,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
 
       yield* manager.open(openInput());
 
-      expect(ptyAdapter.spawnInputs.map((input) => input.shell)).toEqual([
+      expect(ptyAdapter.spawnInputs.map((input) => input.file)).toEqual([
         "C:\\missing\\custom-shell.exe",
         "pwsh.exe",
         "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
@@ -946,6 +998,10 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
       setEnv("T3CODE_PORT", "3773");
       setEnv("VITE_DEV_SERVER_URL", "http://localhost:5173");
       setEnv("TEST_TERMINAL_KEEP", "keep-me");
+      setEnv("PS1", "\\[\\e[32m\\]broken\\[\\e[0m\\] ");
+      setEnv("PROMPT_COMMAND", "history -a");
+      setEnv("RPROMPT", "%~");
+      setEnv("TERM", "dumb");
 
       try {
         const { manager, ptyAdapter } = yield* createManager();
@@ -957,7 +1013,13 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
         expect(spawnInput.env.PORT).toBeUndefined();
         expect(spawnInput.env.T3CODE_PORT).toBeUndefined();
         expect(spawnInput.env.VITE_DEV_SERVER_URL).toBeUndefined();
+        expect(spawnInput.env.PS1).toBeUndefined();
+        expect(spawnInput.env.PROMPT_COMMAND).toBeUndefined();
+        expect(spawnInput.env.RPROMPT).toBeUndefined();
         expect(spawnInput.env.TEST_TERMINAL_KEEP).toBe("keep-me");
+        expect(spawnInput.env.TERM).toBe(
+          process.platform === "win32" ? "xterm-color" : "xterm-256color",
+        );
       } finally {
         restoreEnv();
       }
@@ -998,6 +1060,23 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
       if (!spawnInput) return;
 
       expect(spawnInput.args).toEqual(["-o", "nopromptsp"]);
+    }),
+  );
+
+  it.effect("prefers PATH bash over a non-interactive SHELL bash path", () =>
+    Effect.gen(function* () {
+      if (process.platform === "win32") return;
+
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellResolver: () => "/nix/store/fake-bash/bin/bash",
+        env: { SHELL: "/nix/store/fake-bash/bin/bash" },
+      });
+      yield* manager.open(openInput());
+      const spawnInput = ptyAdapter.spawnInputs[0];
+      expect(spawnInput).toBeDefined();
+      if (!spawnInput) return;
+
+      expect(spawnInput.file).toBe("bash");
     }),
   );
 
@@ -1055,9 +1134,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
 
   it.effect("preserves queued PTY output ordering through exit callbacks", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter, getEvents } = yield* createManager(5, {
-        ptyAdapter: new FakePtyAdapter("async"),
-      });
+      const { manager, ptyAdapter, getEvents } = yield* createManager();
 
       yield* manager.open(openInput());
       const process = ptyAdapter.processes[0];
@@ -1086,6 +1163,58 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
         expect.objectContaining({ type: "output", data: "second\n" }),
         expect.objectContaining({ type: "exited", exitCode: 0, exitSignal: 0 }),
       ]);
+    }),
+  );
+
+  it.effect("preserves combined history when adjacent output chunks are coalesced", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      process.emitData("first line\n");
+      process.emitData("second line\n");
+
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      assert.equal(reopened.history, "first line\nsecond line\n");
+    }),
+  );
+
+  it.effect("respects the maximum coalesced output size", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter, getEvents } = yield* createManager();
+
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      const firstChunk = "a".repeat(40_000);
+      const secondChunk = "b".repeat(40_000);
+      process.emitData(firstChunk);
+      process.emitData(secondChunk);
+      process.emitExit({ exitCode: 0, signal: 0 });
+
+      yield* waitFor(
+        Effect.map(getEvents, (events) => {
+          const relevant = events.filter(
+            (event) => event.type === "output" || event.type === "exited",
+          );
+          return relevant.length >= 3;
+        }),
+        "1200 millis",
+      );
+
+      const outputEvents = (yield* getEvents).filter(
+        (event): event is Extract<TerminalEvent, { type: "output" }> => event.type === "output",
+      );
+      expect(outputEvents).toHaveLength(2);
+      expect(outputEvents[0]?.data).toBe(firstChunk);
+      expect(outputEvents[1]?.data).toBe(secondChunk);
     }),
   );
 

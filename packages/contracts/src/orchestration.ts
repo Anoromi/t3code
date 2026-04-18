@@ -1,10 +1,5 @@
 import { Effect, Option, Schema, SchemaIssue, Struct } from "effect";
-import {
-  ClaudeModelOptions,
-  CodexModelOptions,
-  CursorModelOptions,
-  OpenCodeModelOptions,
-} from "./model.ts";
+import { ClaudeModelOptions, CodexModelOptions } from "./model.ts";
 import { RepositoryIdentity } from "./environment.ts";
 import {
   ApprovalRequestId,
@@ -23,6 +18,7 @@ import {
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
+  getSnapshot: "orchestration.getSnapshot",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   replayEvents: "orchestration.replayEvents",
@@ -30,7 +26,7 @@ export const ORCHESTRATION_WS_METHODS = {
   subscribeThread: "orchestration.subscribeThread",
 } as const;
 
-export const ProviderKind = Schema.Literals(["codex", "claudeAgent", "cursor", "opencode"]);
+export const ProviderKind = Schema.Literals(["codex", "claudeAgent"]);
 export type ProviderKind = typeof ProviderKind.Type;
 export const ProviderApprovalPolicy = Schema.Literals([
   "untrusted",
@@ -62,25 +58,7 @@ export const ClaudeModelSelection = Schema.Struct({
 });
 export type ClaudeModelSelection = typeof ClaudeModelSelection.Type;
 
-export const CursorModelSelection = Schema.Struct({
-  provider: Schema.Literal("cursor"),
-  model: TrimmedNonEmptyString,
-  options: Schema.optionalKey(CursorModelOptions),
-});
-export type CursorModelSelection = typeof CursorModelSelection.Type;
-export const OpenCodeModelSelection = Schema.Struct({
-  provider: Schema.Literal("opencode"),
-  model: TrimmedNonEmptyString,
-  options: Schema.optionalKey(OpenCodeModelOptions),
-});
-export type OpenCodeModelSelection = typeof OpenCodeModelSelection.Type;
-
-export const ModelSelection = Schema.Union([
-  CodexModelSelection,
-  ClaudeModelSelection,
-  CursorModelSelection,
-  OpenCodeModelSelection,
-]);
+export const ModelSelection = Schema.Union([CodexModelSelection, ClaudeModelSelection]);
 export type ModelSelection = typeof ModelSelection.Type;
 
 export const RuntimeMode = Schema.Literals([
@@ -166,6 +144,24 @@ export const ProjectScript = Schema.Struct({
 });
 export type ProjectScript = typeof ProjectScript.Type;
 
+export const OrchestrationWorktreeGroupTitleStatus = Schema.Literals([
+  "pending",
+  "ready",
+  "failed",
+]);
+export type OrchestrationWorktreeGroupTitleStatus =
+  typeof OrchestrationWorktreeGroupTitleStatus.Type;
+
+export const OrchestrationWorktreeGroupTitle = Schema.Struct({
+  worktreePath: TrimmedNonEmptyString,
+  title: Schema.NullOr(TrimmedNonEmptyString),
+  status: OrchestrationWorktreeGroupTitleStatus,
+  sourceThreadId: Schema.NullOr(ThreadId),
+  generationId: TrimmedNonEmptyString,
+  updatedAt: IsoDateTime,
+});
+export type OrchestrationWorktreeGroupTitle = typeof OrchestrationWorktreeGroupTitle.Type;
+
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
@@ -173,6 +169,9 @@ export const OrchestrationProject = Schema.Struct({
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
+  worktreeGroupTitles: Schema.optional(Schema.Array(OrchestrationWorktreeGroupTitle)).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   deletedAt: Schema.NullOr(IsoDateTime),
@@ -247,17 +246,30 @@ export type OrchestrationCheckpointFile = typeof OrchestrationCheckpointFile.Typ
 
 export const OrchestrationCheckpointStatus = Schema.Literals(["ready", "missing", "error"]);
 export type OrchestrationCheckpointStatus = typeof OrchestrationCheckpointStatus.Type;
+export const OrchestrationCheckpointVisibility = Schema.Literals(["visible", "silent"]);
+export type OrchestrationCheckpointVisibility = typeof OrchestrationCheckpointVisibility.Type;
 
 export const OrchestrationCheckpointSummary = Schema.Struct({
   turnId: TurnId,
   checkpointTurnCount: NonNegativeInt,
   checkpointRef: CheckpointRef,
+  visibleCheckpointRef: Schema.optional(Schema.NullOr(CheckpointRef)),
+  visibleBaseCheckpointTurnCount: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  visibility: Schema.optional(OrchestrationCheckpointVisibility),
   status: OrchestrationCheckpointStatus,
   files: Schema.Array(OrchestrationCheckpointFile),
   assistantMessageId: Schema.NullOr(MessageId),
   completedAt: IsoDateTime,
 });
 export type OrchestrationCheckpointSummary = typeof OrchestrationCheckpointSummary.Type;
+
+export const ThreadForkOrigin = Schema.Struct({
+  sourceThreadId: ThreadId,
+  sourceTurnId: Schema.NullOr(TurnId),
+  sourceCheckpointTurnCount: Schema.NullOr(NonNegativeInt),
+  forkedAt: IsoDateTime,
+});
+export type ThreadForkOrigin = typeof ThreadForkOrigin.Type;
 
 export const OrchestrationThreadActivityTone = Schema.Literals([
   "info",
@@ -309,6 +321,9 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  forkOrigin: Schema.NullOr(ThreadForkOrigin).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -355,6 +370,9 @@ export const OrchestrationThreadShell = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  forkOrigin: Schema.NullOr(ThreadForkOrigin).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -438,13 +456,21 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  worktreeGroupTitles: Schema.optional(Schema.Array(OrchestrationWorktreeGroupTitle)),
 });
 
 const ProjectDeleteCommand = Schema.Struct({
   type: Schema.Literal("project.delete"),
   commandId: CommandId,
   projectId: ProjectId,
-  force: Schema.optional(Schema.Boolean),
+});
+
+const ProjectWorktreeGroupTitleRegenerateCommand = Schema.Struct({
+  type: Schema.Literal("project.worktree-group-title.regenerate"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  worktreePath: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
 });
 
 const ThreadCreateCommand = Schema.Struct({
@@ -462,6 +488,15 @@ const ThreadCreateCommand = Schema.Struct({
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
 });
+
+export const ThreadForkCommand = Schema.Struct({
+  type: Schema.Literal("thread.fork"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  sourceThreadId: ThreadId,
+  createdAt: IsoDateTime,
+});
+export type ThreadForkCommand = typeof ThreadForkCommand.Type;
 
 const ThreadDeleteCommand = Schema.Struct({
   type: Schema.Literal("thread.delete"),
@@ -617,7 +652,9 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
+  ProjectWorktreeGroupTitleRegenerateCommand,
   ThreadCreateCommand,
+  ThreadForkCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
@@ -638,7 +675,9 @@ export const ClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
+  ProjectWorktreeGroupTitleRegenerateCommand,
   ThreadCreateCommand,
+  ThreadForkCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
@@ -696,6 +735,9 @@ const ThreadTurnDiffCompleteCommand = Schema.Struct({
   turnId: TurnId,
   completedAt: IsoDateTime,
   checkpointRef: CheckpointRef,
+  visibleCheckpointRef: Schema.optional(Schema.NullOr(CheckpointRef)),
+  visibleBaseCheckpointTurnCount: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  visibility: Schema.optional(OrchestrationCheckpointVisibility),
   status: OrchestrationCheckpointStatus,
   files: Schema.Array(OrchestrationCheckpointFile),
   assistantMessageId: Schema.optional(MessageId),
@@ -740,7 +782,9 @@ export const OrchestrationEventType = Schema.Literals([
   "project.created",
   "project.meta-updated",
   "project.deleted",
+  "project.worktree-group-title-regeneration-requested",
   "thread.created",
+  "thread.forked",
   "thread.deleted",
   "thread.archived",
   "thread.unarchived",
@@ -771,8 +815,13 @@ export const ProjectCreatedPayload = Schema.Struct({
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
-  defaultModelSelection: Schema.NullOr(ModelSelection),
+  defaultModelSelection: Schema.NullOr(ModelSelection).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   scripts: Schema.Array(ProjectScript),
+  worktreeGroupTitles: Schema.optional(Schema.Array(OrchestrationWorktreeGroupTitle)).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -784,12 +833,19 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  worktreeGroupTitles: Schema.optional(Schema.Array(OrchestrationWorktreeGroupTitle)),
   updatedAt: IsoDateTime,
 });
 
 export const ProjectDeletedPayload = Schema.Struct({
   projectId: ProjectId,
   deletedAt: IsoDateTime,
+});
+
+export const ProjectWorktreeGroupTitleRegenerationRequestedPayload = Schema.Struct({
+  projectId: ProjectId,
+  worktreePath: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
 });
 
 export const ThreadCreatedPayload = Schema.Struct({
@@ -806,6 +862,54 @@ export const ThreadCreatedPayload = Schema.Struct({
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
+
+export const ProjectionThreadTurnStatus = Schema.Literals([
+  "running",
+  "completed",
+  "interrupted",
+  "error",
+]);
+export type ProjectionThreadTurnStatus = typeof ProjectionThreadTurnStatus.Type;
+
+export const ThreadForkTurnSnapshot = Schema.Struct({
+  turnId: TurnId,
+  pendingMessageId: Schema.NullOr(MessageId),
+  sourceProposedPlanThreadId: Schema.NullOr(ThreadId),
+  sourceProposedPlanId: Schema.NullOr(OrchestrationProposedPlanId),
+  assistantMessageId: Schema.NullOr(MessageId),
+  state: ProjectionThreadTurnStatus,
+  requestedAt: IsoDateTime,
+  startedAt: Schema.NullOr(IsoDateTime),
+  completedAt: Schema.NullOr(IsoDateTime),
+  checkpointTurnCount: Schema.NullOr(NonNegativeInt),
+  checkpointRef: Schema.NullOr(CheckpointRef),
+  checkpointStatus: Schema.NullOr(OrchestrationCheckpointStatus),
+  checkpointFiles: Schema.Array(OrchestrationCheckpointFile),
+});
+export type ThreadForkTurnSnapshot = typeof ThreadForkTurnSnapshot.Type;
+
+export const ThreadForkedPayload = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  modelSelection: ModelSelection,
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
+  ),
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  forkOrigin: ThreadForkOrigin,
+  latestTurn: Schema.NullOr(OrchestrationLatestTurn),
+  messages: Schema.Array(OrchestrationMessage),
+  proposedPlans: Schema.Array(OrchestrationProposedPlan),
+  activities: Schema.Array(OrchestrationThreadActivity),
+  checkpoints: Schema.Array(OrchestrationCheckpointSummary),
+  turns: Schema.Array(ThreadForkTurnSnapshot),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type ThreadForkedPayload = typeof ThreadForkedPayload.Type;
 
 export const ThreadDeletedPayload = Schema.Struct({
   threadId: ThreadId,
@@ -922,6 +1026,9 @@ export const ThreadTurnDiffCompletedPayload = Schema.Struct({
   turnId: TurnId,
   checkpointTurnCount: NonNegativeInt,
   checkpointRef: CheckpointRef,
+  visibleCheckpointRef: Schema.optional(Schema.NullOr(CheckpointRef)),
+  visibleBaseCheckpointTurnCount: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  visibility: Schema.optional(OrchestrationCheckpointVisibility),
   status: OrchestrationCheckpointStatus,
   files: Schema.Array(OrchestrationCheckpointFile),
   assistantMessageId: Schema.NullOr(MessageId),
@@ -972,8 +1079,18 @@ export const OrchestrationEvent = Schema.Union([
   }),
   Schema.Struct({
     ...EventBaseFields,
+    type: Schema.Literal("project.worktree-group-title-regeneration-requested"),
+    payload: ProjectWorktreeGroupTitleRegenerationRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
     type: Schema.Literal("thread.created"),
     payload: ThreadCreatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.forked"),
+    payload: ThreadForkedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,
@@ -1113,19 +1230,20 @@ export const ProviderSessionRuntimeStatus = Schema.Literals([
 ]);
 export type ProviderSessionRuntimeStatus = typeof ProviderSessionRuntimeStatus.Type;
 
-const ProjectionThreadTurnStatus = Schema.Literals([
-  "running",
-  "completed",
-  "interrupted",
-  "error",
-]);
-export type ProjectionThreadTurnStatus = typeof ProjectionThreadTurnStatus.Type;
-
 const ProjectionCheckpointRow = Schema.Struct({
   threadId: ThreadId,
   turnId: TurnId,
   checkpointTurnCount: NonNegativeInt,
   checkpointRef: CheckpointRef,
+  visibleCheckpointRef: Schema.NullOr(CheckpointRef).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  visibleBaseCheckpointTurnCount: Schema.NullOr(NonNegativeInt).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  visibility: OrchestrationCheckpointVisibility.pipe(
+    Schema.withDecodingDefault(Effect.succeed("visible")),
+  ),
   status: OrchestrationCheckpointStatus,
   files: Schema.Array(OrchestrationCheckpointFile),
   assistantMessageId: Schema.NullOr(MessageId),
@@ -1174,6 +1292,10 @@ export const OrchestrationRpcSchemas = {
   dispatchCommand: {
     input: ClientOrchestrationCommand,
     output: DispatchResult,
+  },
+  getSnapshot: {
+    input: Schema.Struct({}),
+    output: OrchestrationReadModel,
   },
   getTurnDiff: {
     input: OrchestrationGetTurnDiffInput,

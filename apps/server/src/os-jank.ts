@@ -57,6 +57,7 @@ export function fixPath(
 
     let shellPath: string | undefined;
     for (const shell of listLoginShellCandidates(platform, env.SHELL, options.userShell)) {
+      env.SHELL = shell;
       try {
         shellPath = readPath(shell);
       } catch (error) {
