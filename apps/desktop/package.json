@@ -13,6 +13,7 @@
     "perf": "T3CODE_DESKTOP_PROFILE=1 node scripts/start-electron.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
+    "test:playwright": "playwright test",
     "smoke-test": "node scripts/smoke-test.mjs"
   },
   "dependencies": {
@@ -21,6 +22,7 @@
     "electron-updater": "^6.6.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
     "@types/node": "catalog:",
