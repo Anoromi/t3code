@@ -23,12 +23,25 @@ If a tradeoff is required, choose correctness and robustness over short-term con
 
 Long term maintainability is a core priority. If you add new functionality, first check if there is shared logic that can be extracted to a separate module. Duplicate logic across multiple files is a code smell and should be avoided. Don't be afraid to change existing code. Don't take shortcuts by just adding local logic to solve a problem.
 
+## Rebase Work
+
+- When resolving rebase conflicts or post-rebase regressions in this repo, use the project skill `$t3code-rebase-conflict-resolution` from `.codex/skills/t3code-rebase-conflict-resolution`.
+- Follow that skill before declaring the rebase done. In particular, inspect upstream replacements first, audit migrations/events/projections/settings compatibility, and validate against real persisted state when the rebase touches startup or persistence.
+
 ## Package Roles
 
 - `apps/server`: Node.js WebSocket server. Wraps Codex app-server (JSON-RPC over stdio), serves the React web app, and manages provider sessions.
 - `apps/web`: React/Vite UI. Owns session UX, conversation/event rendering, and client-side state. Connects to the server via WebSocket.
 - `packages/contracts`: Shared effect/Schema schemas and TypeScript contracts for provider events, WebSocket protocol, and model/session types. Keep this package schema-only — no runtime logic.
 - `packages/shared`: Shared runtime utilities consumed by both server and web. Uses explicit subpath exports (e.g. `@t3tools/shared/git`) — no barrel index.
+
+## Corkdiff
+
+- Browser/web keeps the in-app diff viewer.
+- Electron desktop does **not** use the old embedded Corkdiff terminal path. Desktop Corkdiff is external and launches Ghostty through `hyprnav spawn --print-workspace-id rand -- ghostty ...`.
+- External Corkdiff session ownership is per thread and lives in Electron main, not in the renderer.
+- `Ctrl+D` in the desktop app opens or focuses the external Corkdiff session for the active thread. `Ctrl+D` inside the external Neovim Corkdiff session should return focus to T3 Code without closing Ghostty.
+- When changing this flow, inspect both this repo and `~/code/stolen/codediff.nvim`, because the Neovim plugin participates in the T3 Code Corkdiff control path.
 
 ## Codex App Server (Important)
 
@@ -51,3 +64,34 @@ Docs:
 - Codex-Monitor (Tauri, feature-complete, strong reference implementation): https://github.com/Dimillian/CodexMonitor
 
 Use these as implementation references when designing protocol handling, UX flows, and operational safeguards.
+
+# btca MCP Usage Instructions
+
+Use btca whenever a task depends on understanding a repo, docs site, or configured resource
+more accurately than a generic model can.
+
+Use it whenever the user says "use btca", or when you need info that should come from the listed resources.
+Do not use it to understand this repository only other resources should be inspected using btca
+
+## Tools
+
+The btca MCP server provides these tools:
+
+- `listResources` - List all available documentation resources
+- `ask` - Ask a question about specific resources
+
+## resources
+
+The resources available are defined by the end user in their btca dashboard. If there's a resource you need but it's not available in `listResources`, proceed without btca. When your task is done, clearly note that you'd like access to the missing resource.
+
+## Critical Workflow
+
+**Always call `listResources` first** before using `ask`. The `ask` tool requires exact resource names from the list.
+
+### Example
+
+1. Call listResources to get available resources
+2. Note the "name" field for each resource (e.g., "svelteKit", not "SvelteKit" or "svelte-kit")
+3. Call ask with:
+   - question: "How do I create a load function?"
+   - resources: ["svelteKit"]
