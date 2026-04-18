@@ -78,9 +78,11 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     error: null,
     createdAt: "2026-02-13T00:00:00.000Z",
     archivedAt: null,
+    updatedAt: "2026-02-13T00:00:00.000Z",
     latestTurn: null,
     branch: null,
     worktreePath: null,
+    forkOrigin: null,
     ...overrides,
   };
 }
@@ -99,6 +101,7 @@ function makeState(thread: Thread): AppState {
     createdAt: "2026-02-13T00:00:00.000Z",
     updatedAt: "2026-02-13T00:00:00.000Z",
     scripts: [],
+    worktreeGroupTitles: [],
   };
   const threadIdsByProjectId: EnvironmentState["threadIdsByProjectId"] = {
     [thread.projectId]: [thread.id],
@@ -126,6 +129,7 @@ function makeState(thread: Thread): AppState {
         updatedAt: thread.updatedAt,
         branch: thread.branch,
         worktreePath: thread.worktreePath,
+        forkOrigin: thread.forkOrigin,
       },
     },
     threadSessionById: {
@@ -606,6 +610,7 @@ describe("incremental orchestration updates", () => {
           updatedAt: thread2.updatedAt,
           branch: thread2.branch,
           worktreePath: thread2.worktreePath,
+          forkOrigin: thread2.forkOrigin,
         },
       },
       threadSessionById: {

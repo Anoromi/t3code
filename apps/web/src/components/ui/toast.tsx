@@ -31,15 +31,6 @@ export type ThreadToastData = {
   tooltipStyle?: boolean;
   dismissAfterVisibleMs?: number;
   hideCopyButton?: boolean;
-  actionLayout?: "inline" | "stacked-end";
-  actionVariant?:
-    | "default"
-    | "destructive"
-    | "destructive-outline"
-    | "ghost"
-    | "link"
-    | "outline"
-    | "secondary";
 };
 
 const toastManager = Toast.createToastManager<ThreadToastData>();
@@ -241,9 +232,6 @@ function Toasts({ position = "top-right" }: { position: ToastPosition }) {
             visibleIndex,
             visibleToastLayout.items.length,
           );
-          const stackedActionLayout =
-            toast.actionProps !== undefined && toast.data?.actionLayout === "stacked-end";
-          const actionVariant = toast.data?.actionVariant ?? "default";
 
           return (
             <Toast.Root
@@ -316,10 +304,7 @@ function Toasts({ position = "top-right" }: { position: ToastPosition }) {
               />
               <Toast.Content
                 className={cn(
-                  "pointer-events-auto overflow-hidden px-3.5 text-sm transition-opacity duration-250 data-expanded:opacity-100",
-                  stackedActionLayout
-                    ? "flex flex-col gap-2 py-2.5"
-                    : "flex items-center justify-between gap-1.5 py-3",
+                  "pointer-events-auto flex items-center justify-between gap-1.5 overflow-hidden px-3.5 py-3 text-sm transition-opacity duration-250 data-expanded:opacity-100",
                   hideCollapsedContent &&
                     "not-data-expanded:pointer-events-none not-data-expanded:opacity-0",
                 )}
@@ -352,11 +337,7 @@ function Toasts({ position = "top-right" }: { position: ToastPosition }) {
                 </div>
                 {toast.actionProps && (
                   <Toast.Action
-                    className={cn(
-                      buttonVariants({ size: "xs", variant: actionVariant }),
-                      "shrink-0",
-                      stackedActionLayout && "self-end",
-                    )}
+                    className={cn(buttonVariants({ size: "xs" }), "shrink-0")}
                     data-slot="toast-action"
                   >
                     {toast.actionProps.children}
@@ -393,9 +374,6 @@ function AnchoredToasts() {
             const Icon = toast.type ? TOAST_ICONS[toast.type as keyof typeof TOAST_ICONS] : null;
             const tooltipStyle = toast.data?.tooltipStyle ?? false;
             const positionerProps = toast.positionerProps;
-            const stackedActionLayout =
-              toast.actionProps !== undefined && toast.data?.actionLayout === "stacked-end";
-            const actionVariant = toast.data?.actionVariant ?? "default";
 
             if (!positionerProps?.anchor) {
               return null;
@@ -424,14 +402,7 @@ function AnchoredToasts() {
                       <Toast.Title data-slot="toast-title" />
                     </Toast.Content>
                   ) : (
-                    <Toast.Content
-                      className={cn(
-                        "pointer-events-auto overflow-hidden px-3.5 text-sm",
-                        stackedActionLayout
-                          ? "flex flex-col gap-2 py-2.5"
-                          : "flex items-center justify-between gap-1.5 py-3",
-                      )}
-                    >
+                    <Toast.Content className="pointer-events-auto flex items-center justify-between gap-1.5 overflow-hidden px-3.5 py-3 text-sm">
                       <div className="flex min-w-0 flex-1 gap-2">
                         {Icon && (
                           <div
@@ -462,11 +433,7 @@ function AnchoredToasts() {
                       </div>
                       {toast.actionProps && (
                         <Toast.Action
-                          className={cn(
-                            buttonVariants({ size: "xs", variant: actionVariant }),
-                            "shrink-0",
-                            stackedActionLayout && "self-end",
-                          )}
+                          className={cn(buttonVariants({ size: "xs" }), "shrink-0")}
                           data-slot="toast-action"
                         >
                           {toast.actionProps.children}

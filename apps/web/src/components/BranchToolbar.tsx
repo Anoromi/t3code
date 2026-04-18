@@ -65,6 +65,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   const activeProject = useStore(activeProjectSelector);
   const hasActiveThread = serverThread !== undefined || draftThread !== null;
   const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
+  const pendingWorktreeBranch = draftThread?.pendingWorktreeBranch ?? null;
   const effectiveEnvMode =
     effectiveEnvModeOverride ??
     resolveEffectiveEnvMode({
@@ -72,6 +73,10 @@ export const BranchToolbar = memo(function BranchToolbar({
       hasServerThread: serverThread !== undefined,
       draftThreadEnvMode: draftThread?.envMode,
     });
+  const envModeTriggerLabel =
+    effectiveEnvMode === "worktree" && !activeWorktreePath && pendingWorktreeBranch
+      ? pendingWorktreeBranch
+      : undefined;
   const envModeLocked = envLocked || (serverThread !== undefined && activeWorktreePath !== null);
 
   const showEnvironmentPicker =
@@ -97,6 +102,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           envLocked={envModeLocked}
           effectiveEnvMode={effectiveEnvMode}
           activeWorktreePath={activeWorktreePath}
+          {...(envModeTriggerLabel ? { triggerLabel: envModeTriggerLabel } : {})}
           onEnvModeChange={onEnvModeChange}
         />
       </div>

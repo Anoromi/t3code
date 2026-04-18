@@ -2,7 +2,11 @@ import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vitest";
 
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
-import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "./worktreeCleanup";
+import {
+  formatWorktreePathForDisplay,
+  getOrphanedWorktreePathForThread,
+  normalizeWorktreePath,
+} from "./worktreeCleanup";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
 
@@ -27,9 +31,11 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     error: null,
     createdAt: "2026-02-13T00:00:00.000Z",
     archivedAt: null,
+    updatedAt: "2026-02-13T00:00:00.000Z",
     latestTurn: null,
     branch: null,
     worktreePath: null,
+    forkOrigin: null,
     ...overrides,
   };
 }
@@ -106,5 +112,20 @@ describe("formatWorktreePathForDisplay", () => {
   it("ignores trailing slashes", () => {
     const result = formatWorktreePathForDisplay("/tmp/custom-worktrees/my-worktree/");
     expect(result).toBe("my-worktree");
+  });
+});
+
+describe("normalizeWorktreePath", () => {
+  it("returns null for null input", () => {
+    expect(normalizeWorktreePath(null)).toBeNull();
+  });
+
+  it("returns null for empty or whitespace-only input", () => {
+    expect(normalizeWorktreePath("")).toBeNull();
+    expect(normalizeWorktreePath("   ")).toBeNull();
+  });
+
+  it("trims surrounding whitespace without changing the inner path", () => {
+    expect(normalizeWorktreePath("  /tmp/worktrees/feature-a  ")).toBe("/tmp/worktrees/feature-a");
   });
 });

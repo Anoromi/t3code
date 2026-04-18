@@ -15,12 +15,12 @@ import type {
   OrchestrationThreadShell,
   OrchestrationThreadActivity,
   ProjectId,
+  ProviderKind,
   ScopedProjectRef,
   ScopedThreadRef,
+  ThreadId,
+  TurnId,
 } from "@t3tools/contracts";
-import { ProviderKind } from "@t3tools/contracts";
-import type { ThreadId, TurnId } from "@t3tools/contracts";
-import { Schema } from "effect";
 import { resolveModelSlugForProvider } from "@t3tools/shared/model";
 import { create } from "zustand";
 import {
@@ -129,7 +129,7 @@ function arraysEqual<T>(left: readonly T[], right: readonly T[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
-function normalizeModelSelection<T extends { provider: ProviderKind; model: string }>(
+function normalizeModelSelection<T extends { provider: "codex" | "claudeAgent"; model: string }>(
   selection: T,
 ): T {
   return {
@@ -199,6 +199,9 @@ function mapTurnDiffSummary(checkpoint: OrchestrationCheckpointSummary): TurnDif
     assistantMessageId: checkpoint.assistantMessageId ?? undefined,
     checkpointTurnCount: checkpoint.checkpointTurnCount,
     checkpointRef: checkpoint.checkpointRef,
+    visibleCheckpointRef: checkpoint.visibleCheckpointRef ?? undefined,
+    visibleBaseCheckpointTurnCount: checkpoint.visibleBaseCheckpointTurnCount,
+    visibility: checkpoint.visibility,
     files: checkpoint.files.map((file) => ({ ...file })),
   };
 }
@@ -221,6 +224,9 @@ function mapProject(
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
     scripts: mapProjectScripts(project.scripts),
+    worktreeGroupTitles: Array.from(
+      "worktreeGroupTitles" in project ? (project.worktreeGroupTitles ?? []) : [],
+    ),
   };
 }
 
@@ -274,6 +280,7 @@ function mapThreadShell(
     updatedAt: thread.updatedAt,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
+    forkOrigin: thread.forkOrigin,
   };
   const session = thread.session ? mapSession(thread.session) : null;
   const turnState: ThreadTurnState = {
@@ -322,6 +329,7 @@ function toThreadShell(thread: Thread): ThreadShell {
     updatedAt: thread.updatedAt,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
+    forkOrigin: thread.forkOrigin,
   };
 }
 
@@ -417,7 +425,8 @@ function threadShellsEqual(left: ThreadShell | undefined, right: ThreadShell): b
     left.archivedAt === right.archivedAt &&
     left.updatedAt === right.updatedAt &&
     left.branch === right.branch &&
-    left.worktreePath === right.worktreePath
+    left.worktreePath === right.worktreePath &&
+    left.forkOrigin === right.forkOrigin
   );
 }
 
@@ -1001,7 +1010,7 @@ function toLegacySessionStatus(
 }
 
 function toLegacyProvider(providerName: string | null): ProviderKind {
-  if (Schema.is(ProviderKind)(providerName)) {
+  if (providerName === "codex" || providerName === "claudeAgent") {
     return providerName;
   }
   return "codex";
@@ -1253,6 +1262,7 @@ function applyEnvironmentOrchestrationEvent(
           interactionMode: event.payload.interactionMode,
           branch: event.payload.branch,
           worktreePath: event.payload.worktreePath,
+          forkOrigin: null,
           latestTurn: null,
           createdAt: event.payload.createdAt,
           updatedAt: event.payload.updatedAt,
@@ -1513,6 +1523,9 @@ function applyEnvironmentOrchestrationEvent(
           turnId: event.payload.turnId,
           checkpointTurnCount: event.payload.checkpointTurnCount,
           checkpointRef: event.payload.checkpointRef,
+          visibleCheckpointRef: event.payload.visibleCheckpointRef,
+          visibleBaseCheckpointTurnCount: event.payload.visibleBaseCheckpointTurnCount,
+          visibility: event.payload.visibility,
           status: event.payload.status,
           files: event.payload.files,
           assistantMessageId: event.payload.assistantMessageId,

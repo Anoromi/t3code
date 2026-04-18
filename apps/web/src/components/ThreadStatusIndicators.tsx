@@ -11,7 +11,11 @@ import { useGitStatus } from "../lib/gitStatusState";
 import { type AppState, selectProjectByRef, useStore } from "../store";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { useUiStateStore } from "../uiStateStore";
-import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic";
+import {
+  isActionableThreadStatus,
+  resolveThreadStatusPill,
+  type ThreadStatusPill,
+} from "./Sidebar.logic";
 import type { SidebarThreadSummary } from "../types";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
@@ -147,12 +151,13 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
   });
   const pr = resolveThreadPr(thread.branch, gitStatus.data);
   const prStatus = prStatusIndicator(pr);
-  const threadStatus = resolveThreadStatusPill({
+  const resolvedThreadStatus = resolveThreadStatusPill({
     thread: {
       ...thread,
       lastVisitedAt,
     },
   });
+  const threadStatus = isActionableThreadStatus(resolvedThreadStatus) ? resolvedThreadStatus : null;
 
   if (!prStatus && !threadStatus) {
     return null;
