@@ -74,7 +74,7 @@ describe("syncShellEnvironment", () => {
 
   it("hydrates PATH and missing SSH_AUTH_SOCK from the login shell on linux", () => {
     const env: NodeJS.ProcessEnv = {
-      SHELL: "/bin/zsh",
+      SHELL: "/nix/store/hash-bash-5.3/bin/bash",
       PATH: "/usr/bin",
     };
     const readEnvironment = vi.fn(() => ({
@@ -87,7 +87,7 @@ describe("syncShellEnvironment", () => {
       readEnvironment,
     });
 
-    expect(readEnvironment).toHaveBeenCalledWith("/bin/zsh", [
+    expect(readEnvironment).toHaveBeenCalledWith("/run/current-system/sw/bin/bash", [
       "PATH",
       "SSH_AUTH_SOCK",
       "HOMEBREW_PREFIX",
@@ -96,6 +96,7 @@ describe("syncShellEnvironment", () => {
       "XDG_CONFIG_HOME",
       "XDG_DATA_HOME",
     ]);
+    expect(env.SHELL).toBe("/run/current-system/sw/bin/bash");
     expect(env.PATH).toBe("/home/linuxbrew/.linuxbrew/bin:/usr/bin");
     expect(env.SSH_AUTH_SOCK).toBe("/tmp/secretive.sock");
   });
