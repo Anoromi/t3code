@@ -43,6 +43,11 @@ import { CheckpointReactorLive } from "./orchestration/Layers/CheckpointReactor.
 import { WorktreeGroupTitleReactorLive } from "./orchestration/Layers/WorktreeGroupTitleReactor.ts";
 import { WorktreeTitleGenerationLive } from "./orchestration/Layers/WorktreeTitleGeneration.ts";
 import { ProviderRegistryLive } from "./provider/Layers/ProviderRegistry.ts";
+import {
+  E2eFakeProviderAdapterRegistryLive,
+  E2eFakeProviderRegistryLive,
+  isE2eFakeProviderEnabled,
+} from "./provider/Layers/E2eFakeProvider.ts";
 import { ServerSettingsLive } from "./serverSettings.ts";
 import { ProjectFaviconResolverLive } from "./project/Layers/ProjectFaviconResolver.ts";
 import { RepositoryIdentityResolverLive } from "./project/Layers/RepositoryIdentityResolver.ts";
@@ -153,17 +158,21 @@ const ProviderLayerLive = Layer.unwrap(
     const canonicalEventLogger = yield* makeEventNdjsonLogger(providerEventLogPath, {
       stream: "canonical",
     });
-    const codexAdapterLayer = makeCodexAdapterLive(
-      nativeEventLogger ? { nativeEventLogger } : undefined,
-    );
-    const claudeAdapterLayer = makeClaudeAdapterLive(
-      nativeEventLogger ? { nativeEventLogger } : undefined,
-    );
-    const adapterRegistryLayer = ProviderAdapterRegistryLive.pipe(
-      Layer.provide(codexAdapterLayer),
-      Layer.provide(claudeAdapterLayer),
-      Layer.provideMerge(ProviderSessionDirectoryLayerLive),
-    );
+    const adapterRegistryLayer = isE2eFakeProviderEnabled()
+      ? E2eFakeProviderAdapterRegistryLive
+      : (() => {
+          const codexAdapterLayer = makeCodexAdapterLive(
+            nativeEventLogger ? { nativeEventLogger } : undefined,
+          );
+          const claudeAdapterLayer = makeClaudeAdapterLive(
+            nativeEventLogger ? { nativeEventLogger } : undefined,
+          );
+          return ProviderAdapterRegistryLive.pipe(
+            Layer.provide(codexAdapterLayer),
+            Layer.provide(claudeAdapterLayer),
+            Layer.provideMerge(ProviderSessionDirectoryLayerLive),
+          );
+        })();
     const providerServiceLayer = makeProviderServiceLive(
       canonicalEventLogger ? { canonicalEventLogger } : undefined,
     ).pipe(
@@ -233,7 +242,9 @@ const RuntimeDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(TerminalLayerLive),
   Layer.provideMerge(PersistenceLayerLive),
   Layer.provideMerge(KeybindingsLive),
-  Layer.provideMerge(ProviderRegistryLive),
+  Layer.provideMerge(
+    isE2eFakeProviderEnabled() ? E2eFakeProviderRegistryLive : ProviderRegistryLive,
+  ),
   Layer.provideMerge(ServerSettingsLive),
   Layer.provideMerge(WorkspaceLayerLive),
   Layer.provideMerge(ProjectFaviconResolverLive),

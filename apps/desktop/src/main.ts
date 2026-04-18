@@ -75,6 +75,11 @@ import {
 } from "./updateMachine.ts";
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch.ts";
 import { resolveDesktopAppBranding } from "./appBranding.ts";
+import {
+  isDesktopE2eMode,
+  resolveBackendCwdForEnv,
+  sanitizeBackendChildEnv,
+} from "./desktopE2eRuntime.ts";
 
 syncShellEnvironment();
 
@@ -128,6 +133,7 @@ const APP_RUN_ID = Crypto.randomBytes(6).toString("hex");
 const SERVER_SETTINGS_PATH = Path.join(STATE_DIR, "settings.json");
 const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000;
 const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000;
+const desktopE2eMode = isDesktopE2eMode(process.env);
 
 function resolvePickFolderDefaultPath(rawOptions: unknown): string | undefined {
   if (typeof rawOptions !== "object" || rawOptions === null) {
@@ -288,15 +294,7 @@ function resolveDesktopDevServerUrl(): string {
 }
 
 function backendChildEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
-  delete env.T3CODE_PORT;
-  delete env.T3CODE_MODE;
-  delete env.T3CODE_NO_BROWSER;
-  delete env.T3CODE_HOST;
-  delete env.T3CODE_DESKTOP_WS_URL;
-  delete env.T3CODE_DESKTOP_LAN_ACCESS;
-  delete env.T3CODE_DESKTOP_LAN_HOST;
-  return env;
+  return sanitizeBackendChildEnv(process.env);
 }
 
 function getDesktopServerExposureState(): DesktopServerExposureState {
@@ -388,6 +386,9 @@ function relaunchDesktopApp(reason: string): void {
 }
 
 function writeDesktopLogHeader(message: string): void {
+  if (desktopE2eMode) {
+    console.info(`[desktop-e2e] ${message}`);
+  }
   if (!desktopLogSink) return;
   desktopLogSink.write(`[${logTimestamp()}] [${logScope("desktop")}] ${message}\n`);
 }
@@ -583,6 +584,9 @@ function captureBackendOutput(child: ChildProcess.ChildProcess): void {
   const attachStream = (stream: NodeJS.ReadableStream | null | undefined): void => {
     stream?.on("data", (chunk: unknown) => {
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk), "utf8");
+      if (desktopE2eMode) {
+        process.stdout.write(`[backend-e2e] ${buffer.toString()}`);
+      }
       backendLogSink?.write(buffer);
       backendListeningDetector?.push(buffer);
     });
@@ -729,10 +733,9 @@ function resolveBackendEntry(): string {
 }
 
 function resolveBackendCwd(): string {
-  if (!app.isPackaged) {
-    return resolveAppRoot();
-  }
-  return OS.homedir();
+  return resolveBackendCwdForEnv(process.env, () =>
+    !app.isPackaged ? resolveAppRoot() : OS.homedir(),
+  );
 }
 
 function resolveDesktopStaticDir(): string | null {
