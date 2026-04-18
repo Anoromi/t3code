@@ -73,6 +73,7 @@ describe("getAutoUpdateDisabledReason", () => {
         appImage: undefined,
         disabledByEnv: false,
         hasUpdateFeedConfig: true,
+        packageChannel: undefined,
       }),
     ).toContain("packaged production builds");
   });
@@ -112,8 +113,23 @@ describe("getAutoUpdateDisabledReason", () => {
         appImage: undefined,
         disabledByEnv: true,
         hasUpdateFeedConfig: true,
+        packageChannel: undefined,
       }),
     ).toContain("T3CODE_DISABLE_AUTO_UPDATE");
+  });
+
+  it("reports nix-managed builds as disabled through nix", () => {
+    expect(
+      getAutoUpdateDisabledReason({
+        isDevelopment: false,
+        isPackaged: false,
+        platform: "linux",
+        appImage: undefined,
+        disabledByEnv: false,
+        hasUpdateFeedConfig: false,
+        packageChannel: "nix",
+      }),
+    ).toContain("managed through Nix");
   });
 
   it("reports linux non-AppImage builds as disabled", () => {
@@ -125,6 +141,7 @@ describe("getAutoUpdateDisabledReason", () => {
         appImage: undefined,
         disabledByEnv: false,
         hasUpdateFeedConfig: true,
+        packageChannel: undefined,
       }),
     ).toContain("AppImage");
   });

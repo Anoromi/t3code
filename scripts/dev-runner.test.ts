@@ -1,5 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import * as NodeOS from "node:os";
+import { join, resolve } from "node:path";
 import { assert, describe, it } from "@effect/vitest";
 import { Effect, Path } from "effect";
 
@@ -7,9 +9,17 @@ import {
   checkPortAvailabilityOnHosts,
   createDevRunnerEnv,
   findFirstAvailableOffset,
+  parseGitWorktreeListPorcelain,
   resolveModePortOffsets,
   resolveOffset,
+  resolveWorktreeStatePaths,
 } from "./dev-runner.ts";
+
+const MAIN_WORKTREE_CWD = "/repo/main";
+const MAIN_WORKTREE_PORCELAIN = `worktree ${MAIN_WORKTREE_CWD}
+branch refs/heads/main
+
+`;
 
 it.layer(NodeServices.layer)("dev-runner", (it) => {
   describe("resolveOffset", () => {
@@ -61,6 +71,8 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           host: undefined,
           port: undefined,
           devUrl: undefined,
+          cwd: MAIN_WORKTREE_CWD,
+          gitWorktreeListPorcelain: MAIN_WORKTREE_PORCELAIN,
         });
 
         assert.equal(env.T3CODE_HOME, path.resolve(NodeOS.homedir(), ".t3"));
@@ -82,6 +94,8 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           host: "0.0.0.0",
           port: 4222,
           devUrl: new URL("http://localhost:7331"),
+          cwd: MAIN_WORKTREE_CWD,
+          gitWorktreeListPorcelain: MAIN_WORKTREE_PORCELAIN,
         });
 
         assert.equal(env.T3CODE_HOME, path.resolve("/tmp/custom-t3"));
@@ -112,6 +126,8 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           host: undefined,
           port: undefined,
           devUrl: undefined,
+          cwd: MAIN_WORKTREE_CWD,
+          gitWorktreeListPorcelain: MAIN_WORKTREE_PORCELAIN,
         });
 
         assert.equal(env.T3CODE_MODE, "web");
@@ -135,6 +151,8 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           host: undefined,
           port: undefined,
           devUrl: undefined,
+          cwd: MAIN_WORKTREE_CWD,
+          gitWorktreeListPorcelain: MAIN_WORKTREE_PORCELAIN,
         });
 
         assert.equal(env.T3CODE_LOG_WS_EVENTS, "0");
@@ -156,13 +174,14 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
           host: undefined,
           port: undefined,
           devUrl: undefined,
+          cwd: MAIN_WORKTREE_CWD,
+          gitWorktreeListPorcelain: MAIN_WORKTREE_PORCELAIN,
         });
 
         assert.equal(env.T3CODE_HOME, path.resolve("/tmp/my-t3"));
       }),
     );
-
-    it.effect("pins desktop dev to a stable backend port and websocket url", () =>
+    it.effect("pins desktop dev ports without exporting backend bootstrap env", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;
         const env = yield* createDevRunnerEnv({
@@ -217,6 +236,173 @@ it.layer(NodeServices.layer)("dev-runner", (it) => {
         assert.equal(env.T3CODE_PORT, "13773");
         assert.equal(env.VITE_HTTP_URL, "http://localhost:13773");
         assert.equal(env.VITE_WS_URL, "ws://localhost:13773");
+      }),
+    );
+
+    it.effect("keeps the main worktree on the legacy dev state dir", () =>
+      Effect.gen(function* () {
+        const env = yield* createDevRunnerEnv({
+          mode: "dev",
+          baseEnv: {},
+          serverOffset: 0,
+          webOffset: 0,
+          t3Home: "/tmp/t3-main",
+          noBrowser: undefined,
+          autoBootstrapProjectFromCwd: undefined,
+          logWebSocketEvents: undefined,
+          host: undefined,
+          port: undefined,
+          devUrl: undefined,
+          cwd: "/repo/t3code",
+          gitWorktreeListPorcelain: `worktree /repo/t3code
+branch refs/heads/main
+
+worktree /repo/t3code-worktree
+branch refs/heads/feature
+
+`,
+        });
+
+        assert.equal(env.T3CODE_STATE_DIR, "/tmp/t3-main/dev");
+      }),
+    );
+
+    it.effect("seeds a secondary worktree state dir from the main worktree on first run", () =>
+      Effect.gen(function* () {
+        const baseDir = yield* Effect.tryPromise(() =>
+          mkdtemp(join(NodeOS.tmpdir(), "t3-dev-runner-seed-")),
+        );
+        const program = Effect.gen(function* () {
+          const mainStateDir = join(baseDir, "dev");
+          yield* Effect.tryPromise(() =>
+            mkdir(join(mainStateDir, "attachments"), { recursive: true }),
+          );
+          yield* Effect.tryPromise(() => mkdir(join(mainStateDir, "logs"), { recursive: true }));
+          yield* Effect.tryPromise(() => writeFile(join(mainStateDir, "state.sqlite"), "sqlite"));
+          yield* Effect.tryPromise(() =>
+            writeFile(join(mainStateDir, "attachments", "image.bin"), "image"),
+          );
+          yield* Effect.tryPromise(() =>
+            writeFile(join(mainStateDir, "logs", "server.log"), "log"),
+          );
+
+          const env = yield* createDevRunnerEnv({
+            mode: "dev",
+            baseEnv: {},
+            serverOffset: 0,
+            webOffset: 0,
+            t3Home: baseDir,
+            noBrowser: undefined,
+            autoBootstrapProjectFromCwd: undefined,
+            logWebSocketEvents: undefined,
+            host: undefined,
+            port: undefined,
+            devUrl: undefined,
+            cwd: "/repo/t3code-worktree",
+            gitWorktreeListPorcelain: `worktree /repo/t3code
+branch refs/heads/main
+
+worktree /repo/t3code-worktree
+branch refs/heads/feature
+
+`,
+          });
+
+          assert.ok(env.T3CODE_STATE_DIR);
+          const seededStateDir = env.T3CODE_STATE_DIR!;
+          assert.ok(seededStateDir.startsWith(join(baseDir, "dev-worktrees", "t3code")));
+          assert.equal(
+            yield* Effect.tryPromise(() => readFile(join(seededStateDir, "state.sqlite"), "utf8")),
+            "sqlite",
+          );
+          assert.equal(
+            yield* Effect.tryPromise(() =>
+              readFile(join(seededStateDir, "attachments", "image.bin"), "utf8"),
+            ),
+            "image",
+          );
+          assert.deepStrictEqual(
+            yield* Effect.tryPromise(() => readdir(join(seededStateDir, "logs")).catch(() => [])),
+            [],
+          );
+
+          yield* Effect.tryPromise(() =>
+            writeFile(join(seededStateDir, "state.sqlite"), "modified"),
+          );
+
+          const secondEnv = yield* createDevRunnerEnv({
+            mode: "dev",
+            baseEnv: {},
+            serverOffset: 0,
+            webOffset: 0,
+            t3Home: baseDir,
+            noBrowser: undefined,
+            autoBootstrapProjectFromCwd: undefined,
+            logWebSocketEvents: undefined,
+            host: undefined,
+            port: undefined,
+            devUrl: undefined,
+            cwd: "/repo/t3code-worktree",
+            gitWorktreeListPorcelain: `worktree /repo/t3code
+branch refs/heads/main
+
+worktree /repo/t3code-worktree
+branch refs/heads/feature
+
+`,
+          });
+
+          assert.equal(secondEnv.T3CODE_STATE_DIR, seededStateDir);
+          assert.equal(
+            yield* Effect.tryPromise(() => readFile(join(seededStateDir, "state.sqlite"), "utf8")),
+            "modified",
+          );
+        }).pipe(
+          Effect.ensuring(
+            Effect.tryPromise(() => rm(baseDir, { recursive: true, force: true })).pipe(
+              Effect.orElseSucceed(() => undefined),
+            ),
+          ),
+        );
+        yield* program;
+      }),
+    );
+  });
+
+  describe("worktree helpers", () => {
+    it.effect("parses git worktree porcelain output", () =>
+      Effect.sync(() => {
+        const parsed = parseGitWorktreeListPorcelain(`worktree /repo/main
+branch refs/heads/main
+
+worktree /repo/feature
+branch refs/heads/feature
+
+`);
+        assert.deepStrictEqual(parsed, [
+          { path: "/repo/main", branch: "refs/heads/main" },
+          { path: "/repo/feature", branch: "refs/heads/feature" },
+        ]);
+      }),
+    );
+
+    it.effect("resolves isolated state dirs for non-main worktrees", () =>
+      Effect.sync(() => {
+        const resolvedPaths = resolveWorktreeStatePaths({
+          baseDir: "/tmp/t3",
+          currentWorktreeRoot: "/repo/t3code-branch",
+          gitWorktreeListPorcelain: `worktree /repo/t3code
+branch refs/heads/main
+
+worktree /repo/t3code-branch
+branch refs/heads/feature
+
+`,
+        });
+
+        assert.equal(resolvedPaths.isMainWorktree, false);
+        assert.equal(resolvedPaths.mainStateDir, "/tmp/t3/dev");
+        assert.ok(resolvedPaths.stateDir.startsWith("/tmp/t3/dev-worktrees/t3code/t3code-branch-"));
       }),
     );
   });
