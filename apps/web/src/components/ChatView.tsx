@@ -3129,7 +3129,9 @@ export default function ChatView(props: ChatViewProps) {
       return;
     }
     if (composerImages.length === 0 && sendableComposerTerminalContexts.length === 0) {
-      const menuSlashCommand = parseComposerMenuSlashCommandQuery(trimmed);
+      const menuSlashCommand = trimmed.startsWith("/")
+        ? parseComposerMenuSlashCommandQuery(trimmed.slice(1))
+        : null;
       if (menuSlashCommand?.command === "branch" || menuSlashCommand?.command === "worktree") {
         const selectedConfigItem =
           ((activeComposerMenuItemRef.current ?? composerMenuItemsRef.current[0]) as
