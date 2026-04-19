@@ -186,6 +186,7 @@ export function projectEvent(
             workspaceRoot: payload.workspaceRoot,
             defaultModelSelection: payload.defaultModelSelection,
             scripts: payload.scripts,
+            hyprnav: payload.hyprnav,
             worktreeGroupTitles: payload.worktreeGroupTitles ?? [],
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -219,6 +220,7 @@ export function projectEvent(
                     ? { defaultModelSelection: payload.defaultModelSelection }
                     : {}),
                   ...(payload.scripts !== undefined ? { scripts: payload.scripts } : {}),
+                  ...(payload.hyprnav !== undefined ? { hyprnav: payload.hyprnav } : {}),
                   ...(payload.worktreeGroupTitles !== undefined
                     ? { worktreeGroupTitles: payload.worktreeGroupTitles }
                     : {}),

@@ -1,5 +1,6 @@
 import {
   CommandId,
+  DEFAULT_PROJECT_HYPRNAV_SETTINGS,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   MessageId,
@@ -38,6 +39,9 @@ describe("decider project scripts", () => {
     const event = Array.isArray(result) ? result[0] : result;
     expect(event.type).toBe("project.created");
     expect((event.payload as { scripts: unknown[] }).scripts).toEqual([]);
+    expect((event.payload as { hyprnav: unknown }).hyprnav).toEqual(
+      DEFAULT_PROJECT_HYPRNAV_SETTINGS,
+    );
   });
 
   it("propagates scripts in project.meta.update payload", async () => {
@@ -61,6 +65,7 @@ describe("decider project scripts", () => {
           workspaceRoot: "/tmp/scripts",
           defaultModelSelection: null,
           scripts: [],
+          hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
           worktreeGroupTitles: [],
           createdAt: now,
           updatedAt: now,
@@ -95,6 +100,108 @@ describe("decider project scripts", () => {
     expect((event.payload as { scripts?: unknown[] }).scripts).toEqual(scripts);
   });
 
+  it("propagates hyprnav in project.meta.update payload", async () => {
+    const now = new Date().toISOString();
+    const initial = createEmptyReadModel(now);
+    const readModel = await Effect.runPromise(
+      projectEvent(initial, {
+        sequence: 1,
+        eventId: asEventId("evt-project-create-hyprnav"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-hyprnav"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-project-create-hyprnav"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-project-create-hyprnav"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-hyprnav"),
+          title: "Hyprnav",
+          workspaceRoot: "/tmp/hyprnav",
+          defaultModelSelection: null,
+          scripts: [],
+          hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
+          worktreeGroupTitles: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+
+    const hyprnav = {
+      bindings: [
+        { id: "terminal", slot: 3, action: "worktree-terminal" },
+        { id: "custom", slot: 4, action: "shell-command", command: "tmux" },
+      ],
+    } as const;
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "project.meta.update",
+          commandId: CommandId.make("cmd-project-update-hyprnav"),
+          projectId: asProjectId("project-hyprnav"),
+          hyprnav,
+        },
+        readModel,
+      }),
+    );
+
+    const event = Array.isArray(result) ? result[0] : result;
+    expect(event.type).toBe("project.meta-updated");
+    expect((event.payload as { hyprnav?: unknown }).hyprnav).toEqual(hyprnav);
+  });
+
+  it("rejects duplicate hyprnav slots in project.meta.update", async () => {
+    const now = new Date().toISOString();
+    const initial = createEmptyReadModel(now);
+    const readModel = await Effect.runPromise(
+      projectEvent(initial, {
+        sequence: 1,
+        eventId: asEventId("evt-project-create-hyprnav-duplicate"),
+        aggregateKind: "project",
+        aggregateId: asProjectId("project-hyprnav-duplicate"),
+        type: "project.created",
+        occurredAt: now,
+        commandId: CommandId.make("cmd-project-create-hyprnav-duplicate"),
+        causationEventId: null,
+        correlationId: CommandId.make("cmd-project-create-hyprnav-duplicate"),
+        metadata: {},
+        payload: {
+          projectId: asProjectId("project-hyprnav-duplicate"),
+          title: "Hyprnav Duplicate",
+          workspaceRoot: "/tmp/hyprnav-duplicate",
+          defaultModelSelection: null,
+          scripts: [],
+          hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
+          worktreeGroupTitles: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      }),
+    );
+
+    await expect(
+      Effect.runPromise(
+        decideOrchestrationCommand({
+          command: {
+            type: "project.meta.update",
+            commandId: CommandId.make("cmd-project-update-hyprnav-duplicate"),
+            projectId: asProjectId("project-hyprnav-duplicate"),
+            hyprnav: {
+              bindings: [
+                { id: "terminal", slot: 1, action: "worktree-terminal" },
+                { id: "editor", slot: 1, action: "open-favorite-editor" },
+              ],
+            },
+          },
+          readModel,
+        }),
+      ),
+    ).rejects.toThrow("Hyprnav action slots must be unique");
+  });
+
   it("emits a regeneration-requested event for worktree title regeneration", async () => {
     const now = new Date().toISOString();
     const initial = createEmptyReadModel(now);
@@ -116,6 +223,7 @@ describe("decider project scripts", () => {
           workspaceRoot: "/tmp/project",
           defaultModelSelection: null,
           scripts: [],
+          hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
           worktreeGroupTitles: [],
           createdAt: now,
           updatedAt: now,
@@ -166,6 +274,7 @@ describe("decider project scripts", () => {
           workspaceRoot: "/tmp/project",
           defaultModelSelection: null,
           scripts: [],
+          hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
           worktreeGroupTitles: [],
           createdAt: now,
           updatedAt: now,
@@ -276,6 +385,7 @@ describe("decider project scripts", () => {
           workspaceRoot: "/tmp/project",
           defaultModelSelection: null,
           scripts: [],
+          hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
           worktreeGroupTitles: [],
           createdAt: now,
           updatedAt: now,
@@ -359,6 +469,7 @@ describe("decider project scripts", () => {
           workspaceRoot: "/tmp/project",
           defaultModelSelection: null,
           scripts: [],
+          hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
           worktreeGroupTitles: [],
           createdAt: now,
           updatedAt: now,

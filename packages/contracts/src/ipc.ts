@@ -50,6 +50,7 @@ import type {
   OrchestrationShellStreamItem,
   OrchestrationSubscribeThreadInput,
   OrchestrationThreadStreamItem,
+  ProjectHyprnavSettings,
 } from "./orchestration.ts";
 import type { EnvironmentId } from "./baseSchemas.ts";
 import { EditorId } from "./editor.ts";
@@ -146,6 +147,24 @@ export interface PickFolderOptions {
   initialPath?: string | null;
 }
 
+export interface DesktopHyprnavSyncInput {
+  environmentPath: string;
+  projectRoot: string;
+  hyprnav: ProjectHyprnavSettings;
+  preferredEditor?: EditorId | null | undefined;
+  clearSlots?: readonly number[] | undefined;
+  lock: boolean;
+}
+
+export interface DesktopHyprnavLockInput {
+  environmentPath: string;
+}
+
+export interface DesktopHyprnavSyncResult {
+  status: "ok" | "unavailable" | "error";
+  message: string | null;
+}
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   getLocalEnvironmentBootstrap: () => DesktopEnvironmentBootstrap | null;
@@ -185,6 +204,8 @@ export interface DesktopBridge {
       worktreePath: string;
     }>
   >;
+  syncHyprnavEnvironment?: (input: DesktopHyprnavSyncInput) => Promise<DesktopHyprnavSyncResult>;
+  lockHyprnavEnvironment?: (input: DesktopHyprnavLockInput) => Promise<DesktopHyprnavSyncResult>;
   focusAppWindow?: () => Promise<void>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;

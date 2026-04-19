@@ -24,6 +24,8 @@ import type {
   DesktopDaemonStatus,
   DesktopTheme,
   DesktopAppBranding,
+  ProjectHyprnavBinding,
+  ProjectHyprnavSettings,
   DesktopServerExposureMode,
   DesktopServerExposureState,
   DesktopUpdateChannel,
@@ -32,6 +34,7 @@ import type {
   DesktopUpdateCheckResult,
   DesktopUpdateState,
 } from "@t3tools/contracts";
+import { EDITORS } from "@t3tools/contracts";
 import { autoUpdater } from "electron-updater";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
@@ -88,6 +91,7 @@ import {
   sanitizeBackendChildEnv,
 } from "./desktopE2eRuntime.ts";
 import { createWorktreeTerminalLauncher } from "./worktreeTerminal.ts";
+import { createHyprnavEnvironmentSync } from "./hyprnav.ts";
 
 syncShellEnvironment();
 
@@ -99,6 +103,8 @@ const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 const TOGGLE_EXTERNAL_CORKDIFF_CHANNEL = "desktop:toggle-external-corkdiff";
 const OPEN_WORKTREE_TERMINAL_CHANNEL = "desktop:open-worktree-terminal";
 const LIST_OPEN_WORKTREE_TERMINALS_CHANNEL = "desktop:list-open-worktree-terminals";
+const SYNC_HYPRNAV_ENVIRONMENT_CHANNEL = "desktop:sync-hyprnav-environment";
+const LOCK_HYPRNAV_ENVIRONMENT_CHANNEL = "desktop:lock-hyprnav-environment";
 const FOCUS_APP_WINDOW_CHANNEL = "desktop:focus-app-window";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
 const UPDATE_STATE_CHANNEL = "desktop:update-state";
@@ -255,6 +261,7 @@ const externalCorkdiffManager = createExternalCorkdiffManager({
   getMainWindow: () => mainWindow,
 });
 const worktreeTerminalLauncher = createWorktreeTerminalLauncher();
+const hyprnavEnvironmentSync = createHyprnavEnvironmentSync();
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
 const expectedBackendExitChildren = new WeakSet<ChildProcess.ChildProcess>();
@@ -583,6 +590,71 @@ function getSafeNullableString(rawValue: unknown): string | null {
     return null;
   }
   return getSafeNonEmptyString(rawValue);
+}
+
+function getSafePositiveInteger(rawValue: unknown): number | null {
+  return typeof rawValue === "number" && Number.isInteger(rawValue) && rawValue > 0
+    ? rawValue
+    : null;
+}
+
+function getSafeEditorId(rawValue: unknown): (typeof EDITORS)[number]["id"] | null {
+  const editor =
+    typeof rawValue === "string"
+      ? EDITORS.find((candidate) => candidate.id === rawValue)
+      : undefined;
+  return editor?.id ?? null;
+}
+
+function getSafeHyprnavSettings(rawValue: unknown): ProjectHyprnavSettings | null {
+  if (typeof rawValue !== "object" || rawValue === null) {
+    return null;
+  }
+
+  const rawBindings = (rawValue as { bindings?: unknown }).bindings;
+  if (!Array.isArray(rawBindings)) {
+    return null;
+  }
+
+  const bindings: ProjectHyprnavBinding[] = [];
+  const slots = new Set<number>();
+  for (const rawBinding of rawBindings) {
+    if (typeof rawBinding !== "object" || rawBinding === null) {
+      return null;
+    }
+
+    const record = rawBinding as {
+      id?: unknown;
+      slot?: unknown;
+      action?: unknown;
+      command?: unknown;
+    };
+    const id = getSafeNonEmptyString(record.id);
+    const slot = getSafePositiveInteger(record.slot);
+    if (id === null || slot === null || slots.has(slot)) {
+      return null;
+    }
+
+    slots.add(slot);
+    switch (record.action) {
+      case "worktree-terminal":
+      case "open-favorite-editor":
+        bindings.push({ id, slot, action: record.action });
+        break;
+      case "shell-command": {
+        const command = getSafeNonEmptyString(record.command);
+        if (command === null) {
+          return null;
+        }
+        bindings.push({ id, slot, action: "shell-command", command });
+        break;
+      }
+      default:
+        return null;
+    }
+  }
+
+  return { bindings };
 }
 
 function writeDesktopStreamChunk(
@@ -2015,6 +2087,62 @@ function registerIpcHandlers(): void {
     return worktreeTerminalLauncher.listOpen({
       rootDir: ROOT_DIR,
     });
+  });
+
+  ipcMain.removeHandler(SYNC_HYPRNAV_ENVIRONMENT_CHANNEL);
+  ipcMain.handle(SYNC_HYPRNAV_ENVIRONMENT_CHANNEL, async (_event, rawInput: unknown) => {
+    if (typeof rawInput !== "object" || rawInput === null) {
+      throw new Error("Invalid Hyprnav sync request.");
+    }
+
+    const record = rawInput as {
+      environmentPath?: unknown;
+      projectRoot?: unknown;
+      hyprnav?: unknown;
+      preferredEditor?: unknown;
+      clearSlots?: unknown;
+      lock?: unknown;
+    };
+
+    const hyprnav = getSafeHyprnavSettings(record.hyprnav);
+    if (hyprnav === null) {
+      return {
+        status: "unavailable" as const,
+        message: "Project Hyprnav settings are unavailable.",
+      };
+    }
+
+    return hyprnavEnvironmentSync.sync({
+      environmentPath: getSafeNonEmptyString(record.environmentPath) ?? "",
+      projectRoot: getSafeNonEmptyString(record.projectRoot) ?? "",
+      hyprnav,
+      preferredEditor: getSafeEditorId(record.preferredEditor),
+      clearSlots: Array.isArray(record.clearSlots)
+        ? record.clearSlots.flatMap((slot) => {
+            const normalized = getSafePositiveInteger(slot);
+            return normalized === null ? [] : [normalized];
+          })
+        : undefined,
+      lock: record.lock === true,
+    });
+  });
+
+  ipcMain.removeHandler(LOCK_HYPRNAV_ENVIRONMENT_CHANNEL);
+  ipcMain.handle(LOCK_HYPRNAV_ENVIRONMENT_CHANNEL, async (_event, rawInput: unknown) => {
+    if (typeof rawInput !== "object" || rawInput === null) {
+      throw new Error("Invalid Hyprnav lock request.");
+    }
+
+    const record = rawInput as { environmentPath?: unknown };
+    const environmentPath = getSafeNonEmptyString(record.environmentPath);
+    if (environmentPath === null) {
+      return {
+        status: "error" as const,
+        message: "Hyprnav lock request is missing an environment path.",
+      };
+    }
+
+    return hyprnavEnvironmentSync.lockEnvironment({ environmentPath });
   });
 
   ipcMain.removeHandler(FOCUS_APP_WINDOW_CHANNEL);

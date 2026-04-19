@@ -1,4 +1,10 @@
-import { CommandId, EventId, ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  DEFAULT_PROJECT_HYPRNAV_SETTINGS,
+  EventId,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, Layer, Schema, Stream } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -37,6 +43,7 @@ layer("OrchestrationEventStore", (it) => {
           workspaceRoot: "/tmp/project-roundtrip",
           defaultModelSelection: null,
           scripts: [],
+          hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
           createdAt: now,
           updatedAt: now,
         },

@@ -1,7 +1,13 @@
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import { Effect, Layer, Schema, Struct } from "effect";
-import { ModelSelection, OrchestrationWorktreeGroupTitle, ProjectScript } from "@t3tools/contracts";
+import {
+  DEFAULT_PROJECT_HYPRNAV_SETTINGS,
+  ModelSelection,
+  OrchestrationWorktreeGroupTitle,
+  ProjectHyprnavSettings,
+  ProjectScript,
+} from "@t3tools/contracts";
 import { toPersistenceSqlError } from "../Errors.ts";
 import {
   DeleteProjectionProjectInput,
@@ -15,9 +21,12 @@ const ProjectionProjectDbRow = ProjectionProject.mapFields(
   Struct.assign({
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
+    hyprnav: Schema.fromJsonString(ProjectHyprnavSettings),
     worktreeGroupTitles: Schema.fromJsonString(Schema.Array(OrchestrationWorktreeGroupTitle)),
   }),
 );
+
+const DEFAULT_PROJECT_HYPRNAV_JSON = JSON.stringify(DEFAULT_PROJECT_HYPRNAV_SETTINGS);
 type ProjectionProjectDbRow = typeof ProjectionProjectDbRow.Type;
 
 const makeProjectionProjectRepository = Effect.gen(function* () {
@@ -34,6 +43,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           default_model,
           default_model_selection_json,
           scripts_json,
+          hyprnav_json,
           worktree_group_titles_json,
           created_at,
           updated_at,
@@ -46,6 +56,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           ${row.defaultModelSelection?.model ?? null},
           ${row.defaultModelSelection !== null ? JSON.stringify(row.defaultModelSelection) : null},
           ${JSON.stringify(row.scripts)},
+          ${JSON.stringify(row.hyprnav)},
           ${JSON.stringify(row.worktreeGroupTitles)},
           ${row.createdAt},
           ${row.updatedAt},
@@ -58,6 +69,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           default_model = excluded.default_model,
           default_model_selection_json = excluded.default_model_selection_json,
           scripts_json = excluded.scripts_json,
+          hyprnav_json = excluded.hyprnav_json,
           worktree_group_titles_json = excluded.worktree_group_titles_json,
           created_at = excluded.created_at,
           updated_at = excluded.updated_at,
@@ -76,6 +88,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
           scripts_json AS "scripts",
+          COALESCE(hyprnav_json, ${DEFAULT_PROJECT_HYPRNAV_JSON}) AS "hyprnav",
           COALESCE(worktree_group_titles_json, '[]') AS "worktreeGroupTitles",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -96,6 +109,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
           scripts_json AS "scripts",
+          COALESCE(hyprnav_json, ${DEFAULT_PROJECT_HYPRNAV_JSON}) AS "hyprnav",
           COALESCE(worktree_group_titles_json, '[]') AS "worktreeGroupTitles",
           created_at AS "createdAt",
           updated_at AS "updatedAt",

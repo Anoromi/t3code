@@ -2,6 +2,7 @@ import {
   CheckpointRef,
   CommandId,
   CorrelationId,
+  DEFAULT_PROJECT_HYPRNAV_SETTINGS,
   EventId,
   MessageId,
   ProjectId,
@@ -75,6 +76,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           workspaceRoot: "/tmp/project-1",
           defaultModelSelection: null,
           scripts: [],
+          hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
           createdAt: now,
           updatedAt: now,
         },
@@ -347,6 +349,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
             workspaceRoot: "/tmp/project-clear-attachments",
             defaultModelSelection: null,
             scripts: [],
+            hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
             createdAt: now,
             updatedAt: now,
           },
@@ -475,6 +478,7 @@ it.layer(
           workspaceRoot: "/tmp/project-overwrite",
           defaultModelSelection: null,
           scripts: [],
+          hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
           createdAt: now,
           updatedAt: now,
         },
@@ -623,6 +627,7 @@ it.layer(
           workspaceRoot: "/tmp/project-rollback",
           defaultModelSelection: null,
           scripts: [],
+          hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
           createdAt: now,
           updatedAt: now,
         },
@@ -752,6 +757,7 @@ it.layer(
           workspaceRoot: "/tmp/project-revert-files",
           defaultModelSelection: null,
           scripts: [],
+          hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
           createdAt: now,
           updatedAt: now,
         },
@@ -960,6 +966,7 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-atta
             workspaceRoot: "/tmp/project-delete-files",
             defaultModelSelection: null,
             scripts: [],
+            hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
             createdAt: now,
             updatedAt: now,
           },
@@ -1123,6 +1130,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           workspaceRoot: "/tmp/project-a",
           defaultModelSelection: null,
           scripts: [],
+          hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
           createdAt: now,
           updatedAt: now,
         },
@@ -1250,6 +1258,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           workspaceRoot: "/tmp/project-empty",
           defaultModelSelection: null,
           scripts: [],
+          hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
           createdAt: now,
           updatedAt: now,
         },
@@ -1390,6 +1399,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
             workspaceRoot: "/tmp/project-conflict",
             defaultModelSelection: null,
             scripts: [],
+            hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
             createdAt: "2026-02-26T13:00:00.000Z",
             updatedAt: "2026-02-26T13:00:00.000Z",
           },
@@ -1534,6 +1544,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           workspaceRoot: "/tmp/project-stale-approval",
           defaultModelSelection: null,
           scripts: [],
+          hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
           createdAt: "2026-02-26T12:30:00.000Z",
           updatedAt: "2026-02-26T12:30:00.000Z",
         },
@@ -1677,6 +1688,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           workspaceRoot: "/tmp/project-nonstale-approval",
           defaultModelSelection: null,
           scripts: [],
+          hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
           createdAt: "2026-02-26T12:45:00.000Z",
           updatedAt: "2026-02-26T12:45:00.000Z",
         },
@@ -1857,6 +1869,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
           workspaceRoot: "/tmp/project-revert",
           defaultModelSelection: null,
           scripts: [],
+          hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
           createdAt: "2026-02-26T12:00:00.000Z",
           updatedAt: "2026-02-26T12:00:00.000Z",
         },
@@ -2200,6 +2213,7 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline latest turn sessions", 
           workspaceRoot: "/tmp/latest-turn-preserve",
           defaultModelSelection: null,
           scripts: [],
+          hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
           createdAt,
           updatedAt: createdAt,
         },
@@ -2490,14 +2504,25 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         createdAt,
       });
 
-      const projectRows = yield* sql<{ readonly title: string; readonly scriptsJson: string }>`
+      const projectRows = yield* sql<{
+        readonly title: string;
+        readonly scriptsJson: string;
+        readonly hyprnavJson: string;
+      }>`
         SELECT
           title,
-          scripts_json AS "scriptsJson"
+          scripts_json AS "scriptsJson",
+          hyprnav_json AS "hyprnavJson"
         FROM projection_projects
         WHERE project_id = 'project-live'
       `;
-      assert.deepEqual(projectRows, [{ title: "Live Project", scriptsJson: "[]" }]);
+      assert.deepEqual(projectRows, [
+        {
+          title: "Live Project",
+          scriptsJson: "[]",
+          hyprnavJson: JSON.stringify(DEFAULT_PROJECT_HYPRNAV_SETTINGS),
+        },
+      ]);
 
       const projectorRows = yield* sql<{ readonly lastAppliedSequence: number }>`
         SELECT
@@ -2545,15 +2570,23 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
           provider: "codex",
           model: "gpt-5",
         },
+        hyprnav: {
+          bindings: [
+            { id: "terminal", slot: 3, action: "worktree-terminal" },
+            { id: "custom", slot: 4, action: "shell-command", command: "tmux" },
+          ],
+        },
       });
 
       const projectRows = yield* sql<{
         readonly scriptsJson: string;
         readonly defaultModelSelection: string;
+        readonly hyprnavJson: string;
       }>`
         SELECT
           scripts_json AS "scriptsJson",
-          default_model_selection_json AS "defaultModelSelection"
+          default_model_selection_json AS "defaultModelSelection",
+          hyprnav_json AS "hyprnavJson"
         FROM projection_projects
         WHERE project_id = 'project-scripts'
       `;
@@ -2562,6 +2595,8 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
           scriptsJson:
             '[{"id":"script-1","name":"Build","command":"bun run build","icon":"build","runOnWorktreeCreate":false}]',
           defaultModelSelection: '{"provider":"codex","model":"gpt-5"}',
+          hyprnavJson:
+            '{"bindings":[{"id":"terminal","slot":3,"action":"worktree-terminal"},{"id":"custom","slot":4,"action":"shell-command","command":"tmux"}]}',
         },
       ]);
     }),

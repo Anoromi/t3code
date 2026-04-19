@@ -63,7 +63,8 @@ export function NavigationCommandMenu(props: {
     <CommandDialog open={props.open} onOpenChange={props.onOpenChange}>
       <CommandDialogPopup
         aria-label="Navigation command menu"
-        className="h-[min(32rem,72vh)] max-h-[min(32rem,72vh)]"
+        backdropClassName="duration-75"
+        className="h-[min(32rem,72vh)] max-h-[min(32rem,72vh)] transition-[scale,opacity] duration-75 ease-out data-ending-style:translate-y-0 data-starting-style:translate-y-0 data-nested:data-ending-style:translate-y-0 data-nested:data-starting-style:translate-y-0"
       >
         <Command mode="none">
           <div className="flex h-full min-h-0 flex-col">

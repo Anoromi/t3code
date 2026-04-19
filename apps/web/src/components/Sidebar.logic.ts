@@ -6,7 +6,7 @@ import {
   toSortableTimestamp,
   type ThreadSortInput,
 } from "../lib/threadSort";
-import type { Project, SidebarThreadSummary, Thread, WorktreeGroupTitle } from "../types";
+import type { Project, Thread, WorktreeGroupTitle } from "../types";
 import { cn } from "../lib/utils";
 import { formatWorktreePathForDisplay, normalizeWorktreePath } from "../worktreeCleanup";
 import {
@@ -122,6 +122,18 @@ export interface ThreadJumpHintSessionController {
   dispose: () => void;
 }
 
+// Chromium/Electron can report the released modifier flag as true on that modifier's own keyup.
+export function hasActiveModifierAfterKeyUp(
+  event: Pick<globalThis.KeyboardEvent, "altKey" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
+): boolean {
+  return (
+    (event.metaKey && event.key !== "Meta") ||
+    (event.ctrlKey && event.key !== "Control") ||
+    (event.altKey && event.key !== "Alt") ||
+    (event.shiftKey && event.key !== "Shift")
+  );
+}
+
 export function createThreadJumpHintSessionController(input: {
   releaseDelayMs: number;
   onScheduleShow: () => void;
@@ -153,11 +165,11 @@ export function createThreadJumpHintSessionController(input: {
 
   const scheduleQuietRelease = () => {
     clearReleaseTimer();
+    input.onCancelShow();
     releaseTimeoutId = setTimeoutFn(() => {
       releaseTimeoutId = null;
       hintSessionActive = false;
       blockedUntilQuietModifierRelease = false;
-      input.onCancelShow();
       input.onHide();
     }, input.releaseDelayMs);
   };

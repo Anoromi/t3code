@@ -1,5 +1,6 @@
 import {
   ChatAttachment,
+  DEFAULT_PROJECT_HYPRNAV_SETTINGS,
   IsoDateTime,
   MessageId,
   NonNegativeInt,
@@ -8,6 +9,7 @@ import {
   OrchestrationReadModel,
   OrchestrationShellSnapshot,
   OrchestrationThread,
+  ProjectHyprnavSettings,
   OrchestrationWorktreeGroupTitle,
   ProjectScript,
   TurnId,
@@ -54,10 +56,13 @@ import {
 const decodeReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
 const decodeShellSnapshot = Schema.decodeUnknownEffect(OrchestrationShellSnapshot);
 const decodeThread = Schema.decodeUnknownEffect(OrchestrationThread);
+const DEFAULT_PROJECT_HYPRNAV_JSON = JSON.stringify(DEFAULT_PROJECT_HYPRNAV_SETTINGS);
+const DEFAULT_PROJECT_HYPRNAV_SQL_LITERAL = `'${DEFAULT_PROJECT_HYPRNAV_JSON.replaceAll("'", "''")}'`;
 const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
   Struct.assign({
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
+    hyprnav: Schema.fromJsonString(ProjectHyprnavSettings),
     worktreeGroupTitles: Schema.fromJsonString(Schema.Array(OrchestrationWorktreeGroupTitle)),
   }),
 );
@@ -215,6 +220,7 @@ function mapProjectShellRow(
     repositoryIdentity,
     defaultModelSelection: row.defaultModelSelection,
     scripts: row.scripts,
+    hyprnav: row.hyprnav,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -284,6 +290,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     const projectWorktreeGroupTitlesExpression = projectColumns.has("worktree_group_titles_json")
       ? "worktree_group_titles_json"
       : "'[]'";
+    const projectHyprnavExpression = projectColumns.has("hyprnav_json")
+      ? `COALESCE(hyprnav_json, ${DEFAULT_PROJECT_HYPRNAV_SQL_LITERAL})`
+      : DEFAULT_PROJECT_HYPRNAV_SQL_LITERAL;
 
     return SqlSchema.findAll({
       Request: Schema.Void,
@@ -296,6 +305,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             workspace_root AS "workspaceRoot",
             ${projectModelSelectionExpression} AS "defaultModelSelection",
             scripts_json AS "scripts",
+            ${projectHyprnavExpression} AS "hyprnav",
             ${projectWorktreeGroupTitlesExpression} AS "worktreeGroupTitles",
             created_at AS "createdAt",
             updated_at AS "updatedAt",
@@ -567,6 +577,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
           scripts_json AS "scripts",
+          COALESCE(hyprnav_json, ${DEFAULT_PROJECT_HYPRNAV_JSON}) AS "hyprnav",
           COALESCE(worktree_group_titles_json, '[]') AS "worktreeGroupTitles",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -590,6 +601,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
           scripts_json AS "scripts",
+          COALESCE(hyprnav_json, ${DEFAULT_PROJECT_HYPRNAV_JSON}) AS "hyprnav",
           COALESCE(worktree_group_titles_json, '[]') AS "worktreeGroupTitles",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -1063,6 +1075,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             repositoryIdentity: repositoryIdentities.get(row.projectId) ?? null,
             defaultModelSelection: row.defaultModelSelection,
             scripts: row.scripts,
+            hyprnav: row.hyprnav,
             worktreeGroupTitles: row.worktreeGroupTitles,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
@@ -1298,6 +1311,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                     repositoryIdentity,
                     defaultModelSelection: option.value.defaultModelSelection,
                     scripts: option.value.scripts,
+                    hyprnav: option.value.hyprnav,
                     createdAt: option.value.createdAt,
                     updatedAt: option.value.updatedAt,
                     deletedAt: option.value.deletedAt,

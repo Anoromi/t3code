@@ -1,4 +1,5 @@
 import {
+  DEFAULT_PROJECT_HYPRNAV_SETTINGS,
   EnvironmentId,
   type OrchestrationLatestTurn,
   type OrchestrationWorktreeGroupTitle,
@@ -20,6 +21,7 @@ import {
   buildSidebarProjectThreadEntries,
   detectWorktreeGroupBirths,
   flattenSidebarProjectThreadIds,
+  hasActiveModifierAfterKeyUp,
   hasUnseenCompletion,
   isActionableThreadStatus,
   isContextMenuPointerDown,
@@ -59,6 +61,7 @@ function makeGroupedProject(
       model: "gpt-5.4",
     },
     scripts: [],
+    hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
     worktreeGroupTitles,
     createdAt: "2026-02-13T00:00:00.000Z",
     updatedAt: "2026-02-13T00:00:00.000Z",
@@ -301,7 +304,16 @@ describe("createThreadJumpHintSessionController", () => {
     controller.handle("modifierOnlyKeyDown");
     vi.advanceTimersByTime(THREAD_JUMP_HINT_REARM_DELAY_MS);
 
-    expect(events).toEqual(["schedule", "schedule"]);
+    expect(events).toEqual(["schedule", "cancel", "schedule"]);
+  });
+
+  it("cancels pending hint display as soon as the modifier is released", () => {
+    const { controller, events } = createSessionRecorder();
+
+    controller.handle("modifierOnlyKeyDown");
+    controller.handle("keyUpNoActiveModifiers");
+
+    expect(events).toEqual(["schedule", "cancel"]);
   });
 
   it("blocks first-time hint display after an unrelated modified chord", () => {
@@ -332,7 +344,7 @@ describe("createThreadJumpHintSessionController", () => {
     controller.handle("keyUpNoActiveModifiers");
     controller.handle("modifierOnlyKeyDown");
 
-    expect(events).toEqual(["schedule", "schedule"]);
+    expect(events).toEqual(["schedule", "cancel", "schedule"]);
   });
 
   it("hides hints after a quiet modifier release", () => {
@@ -343,6 +355,32 @@ describe("createThreadJumpHintSessionController", () => {
     vi.advanceTimersByTime(THREAD_JUMP_HINT_REARM_DELAY_MS);
 
     expect(events).toEqual(["schedule", "cancel", "hide"]);
+  });
+});
+
+describe("hasActiveModifierAfterKeyUp", () => {
+  it("treats the released modifier key as inactive even when its modifier flag is stale", () => {
+    expect(
+      hasActiveModifierAfterKeyUp({
+        key: "Control",
+        ctrlKey: true,
+        metaKey: false,
+        altKey: false,
+        shiftKey: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps other held modifiers active when one modifier key is released", () => {
+    expect(
+      hasActiveModifierAfterKeyUp({
+        key: "Control",
+        ctrlKey: true,
+        metaKey: false,
+        altKey: true,
+        shiftKey: false,
+      }),
+    ).toBe(true);
   });
 });
 
@@ -1402,6 +1440,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     createdAt: "2026-03-09T10:00:00.000Z",
     updatedAt: "2026-03-09T10:00:00.000Z",
     scripts: [],
+    hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
     ...rest,
   };
 }

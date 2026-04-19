@@ -1,4 +1,9 @@
-import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_PROJECT_HYPRNAV_SETTINGS,
+  EnvironmentId,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { scopeProjectRef } from "@t3tools/client-runtime";
 import { describe, expect, it } from "vitest";
 
@@ -52,6 +57,7 @@ function makeProject(
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     scripts: [],
+    hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
     ...overrides,
   };
 }

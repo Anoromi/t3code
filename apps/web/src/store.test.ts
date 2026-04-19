@@ -2,6 +2,7 @@ import { scopeThreadRef } from "@t3tools/client-runtime";
 import {
   CheckpointRef,
   DEFAULT_MODEL_BY_PROVIDER,
+  DEFAULT_PROJECT_HYPRNAV_SETTINGS,
   EnvironmentId,
   EventId,
   MessageId,
@@ -101,6 +102,7 @@ function makeState(thread: Thread): AppState {
     createdAt: "2026-02-13T00:00:00.000Z",
     updatedAt: "2026-02-13T00:00:00.000Z",
     scripts: [],
+    hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
     worktreeGroupTitles: [],
   };
   const threadIdsByProjectId: EnvironmentState["threadIdsByProjectId"] = {
@@ -473,6 +475,7 @@ describe("incremental orchestration updates", () => {
           createdAt: "2026-02-27T00:00:00.000Z",
           updatedAt: "2026-02-27T00:00:00.000Z",
           scripts: [],
+          hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
         },
       },
     });
@@ -488,6 +491,9 @@ describe("incremental orchestration updates", () => {
           model: DEFAULT_MODEL_BY_PROVIDER.codex,
         },
         scripts: [],
+        hyprnav: {
+          bindings: [{ id: "terminal", slot: 3, action: "worktree-terminal" }],
+        },
         createdAt: "2026-02-27T00:00:01.000Z",
         updatedAt: "2026-02-27T00:00:01.000Z",
       }),
@@ -498,6 +504,7 @@ describe("incremental orchestration updates", () => {
     expect(projectsOf(next)[0]?.id).toBe(recreatedProjectId);
     expect(projectsOf(next)[0]?.cwd).toBe("/tmp/project");
     expect(projectsOf(next)[0]?.name).toBe("Project Recreated");
+    expect(projectsOf(next)[0]?.hyprnav.bindings[0]?.slot).toBe(3);
     expect(localEnvironmentStateOf(next).projectIds).toEqual([recreatedProjectId]);
     expect(localEnvironmentStateOf(next).projectById[originalProjectId]).toBeUndefined();
     expect(localEnvironmentStateOf(next).projectById[recreatedProjectId]?.id).toBe(
@@ -528,6 +535,7 @@ describe("incremental orchestration updates", () => {
           createdAt: "2026-02-27T00:00:00.000Z",
           updatedAt: "2026-02-27T00:00:00.000Z",
           scripts: [],
+          hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
         },
         [recreatedProjectId]: {
           id: recreatedProjectId,
@@ -541,6 +549,7 @@ describe("incremental orchestration updates", () => {
           createdAt: "2026-02-27T00:00:00.000Z",
           updatedAt: "2026-02-27T00:00:00.000Z",
           scripts: [],
+          hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
         },
       },
     });

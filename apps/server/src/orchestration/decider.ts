@@ -1,3 +1,7 @@
+import {
+  DEFAULT_PROJECT_HYPRNAV_SETTINGS,
+  projectHyprnavSettingsHasDuplicateSlots,
+} from "@t3tools/contracts";
 import type {
   OrchestrationCommand,
   OrchestrationEvent,
@@ -14,6 +18,8 @@ import {
   requireThreadAbsent,
   requireThreadNotArchived,
 } from "./commandInvariants.ts";
+
+const DEFAULT_PROJECT_HYPRNAV = DEFAULT_PROJECT_HYPRNAV_SETTINGS;
 
 const nowIso = () => new Date().toISOString();
 const defaultMetadata: Omit<OrchestrationEvent, "sequence" | "type" | "payload"> = {
@@ -79,6 +85,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           workspaceRoot: command.workspaceRoot,
           defaultModelSelection: command.defaultModelSelection ?? null,
           scripts: [],
+          hyprnav: DEFAULT_PROJECT_HYPRNAV,
           worktreeGroupTitles: [],
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
@@ -92,6 +99,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         projectId: command.projectId,
       });
+      if (
+        command.hyprnav !== undefined &&
+        projectHyprnavSettingsHasDuplicateSlots(command.hyprnav)
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Hyprnav action slots must be unique within a project.",
+        });
+      }
       const occurredAt = nowIso();
       return {
         ...withEventBase({
@@ -109,6 +125,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             ? { defaultModelSelection: command.defaultModelSelection }
             : {}),
           ...(command.scripts !== undefined ? { scripts: command.scripts } : {}),
+          ...(command.hyprnav !== undefined ? { hyprnav: command.hyprnav } : {}),
           ...(command.worktreeGroupTitles !== undefined
             ? { worktreeGroupTitles: command.worktreeGroupTitles }
             : {}),

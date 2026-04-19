@@ -1,5 +1,6 @@
 import {
   CommandId,
+  DEFAULT_PROJECT_HYPRNAV_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   type DesktopBridge,
   EnvironmentId,
@@ -332,6 +333,7 @@ describe("wsApi", () => {
           model: "gpt-5-codex",
         },
         scripts: [],
+        hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
         createdAt: "2026-02-24T00:00:00.000Z",
         updatedAt: "2026-02-24T00:00:00.000Z",
       },

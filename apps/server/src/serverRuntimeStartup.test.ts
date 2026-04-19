@@ -1,5 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { DEFAULT_MODEL_BY_PROVIDER, ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_MODEL_BY_PROVIDER,
+  DEFAULT_PROJECT_HYPRNAV_SETTINGS,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, Option, Ref, Stream } from "effect";
 
@@ -140,6 +145,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
               workspaceRoot: "/tmp/startup-project",
               defaultModelSelection: getAutoBootstrapDefaultModelSelection(),
               scripts: [],
+              hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
               createdAt: "2026-01-01T00:00:00.000Z",
               updatedAt: "2026-01-01T00:00:00.000Z",
               deletedAt: null,
