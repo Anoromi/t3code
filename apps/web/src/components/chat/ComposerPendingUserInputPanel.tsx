@@ -92,22 +92,25 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     }, 200);
   });
 
-  // Keyboard shortcut: number keys 1-9 select corresponding options when focus is
-  // outside editable fields. Multi-select prompts toggle options in place; single-
-  // select prompts keep the existing auto-advance behavior.
+  // Keyboard shortcut: number keys 1-9 select corresponding options. The composer
+  // stays focused while answering prompts, so allow bare digits there until the
+  // user has started typing a custom answer.
   useEffect(() => {
     if (!activeQuestion || isResponding) return;
     const handler = (event: globalThis.KeyboardEvent) => {
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target;
-      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
-        return;
-      }
-      if (
-        target instanceof HTMLElement &&
-        target.closest('[contenteditable]:not([contenteditable="false"])')
-      ) {
-        return;
+      const targetIsEditable =
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        (target instanceof HTMLElement &&
+          target.closest('[contenteditable]:not([contenteditable="false"])') !== null);
+      if (targetIsEditable) {
+        const targetIsComposerEditor =
+          target instanceof HTMLElement && target.closest('[data-testid="composer-editor"]');
+        if (!targetIsComposerEditor || progress.usingCustomAnswer) {
+          return;
+        }
       }
       const digit = Number.parseInt(event.key, 10);
       if (Number.isNaN(digit) || digit < 1 || digit > 9) return;
@@ -120,7 +123,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [activeQuestion, isResponding]);
+  }, [activeQuestion, isResponding, progress.usingCustomAnswer]);
 
   if (!activeQuestion) {
     return null;

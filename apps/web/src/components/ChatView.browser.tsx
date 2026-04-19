@@ -5844,6 +5844,58 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("submits pending user input when focused composer number keys select options", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithPendingUserInput(),
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await dispatchComposerKeyDown({ key: "1" });
+      await waitForButtonContainingText("Conservative");
+
+      await dispatchComposerKeyDown({ key: "1" });
+
+      await vi.waitFor(
+        () => {
+          const dispatchRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.user-input.respond",
+          ) as
+            | {
+                _tag: string;
+                type?: string;
+                requestId?: string;
+                answers?: Record<string, unknown>;
+              }
+            | undefined;
+
+          expect(dispatchRequest).toMatchObject({
+            _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+            type: "thread.user-input.respond",
+            requestId: "req-browser-user-input",
+            answers: {
+              scope: "Tight",
+              risk: "Conservative",
+            },
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("keeps plan follow-up footer actions fused and aligned after a real resize", async () => {
     const mounted = await mountChatView({
       viewport: WIDE_FOOTER_VIEWPORT,
