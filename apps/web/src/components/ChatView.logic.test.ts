@@ -23,6 +23,7 @@ import {
   deriveComposerSendState,
   hasForkableThreadHistory,
   hasServerAcknowledgedLocalDispatch,
+  isScrollElementAtEnd,
   isThreadForkReady,
   reconcileMountedTerminalThreadIds,
   resolveChatViewShortcutCommand,
@@ -92,6 +93,38 @@ const terminalAndDiffBindings = compileKeybindings([
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
 ]);
+
+describe("isScrollElementAtEnd", () => {
+  it("treats exact bottom as at end", () => {
+    expect(
+      isScrollElementAtEnd({
+        scrollHeight: 1000,
+        scrollTop: 600,
+        clientHeight: 400,
+      }),
+    ).toBe(true);
+  });
+
+  it("allows small fractional layout drift", () => {
+    expect(
+      isScrollElementAtEnd({
+        scrollHeight: 1000,
+        scrollTop: 598.5,
+        clientHeight: 400,
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects real distance from the bottom", () => {
+    expect(
+      isScrollElementAtEnd({
+        scrollHeight: 1000,
+        scrollTop: 560,
+        clientHeight: 400,
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("deriveComposerSendState", () => {
   it("treats expired terminal pills as non-sendable content", () => {

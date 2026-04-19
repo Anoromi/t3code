@@ -175,6 +175,7 @@ import {
   deriveComposerSendState,
   hasServerAcknowledgedLocalDispatch,
   hasForkableThreadHistory,
+  isScrollElementAtEnd,
   isThreadForkReady,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
@@ -874,6 +875,7 @@ export default function ChatView(props: ChatViewProps) {
   const shouldUsePlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   const planSidebarDismissedForTurnRef = useRef<string | null>(null);
+  const planSidebarDismissedTurnByThreadKeyRef = useRef(new Map<string, string>());
   // When set, the thread-change reset effect will open the sidebar instead of closing it.
   // Used by "Implement in a new thread" to carry the sidebar-open intent across navigation.
   const planSidebarOpenOnNextThreadRef = useRef(false);
@@ -2440,19 +2442,29 @@ export default function ChatView(props: ChatViewProps) {
   const togglePlanSidebar = useCallback(() => {
     setPlanSidebarOpen((open) => {
       if (open) {
-        planSidebarDismissedForTurnRef.current =
+        const dismissedTurnKey =
           activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
+        planSidebarDismissedForTurnRef.current = dismissedTurnKey;
+        if (activeThreadKey) {
+          planSidebarDismissedTurnByThreadKeyRef.current.set(activeThreadKey, dismissedTurnKey);
+        }
       } else {
         planSidebarDismissedForTurnRef.current = null;
+        if (activeThreadKey) {
+          planSidebarDismissedTurnByThreadKeyRef.current.delete(activeThreadKey);
+        }
       }
       return !open;
     });
-  }, [activePlan?.turnId, sidebarProposedPlan?.turnId]);
+  }, [activePlan?.turnId, activeThreadKey, sidebarProposedPlan?.turnId]);
   const closePlanSidebar = useCallback(() => {
+    const dismissedTurnKey = activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
     setPlanSidebarOpen(false);
-    planSidebarDismissedForTurnRef.current =
-      activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
-  }, [activePlan?.turnId, sidebarProposedPlan?.turnId]);
+    planSidebarDismissedForTurnRef.current = dismissedTurnKey;
+    if (activeThreadKey) {
+      planSidebarDismissedTurnByThreadKeyRef.current.set(activeThreadKey, dismissedTurnKey);
+    }
+  }, [activePlan?.turnId, activeThreadKey, sidebarProposedPlan?.turnId]);
 
   const persistThreadSettingsForNextTurn = useCallback(
     async (input: {
@@ -2508,41 +2520,83 @@ export default function ChatView(props: ChatViewProps) {
     [environmentId, serverThread],
   );
 
-  // Scroll helpers — LegendList handles auto-scroll via maintainScrollAtEnd.
-  const scrollToEnd = useCallback((animated = false) => {
-    legendListRef.current?.scrollToEnd?.({ animated });
-  }, []);
-
   // Debounce *showing* the scroll-to-bottom pill so it doesn't flash during
   // thread switches.  LegendList fires scroll events with isAtEnd=false while
   // initialScrollAtEnd is settling; hiding is always immediate.
   const showScrollDebouncer = useRef(
     new Debouncer(() => setShowScrollToBottom(true), { wait: 150 }),
   );
-  const onIsAtEndChange = useCallback((isAtEnd: boolean) => {
-    if (isAtEndRef.current === isAtEnd) return;
-    isAtEndRef.current = isAtEnd;
-    if (isAtEnd) {
-      showScrollDebouncer.current.cancel();
-      setShowScrollToBottom(false);
-    } else {
-      showScrollDebouncer.current.maybeExecute();
-    }
-  }, []);
 
-  useEffect(() => {
-    setPullRequestDialogState(null);
+  const markTimelineAtEnd = useCallback(() => {
     isAtEndRef.current = true;
     showScrollDebouncer.current.cancel();
     setShowScrollToBottom(false);
+  }, []);
+
+  // Scroll helpers — LegendList handles auto-scroll via maintainScrollAtEnd.
+  const scrollToEnd = useCallback(
+    (animated = false) => {
+      markTimelineAtEnd();
+      legendListRef.current?.scrollToEnd?.({ animated });
+    },
+    [markTimelineAtEnd],
+  );
+
+  const readTimelineIsAtEnd = useCallback((): boolean | null => {
+    const scrollElement = legendListRef.current?.getScrollableNode?.();
+    if (!scrollElement) return null;
+    return isScrollElementAtEnd(scrollElement);
+  }, []);
+
+  const onIsAtEndChange = useCallback(
+    (reportedIsAtEnd: boolean) => {
+      const isAtEnd = reportedIsAtEnd || readTimelineIsAtEnd() === true;
+      if (isAtEndRef.current === isAtEnd) return;
+      isAtEndRef.current = isAtEnd;
+      if (isAtEnd) {
+        showScrollDebouncer.current.cancel();
+        setShowScrollToBottom(false);
+      } else {
+        showScrollDebouncer.current.maybeExecute();
+      }
+    },
+    [readTimelineIsAtEnd],
+  );
+
+  useEffect(() => {
+    setPullRequestDialogState(null);
+    markTimelineAtEnd();
     if (planSidebarOpenOnNextThreadRef.current) {
       planSidebarOpenOnNextThreadRef.current = false;
+      if (activeThreadKey) {
+        planSidebarDismissedTurnByThreadKeyRef.current.delete(activeThreadKey);
+      }
+      planSidebarDismissedForTurnRef.current = null;
       setPlanSidebarOpen(true);
     } else {
+      planSidebarDismissedForTurnRef.current = activeThreadKey
+        ? (planSidebarDismissedTurnByThreadKeyRef.current.get(activeThreadKey) ?? null)
+        : null;
       setPlanSidebarOpen(false);
     }
-    planSidebarDismissedForTurnRef.current = null;
-  }, [activeThread?.id]);
+
+    const frameIds: number[] = [];
+    const settleAtEnd = () => {
+      markTimelineAtEnd();
+      legendListRef.current?.scrollToEnd?.({ animated: false });
+    };
+    frameIds.push(
+      window.requestAnimationFrame(() => {
+        settleAtEnd();
+        frameIds.push(window.requestAnimationFrame(settleAtEnd));
+      }),
+    );
+    return () => {
+      for (const frameId of frameIds) {
+        window.cancelAnimationFrame(frameId);
+      }
+    };
+  }, [activeThread?.id, activeThreadKey, markTimelineAtEnd]);
 
   // Auto-open the plan sidebar when plan/todo steps arrive for the current turn.
   // Don't auto-open for plans carried over from a previous turn (the user can open manually).

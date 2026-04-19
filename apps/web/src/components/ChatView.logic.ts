@@ -31,6 +31,14 @@ export const MAX_HIDDEN_MOUNTED_TERMINAL_THREADS = 10;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
+export function isScrollElementAtEnd(
+  metrics: Pick<HTMLElement, "clientHeight" | "scrollHeight" | "scrollTop">,
+  tolerancePx = 2,
+): boolean {
+  const distanceFromEnd = metrics.scrollHeight - metrics.scrollTop - metrics.clientHeight;
+  return distanceFromEnd <= tolerancePx;
+}
+
 export function buildLocalDraftThread(
   threadId: ThreadId,
   draftThread: DraftThreadState,
