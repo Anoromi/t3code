@@ -108,6 +108,12 @@ describe("detectComposerTrigger", () => {
     });
   });
 
+  it("does not detect bare built-in command words as slash commands", () => {
+    expect(detectComposerTrigger("fast", "fast".length)).toBeNull();
+    expect(detectComposerTrigger("branch", "branch".length)).toBeNull();
+    expect(detectComposerTrigger("worktree", "worktree".length)).toBeNull();
+  });
+
   it("keeps reasoning slash command detection active while typing a value", () => {
     const text = "/reasoning h";
     const trigger = detectComposerTrigger(text, text.length);
@@ -294,6 +300,12 @@ describe("parseStandaloneComposerSlashCommand", () => {
     expect(parseStandaloneComposerSlashCommand("/fast please")).toBeNull();
     expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
     expect(parseStandaloneComposerSlashCommand("/fork later")).toBeNull();
+  });
+
+  it("does not parse bare built-in command words as standalone slash commands", () => {
+    expect(parseStandaloneComposerSlashCommand("fast")).toBeNull();
+    expect(parseStandaloneComposerSlashCommand("branch")).toBeNull();
+    expect(parseStandaloneComposerSlashCommand("worktree")).toBeNull();
   });
 
   it("ignores model and provider slash commands", () => {

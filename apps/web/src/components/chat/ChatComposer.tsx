@@ -790,7 +790,6 @@ export const ChatComposer = memo(
     const composerCursorRef = useRef(composerCursor);
     const composerTriggerRef = useRef<ComposerTrigger | null>(composerTrigger);
     const composerSelectLockRef = useRef(false);
-    const composerMenuOpenRef = useRef(false);
     const composerMenuItemsRef = useRef<ComposerCommandItem[]>([]);
     const activeComposerMenuItemRef = useRef<ComposerCommandItem | null>(null);
     const dragDepthRef = useRef(0);
@@ -1086,7 +1085,6 @@ export const ChatComposer = memo(
       composerMenuSearchKey,
     ]);
 
-    composerMenuOpenRef.current = composerMenuOpen;
     composerMenuItemsRef.current = composerMenuItems;
     activeComposerMenuItemRef.current = activeComposerMenuItem;
 
@@ -1643,6 +1641,16 @@ export const ChatComposer = memo(
       };
     }, [readComposerSnapshot]);
 
+    const syncResolvedComposerTrigger = useCallback((nextTrigger: ComposerTrigger | null) => {
+      if (composerTriggersEqual(composerTriggerRef.current, nextTrigger)) return;
+      composerTriggerRef.current = nextTrigger;
+      setComposerTrigger(nextTrigger);
+      if (nextTrigger === null) {
+        setComposerHighlightedItemId(null);
+        setComposerHighlightedSearchKey(null);
+      }
+    }, []);
+
     const onSelectComposerItem = useCallback(
       (item: ComposerCommandItem) => {
         if (composerSelectLockRef.current) return;
@@ -1651,7 +1659,10 @@ export const ChatComposer = memo(
           composerSelectLockRef.current = false;
         });
         const { snapshot, trigger } = resolveActiveComposerTrigger();
-        if (!trigger) return;
+        if (!trigger) {
+          syncResolvedComposerTrigger(null);
+          return;
+        }
         if (item.type === "path") {
           const replacement = `@${item.path} `;
           const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
@@ -1813,6 +1824,7 @@ export const ChatComposer = memo(
         onProviderModelSelect,
         resolveActiveComposerTrigger,
         selectedProvider,
+        syncResolvedComposerTrigger,
         toggleCodexFastMode,
       ],
     );
@@ -1854,8 +1866,8 @@ export const ChatComposer = memo(
         return true;
       }
       const { trigger } = resolveActiveComposerTrigger();
-      const menuIsActive = composerMenuOpenRef.current || trigger !== null;
-      if (menuIsActive) {
+      syncResolvedComposerTrigger(trigger);
+      if (trigger !== null) {
         const currentItems = composerMenuItemsRef.current;
         const selectedItem = activeComposerMenuItemRef.current ?? currentItems[0];
         if (key === "ArrowDown" && currentItems.length > 0) {

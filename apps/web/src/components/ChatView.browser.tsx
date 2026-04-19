@@ -1367,6 +1367,31 @@ async function waitForComposerMenuItem(itemId: string): Promise<HTMLElement> {
     `Unable to find composer menu item "${itemId}".`,
   );
 }
+
+async function waitForNoComposerMenuItems(): Promise<void> {
+  await vi.waitFor(
+    () => {
+      expect(document.querySelector("[data-composer-item-id]")).toBeNull();
+    },
+    { timeout: 8_000, interval: 16 },
+  );
+}
+
+async function dispatchComposerKeyDown(
+  init: Pick<KeyboardEventInit, "key" | "metaKey" | "ctrlKey" | "shiftKey" | "altKey">,
+): Promise<KeyboardEvent> {
+  const composerEditor = await waitForComposerEditor();
+  composerEditor.focus();
+  const event = new KeyboardEvent("keydown", {
+    bubbles: true,
+    cancelable: true,
+    ...init,
+  });
+  composerEditor.dispatchEvent(event);
+  await waitForLayout();
+  return event;
+}
+
 async function waitForSendButton(): Promise<HTMLButtonElement> {
   return waitForElement(
     () => document.querySelector<HTMLButtonElement>('button[aria-label="Send message"]'),
@@ -1639,7 +1664,8 @@ function findDispatchCommand(commandType: string) {
     if (request._tag !== ORCHESTRATION_WS_METHODS.dispatchCommand) {
       return false;
     }
-    const command = request.command;
+    const command =
+      request.command && typeof request.command === "object" ? request.command : request;
     return (
       typeof command === "object" &&
       command !== null &&
@@ -5983,6 +6009,86 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it.each(["fast", "branch", "worktree"] as const)(
+    "sends bare built-in command word %s as normal composer text",
+    async (bareCommand) => {
+      const mounted = await mountChatView({
+        viewport: DEFAULT_VIEWPORT,
+        snapshot: createSnapshotForTargetUser({
+          targetMessageId: `msg-user-bare-${bareCommand}-target` as MessageId,
+          targetText: `bare ${bareCommand} command thread`,
+        }),
+        resolveRpc: (body) => {
+          if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+            return {
+              sequence: fixture.snapshot.snapshotSequence + 1,
+            };
+          }
+          return undefined;
+        },
+      });
+
+      try {
+        await waitForComposerEditor();
+        await page.getByTestId("composer-editor").fill("/");
+        await waitForComposerMenuItem("slash:model");
+
+        await page.getByTestId("composer-editor").fill(bareCommand);
+        await waitForComposerText(bareCommand);
+        await waitForNoComposerMenuItems();
+
+        const sendButton = await waitForSendButton();
+        expect(sendButton.disabled).toBe(false);
+        sendButton.click();
+
+        await vi.waitFor(
+          () => {
+            const request = findDispatchCommand("thread.turn.start");
+            expect(request).toBeTruthy();
+            const command = (
+              request?.command && typeof request.command === "object" ? request.command : request
+            ) as {
+              message?: { text?: string };
+            };
+            expect(command.message?.text).toBe(bareCommand);
+          },
+          { timeout: 8_000, interval: 16 },
+        );
+
+        const draft = composerDraftFor(THREAD_KEY);
+        expect(draft?.modelSelectionByProvider.codex?.options?.fastMode).not.toBe(true);
+        expect(findDispatchCommand("thread.meta.update")).toBeUndefined();
+      } finally {
+        await mounted.cleanup();
+      }
+    },
+  );
+
+  it("does not let stale slash-command menu state rewrite bare worktree text on Tab", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-stale-worktree-command-target" as MessageId,
+        targetText: "stale worktree command thread",
+      }),
+    });
+
+    try {
+      await waitForComposerEditor();
+      await page.getByTestId("composer-editor").fill("/");
+      await waitForComposerMenuItem("slash:model");
+
+      await page.getByTestId("composer-editor").fill("worktree");
+      await dispatchComposerKeyDown({ key: "Tab" });
+
+      await waitForComposerText("worktree");
+      expect(useComposerDraftStore.getState().getDraftSessionByRef(THREAD_REF)).toBeNull();
+      expect(document.querySelector('[data-composer-item-id="slash:worktree"]')).toBeNull();
     } finally {
       await mounted.cleanup();
     }
