@@ -25,6 +25,7 @@ import type {
   DesktopTheme,
   DesktopAppBranding,
   ProjectHyprnavBinding,
+  ProjectHyprnavScope,
   ProjectHyprnavSettings,
   DesktopServerExposureMode,
   DesktopServerExposureState,
@@ -617,7 +618,7 @@ function getSafeHyprnavSettings(rawValue: unknown): ProjectHyprnavSettings | nul
   }
 
   const bindings: ProjectHyprnavBinding[] = [];
-  const slots = new Set<number>();
+  const slots = new Set<string>();
   for (const rawBinding of rawBindings) {
     if (typeof rawBinding !== "object" || rawBinding === null) {
       return null;
@@ -626,27 +627,32 @@ function getSafeHyprnavSettings(rawValue: unknown): ProjectHyprnavSettings | nul
     const record = rawBinding as {
       id?: unknown;
       slot?: unknown;
+      scope?: unknown;
       action?: unknown;
       command?: unknown;
     };
     const id = getSafeNonEmptyString(record.id);
     const slot = getSafePositiveInteger(record.slot);
-    if (id === null || slot === null || slots.has(slot)) {
+    const scope =
+      record.scope === "project" || record.scope === "worktree" || record.scope === "thread"
+        ? (record.scope as ProjectHyprnavScope)
+        : null;
+    if (id === null || slot === null || scope === null || slots.has(`${scope}:${String(slot)}`)) {
       return null;
     }
 
-    slots.add(slot);
+    slots.add(`${scope}:${String(slot)}`);
     switch (record.action) {
       case "worktree-terminal":
       case "open-favorite-editor":
-        bindings.push({ id, slot, action: record.action });
+        bindings.push({ id, slot, scope, action: record.action });
         break;
       case "shell-command": {
         const command = getSafeNonEmptyString(record.command);
         if (command === null) {
           return null;
         }
-        bindings.push({ id, slot, action: "shell-command", command });
+        bindings.push({ id, slot, scope, action: "shell-command", command });
         break;
       }
       default:
@@ -2096,11 +2102,13 @@ function registerIpcHandlers(): void {
     }
 
     const record = rawInput as {
-      environmentPath?: unknown;
       projectRoot?: unknown;
+      worktreePath?: unknown;
+      threadId?: unknown;
       hyprnav?: unknown;
       preferredEditor?: unknown;
-      clearSlots?: unknown;
+      clearBindings?: unknown;
+      corkdiffConnection?: unknown;
       lock?: unknown;
     };
 
@@ -2113,16 +2121,39 @@ function registerIpcHandlers(): void {
     }
 
     return hyprnavEnvironmentSync.sync({
-      environmentPath: getSafeNonEmptyString(record.environmentPath) ?? "",
       projectRoot: getSafeNonEmptyString(record.projectRoot) ?? "",
+      worktreePath: getSafeNullableString(record.worktreePath),
+      threadId: getSafeNullableString(record.threadId),
       hyprnav,
       preferredEditor: getSafeEditorId(record.preferredEditor),
-      clearSlots: Array.isArray(record.clearSlots)
-        ? record.clearSlots.flatMap((slot) => {
-            const normalized = getSafePositiveInteger(slot);
-            return normalized === null ? [] : [normalized];
+      clearBindings: Array.isArray(record.clearBindings)
+        ? record.clearBindings.flatMap((binding) => {
+            if (typeof binding !== "object" || binding === null) {
+              return [];
+            }
+            const scopedBinding = binding as { slot?: unknown; scope?: unknown };
+            const slot = getSafePositiveInteger(scopedBinding.slot);
+            const scope =
+              scopedBinding.scope === "project" ||
+              scopedBinding.scope === "worktree" ||
+              scopedBinding.scope === "thread"
+                ? scopedBinding.scope
+                : null;
+            return slot === null || scope === null ? [] : [{ slot, scope }];
           })
         : undefined,
+      corkdiffConnection:
+        typeof record.corkdiffConnection === "object" && record.corkdiffConnection !== null
+          ? {
+              serverUrl:
+                getSafeNonEmptyString(
+                  (record.corkdiffConnection as { serverUrl?: unknown }).serverUrl,
+                ) ?? "",
+              token: getSafeNullableString(
+                (record.corkdiffConnection as { token?: unknown }).token,
+              ),
+            }
+          : undefined,
       lock: record.lock === true,
     });
   });
@@ -2133,16 +2164,16 @@ function registerIpcHandlers(): void {
       throw new Error("Invalid Hyprnav lock request.");
     }
 
-    const record = rawInput as { environmentPath?: unknown };
-    const environmentPath = getSafeNonEmptyString(record.environmentPath);
-    if (environmentPath === null) {
+    const record = rawInput as { envId?: unknown };
+    const envId = getSafeNonEmptyString(record.envId);
+    if (envId === null) {
       return {
         status: "error" as const,
-        message: "Hyprnav lock request is missing an environment path.",
+        message: "Hyprnav lock request is missing an environment id.",
       };
     }
 
-    return hyprnavEnvironmentSync.lockEnvironment({ environmentPath });
+    return hyprnavEnvironmentSync.lockEnvironment({ envId });
   });
 
   ipcMain.removeHandler(FOCUS_APP_WINDOW_CHANNEL);

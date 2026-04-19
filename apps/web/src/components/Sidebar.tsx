@@ -1758,7 +1758,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
         const actionHandlers = new Map<string, () => Promise<void> | void>();
         const makeLeaf = (
-          action: "settings" | "rename" | "grouping" | "copy-path" | "delete",
+          action: "rename" | "grouping" | "copy-path" | "delete",
           member: SidebarProjectGroupMember,
           options?: {
             destructive?: boolean;
@@ -1768,15 +1768,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           const id = `${action}:${member.physicalProjectKey}`;
           actionHandlers.set(id, () => {
             switch (action) {
-              case "settings":
-                void router.navigate({
-                  to: "/settings/projects/$environmentId/$projectId",
-                  params: {
-                    environmentId: member.environmentId,
-                    projectId: member.id,
-                  },
-                });
-                return;
               case "rename":
                 openProjectRenameDialog(member);
                 return;
@@ -1800,7 +1791,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         };
 
         const buildTargetedItem = (
-          action: "settings" | "rename" | "grouping" | "copy-path" | "delete",
+          action: "rename" | "grouping" | "copy-path" | "delete",
           label: string,
           options?: {
             destructive?: boolean;
@@ -1830,9 +1821,20 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           };
         };
 
+        const settingsItemId = `settings:${project.projectKey}`;
+        actionHandlers.set(settingsItemId, () => {
+          void router.navigate({
+            to: "/settings/projects/$environmentId/$projectId",
+            params: {
+              environmentId: project.environmentId,
+              projectId: project.id,
+            },
+          });
+        });
+
         const clicked = await api.contextMenu.show(
           [
-            buildTargetedItem("settings", "Project settings"),
+            { id: settingsItemId, label: "Project settings" },
             buildTargetedItem("rename", "Rename project"),
             buildTargetedItem("grouping", "Project grouping…"),
             buildTargetedItem("copy-path", "Copy Project Path"),
@@ -1861,8 +1863,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       memberThreadCountByPhysicalKey,
       openProjectGroupingDialog,
       openProjectRenameDialog,
+      project.environmentId,
       project.groupedProjectCount,
+      project.id,
       project.memberProjects,
+      project.projectKey,
       router,
       suppressProjectClickForContextMenuRef,
     ],

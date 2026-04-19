@@ -492,7 +492,7 @@ describe("incremental orchestration updates", () => {
         },
         scripts: [],
         hyprnav: {
-          bindings: [{ id: "terminal", slot: 3, action: "worktree-terminal" }],
+          bindings: [{ id: "terminal", slot: 3, scope: "worktree", action: "worktree-terminal" }],
         },
         createdAt: "2026-02-27T00:00:01.000Z",
         updatedAt: "2026-02-27T00:00:01.000Z",

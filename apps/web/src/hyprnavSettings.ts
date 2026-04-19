@@ -1,9 +1,15 @@
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime";
 import type {
+  DesktopHyprnavScopedSlot,
   EnvironmentId,
   ProjectHyprnavAction,
   ProjectHyprnavBinding,
+  ProjectHyprnavScope,
   ProjectHyprnavSettings,
+} from "@t3tools/contracts";
+import {
+  PROJECT_HYPRNAV_CORKDIFF_COMMAND_TEMPLATE,
+  PROJECT_HYPRNAV_CORKDIFF_ID,
 } from "@t3tools/contracts";
 import type { Project, Thread, ThreadShell } from "./types";
 
@@ -16,23 +22,41 @@ export const HYPRNAV_ACTION_ROWS: ReadonlyArray<{
   { key: "shell-command", label: "Shell command" },
 ] as const;
 
+export const HYPRNAV_SCOPE_ROWS: ReadonlyArray<{
+  key: ProjectHyprnavScope;
+  label: string;
+}> = [
+  { key: "project", label: "Once per project" },
+  { key: "worktree", label: "Once per worktree" },
+  { key: "thread", label: "Once per thread" },
+] as const;
+
 export function findHyprnavActionLabel(action: ProjectHyprnavAction): string {
   return HYPRNAV_ACTION_ROWS.find((row) => row.key === action)?.label ?? action;
 }
 
+export function findHyprnavScopeLabel(scope: ProjectHyprnavScope): string {
+  return HYPRNAV_SCOPE_ROWS.find((row) => row.key === scope)?.label ?? scope;
+}
+
+export function hyprnavScopeSlotKey(scope: ProjectHyprnavScope, slot: number): string {
+  return `${scope}:${String(slot)}`;
+}
+
 export function validateProjectHyprnavSettings(settings: ProjectHyprnavSettings): {
-  duplicateSlots: number[];
+  duplicateScopedSlots: ReadonlyArray<DesktopHyprnavScopedSlot>;
   emptyShellCommandBindingIds: string[];
 } {
-  const seen = new Set<number>();
-  const duplicateSlots = new Set<number>();
+  const seen = new Set<string>();
+  const duplicateScopedSlots = new Map<string, DesktopHyprnavScopedSlot>();
   const emptyShellCommandBindingIds: string[] = [];
 
   for (const binding of settings.bindings) {
-    if (seen.has(binding.slot)) {
-      duplicateSlots.add(binding.slot);
+    const key = hyprnavScopeSlotKey(binding.scope, binding.slot);
+    if (seen.has(key)) {
+      duplicateScopedSlots.set(key, { scope: binding.scope, slot: binding.slot });
     } else {
-      seen.add(binding.slot);
+      seen.add(key);
     }
     if (binding.action === "shell-command" && binding.command.trim().length === 0) {
       emptyShellCommandBindingIds.push(binding.id);
@@ -40,46 +64,104 @@ export function validateProjectHyprnavSettings(settings: ProjectHyprnavSettings)
   }
 
   return {
-    duplicateSlots: [...duplicateSlots].toSorted((left, right) => left - right),
+    duplicateScopedSlots: [...duplicateScopedSlots.values()].toSorted((left, right) =>
+      left.scope === right.scope ? left.slot - right.slot : left.scope.localeCompare(right.scope),
+    ),
     emptyShellCommandBindingIds,
   };
 }
 
-export function computeRemovedHyprnavSlots(
+export function computeRemovedHyprnavBindings(
   previous: ProjectHyprnavSettings | null | undefined,
   next: ProjectHyprnavSettings,
-): number[] {
+): DesktopHyprnavScopedSlot[] {
   if (!previous) {
     return [];
   }
 
-  const nextSlots = new Set(next.bindings.map((binding) => binding.slot));
-  return [
-    ...new Set(
-      previous.bindings.flatMap((binding) => (nextSlots.has(binding.slot) ? [] : [binding.slot])),
-    ),
-  ].toSorted((left, right) => left - right);
+  const nextKeys = new Set(
+    next.bindings.map((binding) => hyprnavScopeSlotKey(binding.scope, binding.slot)),
+  );
+  const removed = new Map<string, DesktopHyprnavScopedSlot>();
+  for (const binding of previous.bindings) {
+    const key = hyprnavScopeSlotKey(binding.scope, binding.slot);
+    if (!nextKeys.has(key)) {
+      removed.set(key, { scope: binding.scope, slot: binding.slot });
+    }
+  }
+  return [...removed.values()].toSorted((left, right) =>
+    left.scope === right.scope ? left.slot - right.slot : left.scope.localeCompare(right.scope),
+  );
 }
 
 export function makeProjectHyprnavShellBinding(input: {
   readonly id: string;
   readonly slot: number;
+  readonly scope?: ProjectHyprnavScope;
   readonly command?: string;
 }): ProjectHyprnavBinding {
   return {
     id: input.id,
     slot: input.slot,
+    scope: input.scope ?? "worktree",
     action: "shell-command",
     command: input.command ?? "",
   };
 }
 
+export function makeProjectHyprnavDefaultCorkdiffBinding(): ProjectHyprnavBinding {
+  return makeProjectHyprnavShellBinding({
+    id: PROJECT_HYPRNAV_CORKDIFF_ID,
+    slot: 8,
+    scope: "thread",
+    command: PROJECT_HYPRNAV_CORKDIFF_COMMAND_TEMPLATE,
+  });
+}
+
 export interface ProjectHyprnavSyncJob {
-  environmentPath: string;
   projectRoot: string;
+  worktreePath: string | null;
+  threadId: string | null;
   hyprnav: ProjectHyprnavSettings;
-  clearSlots: number[];
+  clearBindings: DesktopHyprnavScopedSlot[];
   lock: boolean;
+}
+
+export interface ActiveHyprnavSyncTarget {
+  projectRoot: string;
+  worktreePath: string | null;
+  threadId: string;
+}
+
+export function resolveActiveHyprnavSyncTarget(input: {
+  localEnvironmentId: EnvironmentId | null | undefined;
+  activeThread:
+    | Pick<Thread, "id" | "environmentId" | "projectId" | "worktreePath">
+    | null
+    | undefined;
+  project: Pick<Project, "environmentId" | "id" | "cwd"> | null | undefined;
+}): ActiveHyprnavSyncTarget | null {
+  if (
+    !input.localEnvironmentId ||
+    !input.activeThread ||
+    input.activeThread.environmentId !== input.localEnvironmentId
+  ) {
+    return null;
+  }
+
+  if (
+    !input.project ||
+    input.project.environmentId !== input.activeThread.environmentId ||
+    input.project.id !== input.activeThread.projectId
+  ) {
+    return null;
+  }
+
+  return {
+    projectRoot: input.project.cwd,
+    worktreePath: input.activeThread.worktreePath ?? null,
+    threadId: input.activeThread.id,
+  };
 }
 
 export function resolveActiveHyprnavLockTarget(input: {
@@ -106,12 +188,25 @@ export function resolveActiveHyprnavLockTarget(input: {
   return input.activeThread.worktreePath ?? input.project.cwd;
 }
 
+export function projectHyprnavNeedsCorkdiffConnection(settings: ProjectHyprnavSettings): boolean {
+  return settings.bindings.some(
+    (binding) =>
+      binding.action === "shell-command" &&
+      (binding.command.includes("{corkdiffLaunchCommand}") ||
+        binding.command.includes("{corkdiffServerUrl}") ||
+        binding.command.includes("{corkdiffToken}")),
+  );
+}
+
 export function buildProjectHyprnavSyncJobs(input: {
   localEnvironmentId: EnvironmentId;
   projects: readonly Project[];
   threadShells: readonly ThreadShell[];
-  activeThread: Pick<Thread, "environmentId" | "projectId" | "worktreePath"> | null | undefined;
-  clearSlotsByProjectKey: ReadonlyMap<string, readonly number[]>;
+  activeThread:
+    | Pick<Thread, "id" | "environmentId" | "projectId" | "worktreePath">
+    | null
+    | undefined;
+  clearBindingsByProjectKey: ReadonlyMap<string, readonly DesktopHyprnavScopedSlot[]>;
 }): ProjectHyprnavSyncJob[] {
   const localProjectsByKey = new Map(
     input.projects
@@ -121,48 +216,64 @@ export function buildProjectHyprnavSyncJobs(input: {
           [scopedProjectKey(scopeProjectRef(project.environmentId, project.id)), project] as const,
       ),
   );
-  const jobsByEnvironmentPath = new Map<string, ProjectHyprnavSyncJob>();
+
+  const jobsByKey = new Map<string, ProjectHyprnavSyncJob>();
+  const projectsWithThreadJobs = new Set<string>();
 
   const addJob = (jobInput: {
-    environmentPath: string;
     projectKey: string;
     projectRoot: string;
+    worktreePath: string | null;
+    threadId: string | null;
     hyprnav: ProjectHyprnavSettings;
     lock: boolean;
   }) => {
-    const clearSlots = [...(input.clearSlotsByProjectKey.get(jobInput.projectKey) ?? [])];
-    const existing = jobsByEnvironmentPath.get(jobInput.environmentPath);
+    const key = `${jobInput.projectRoot}\u0000${jobInput.worktreePath ?? ""}\u0000${jobInput.threadId ?? ""}`;
+    const clearBindings = [...(input.clearBindingsByProjectKey.get(jobInput.projectKey) ?? [])];
+    const existing = jobsByKey.get(key);
     if (existing) {
       existing.lock = existing.lock || jobInput.lock;
       existing.hyprnav = jobInput.hyprnav;
-      existing.clearSlots = [...new Set([...existing.clearSlots, ...clearSlots])].toSorted(
-        (left, right) => left - right,
+      existing.clearBindings = [
+        ...new Map(
+          [...existing.clearBindings, ...clearBindings].map((binding) => [
+            hyprnavScopeSlotKey(binding.scope, binding.slot),
+            binding,
+          ]),
+        ).values(),
+      ].toSorted((left, right) =>
+        left.scope === right.scope ? left.slot - right.slot : left.scope.localeCompare(right.scope),
       );
       return;
     }
 
-    jobsByEnvironmentPath.set(jobInput.environmentPath, {
-      environmentPath: jobInput.environmentPath,
+    jobsByKey.set(key, {
       projectRoot: jobInput.projectRoot,
+      worktreePath: jobInput.worktreePath,
+      threadId: jobInput.threadId,
       hyprnav: jobInput.hyprnav,
-      clearSlots,
+      clearBindings,
       lock: jobInput.lock,
     });
   };
 
   for (const thread of input.threadShells) {
-    if (thread.environmentId !== input.localEnvironmentId || thread.worktreePath === null) {
+    if (thread.environmentId !== input.localEnvironmentId) {
       continue;
     }
+
     const projectKey = scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId));
     const project = localProjectsByKey.get(projectKey);
     if (!project) {
       continue;
     }
+
+    projectsWithThreadJobs.add(projectKey);
     addJob({
-      environmentPath: thread.worktreePath,
       projectKey,
       projectRoot: project.cwd,
+      worktreePath: thread.worktreePath ?? null,
+      threadId: thread.id,
       hyprnav: project.hyprnav,
       lock: false,
     });
@@ -175,15 +286,32 @@ export function buildProjectHyprnavSyncJobs(input: {
     );
     const project = localProjectsByKey.get(projectKey);
     if (project) {
+      projectsWithThreadJobs.add(projectKey);
       addJob({
-        environmentPath: activeThread.worktreePath ?? project.cwd,
         projectKey,
         projectRoot: project.cwd,
+        worktreePath: activeThread.worktreePath ?? null,
+        threadId: activeThread.id,
         hyprnav: project.hyprnav,
         lock: true,
       });
     }
   }
 
-  return [...jobsByEnvironmentPath.values()];
+  for (const [projectKey, project] of localProjectsByKey.entries()) {
+    if (projectsWithThreadJobs.has(projectKey)) {
+      continue;
+    }
+
+    addJob({
+      projectKey,
+      projectRoot: project.cwd,
+      worktreePath: null,
+      threadId: null,
+      hyprnav: project.hyprnav,
+      lock: false,
+    });
+  }
+
+  return [...jobsByKey.values()];
 }
