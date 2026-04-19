@@ -17,6 +17,7 @@ import {
   WS_METHODS,
   OrchestrationSessionStatus,
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_PROJECT_HYPRNAV_SETTINGS,
 } from "@t3tools/contracts";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
 import { RouterProvider, createMemoryHistory } from "@tanstack/react-router";
@@ -352,6 +353,7 @@ function createSnapshotForTargetUser(options: {
           model: "gpt-5",
         },
         scripts: [],
+        hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
         worktreeGroupTitles: [],
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
@@ -902,6 +904,7 @@ function createSnapshotWithSecondaryProject(options?: {
         workspaceRoot: "/repo/clients/docs-portal",
         defaultModelSelection: { provider: "codex", model: "gpt-5" },
         scripts: [],
+        hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
         deletedAt: null,

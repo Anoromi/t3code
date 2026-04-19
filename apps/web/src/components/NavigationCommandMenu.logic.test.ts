@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_PROJECT_HYPRNAV_SETTINGS,
+  EnvironmentId,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
 import type { Project, Thread } from "../types";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE } from "../types";
 import {
@@ -22,6 +27,7 @@ function makeProject(overrides: Partial<Project> & Pick<Project, "id" | "name" |
         model: "gpt-5-codex",
       } satisfies Project["defaultModelSelection"]),
     scripts: overrides.scripts ?? [],
+    hyprnav: overrides.hyprnav ?? DEFAULT_PROJECT_HYPRNAV_SETTINGS,
     worktreeGroupTitles: overrides.worktreeGroupTitles ?? [],
   };
 }

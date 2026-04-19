@@ -52,10 +52,17 @@ function CommandDialogViewport({ className, ...props }: CommandDialogPrimitive.V
   );
 }
 
-function CommandDialogPopup({ className, children, ...props }: CommandDialogPrimitive.Popup.Props) {
+function CommandDialogPopup({
+  backdropClassName,
+  className,
+  children,
+  ...props
+}: CommandDialogPrimitive.Popup.Props & {
+  backdropClassName?: string | undefined;
+}) {
   return (
     <CommandDialogPortal>
-      <CommandDialogBackdrop />
+      <CommandDialogBackdrop className={backdropClassName} />
       <CommandDialogViewport>
         <CommandDialogPrimitive.Popup
           className={cn(

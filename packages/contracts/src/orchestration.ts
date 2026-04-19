@@ -1,4 +1,5 @@
 import { Effect, Option, Schema, SchemaIssue, Struct } from "effect";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import { ClaudeModelOptions, CodexModelOptions } from "./model.ts";
 import { RepositoryIdentity } from "./environment.ts";
 import {
@@ -9,6 +10,7 @@ import {
   IsoDateTime,
   MessageId,
   NonNegativeInt,
+  PositiveInt,
   ProjectId,
   ProviderItemId,
   ThreadId,
@@ -144,6 +146,182 @@ export const ProjectScript = Schema.Struct({
 });
 export type ProjectScript = typeof ProjectScript.Type;
 
+export const ProjectHyprnavAction = Schema.Literals([
+  "worktree-terminal",
+  "open-favorite-editor",
+  "shell-command",
+]);
+export type ProjectHyprnavAction = typeof ProjectHyprnavAction.Type;
+
+export const PROJECT_HYPRNAV_WORKTREE_TERMINAL_ID = "worktree-terminal";
+export const PROJECT_HYPRNAV_OPEN_FAVORITE_EDITOR_ID = "open-favorite-editor";
+
+const ProjectHyprnavBuiltinAction = Schema.Literals(["worktree-terminal", "open-favorite-editor"]);
+
+export const ProjectHyprnavBuiltinBinding = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  slot: PositiveInt,
+  action: ProjectHyprnavBuiltinAction,
+});
+export type ProjectHyprnavBuiltinBinding = typeof ProjectHyprnavBuiltinBinding.Type;
+
+export const ProjectHyprnavShellCommandBinding = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  slot: PositiveInt,
+  action: Schema.Literal("shell-command"),
+  command: TrimmedNonEmptyString,
+});
+export type ProjectHyprnavShellCommandBinding = typeof ProjectHyprnavShellCommandBinding.Type;
+
+export const ProjectHyprnavBinding = Schema.Union([
+  ProjectHyprnavBuiltinBinding,
+  ProjectHyprnavShellCommandBinding,
+]);
+export type ProjectHyprnavBinding = typeof ProjectHyprnavBinding.Type;
+
+const ProjectHyprnavSettingsCanonical = Schema.Struct({
+  bindings: Schema.Array(ProjectHyprnavBinding),
+});
+type ProjectHyprnavSettingsCanonical = typeof ProjectHyprnavSettingsCanonical.Type;
+
+export const DEFAULT_PROJECT_HYPRNAV_SETTINGS = {
+  bindings: [
+    {
+      id: PROJECT_HYPRNAV_WORKTREE_TERMINAL_ID,
+      slot: 1,
+      action: "worktree-terminal",
+    },
+    {
+      id: PROJECT_HYPRNAV_OPEN_FAVORITE_EDITOR_ID,
+      slot: 2,
+      action: "open-favorite-editor",
+    },
+  ],
+} as const satisfies typeof ProjectHyprnavSettingsCanonical.Type;
+
+const LegacyNullableProjectHyprnavCommand = Schema.NullOr(TrimmedNonEmptyString).pipe(
+  Schema.withDecodingDefault(Effect.succeed(null)),
+);
+
+const LegacyNullableProjectHyprnavSlot = Schema.NullOr(PositiveInt).pipe(
+  Schema.withDecodingDefault(Effect.succeed(null)),
+);
+
+const LegacyProjectHyprnavActionBinding = Schema.Struct({
+  slot: LegacyNullableProjectHyprnavSlot,
+  command: LegacyNullableProjectHyprnavCommand,
+});
+type LegacyProjectHyprnavActionBinding = typeof LegacyProjectHyprnavActionBinding.Type;
+
+const LegacyProjectHyprnavSettings = Schema.Struct({
+  terminalWorktree: LegacyProjectHyprnavActionBinding.pipe(
+    Schema.withDecodingDefault(Effect.succeed({ slot: 1, command: null })),
+  ),
+  openFavorite: LegacyProjectHyprnavActionBinding.pipe(
+    Schema.withDecodingDefault(Effect.succeed({ slot: 2, command: null })),
+  ),
+  corkdiff: LegacyProjectHyprnavActionBinding.pipe(
+    Schema.withDecodingDefault(Effect.succeed({ slot: null, command: null })),
+  ),
+});
+type LegacyProjectHyprnavSettings = typeof LegacyProjectHyprnavSettings.Type;
+
+function legacyHyprnavBindingToCanonical(input: {
+  readonly id: string;
+  readonly action: "worktree-terminal" | "open-favorite-editor";
+  readonly binding: LegacyProjectHyprnavActionBinding;
+}): ProjectHyprnavBinding[] {
+  if (input.binding.slot === null) {
+    return [];
+  }
+
+  if (input.binding.command !== null) {
+    return [
+      {
+        id: `${input.id}-command`,
+        slot: input.binding.slot,
+        action: "shell-command",
+        command: input.binding.command,
+      },
+    ];
+  }
+
+  return [
+    {
+      id: input.id,
+      slot: input.binding.slot,
+      action: input.action,
+    },
+  ];
+}
+
+function normalizeProjectHyprnavSettings(
+  input: ProjectHyprnavSettingsCanonical | LegacyProjectHyprnavSettings,
+): ProjectHyprnavSettingsCanonical {
+  if ("bindings" in input) {
+    return {
+      bindings: input.bindings.map((binding) => ({ ...binding })),
+    };
+  }
+
+  return {
+    bindings: [
+      ...legacyHyprnavBindingToCanonical({
+        id: PROJECT_HYPRNAV_WORKTREE_TERMINAL_ID,
+        action: "worktree-terminal",
+        binding: input.terminalWorktree,
+      }),
+      ...legacyHyprnavBindingToCanonical({
+        id: PROJECT_HYPRNAV_OPEN_FAVORITE_EDITOR_ID,
+        action: "open-favorite-editor",
+        binding: input.openFavorite,
+      }),
+    ],
+  };
+}
+
+const ProjectHyprnavSettingsInput = Schema.Union([
+  ProjectHyprnavSettingsCanonical,
+  LegacyProjectHyprnavSettings,
+]).pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROJECT_HYPRNAV_SETTINGS)));
+type ProjectHyprnavSettingsInput = typeof ProjectHyprnavSettingsInput.Type;
+
+export const ProjectHyprnavSettings = ProjectHyprnavSettingsInput.pipe(
+  Schema.decodeTo(
+    Schema.toType(ProjectHyprnavSettingsCanonical),
+    SchemaTransformation.transform<ProjectHyprnavSettingsCanonical, ProjectHyprnavSettingsInput>({
+      decode: normalizeProjectHyprnavSettings,
+      encode: (settings) => settings,
+    }),
+  ),
+);
+export type ProjectHyprnavSettings = typeof ProjectHyprnavSettings.Type;
+
+export function listProjectHyprnavSlots(settings: ProjectHyprnavSettings): ReadonlyArray<number> {
+  return settings.bindings.map((binding) => binding.slot);
+}
+
+export function findProjectHyprnavDuplicateSlots(
+  settings: ProjectHyprnavSettings,
+): ReadonlyArray<number> {
+  const seen = new Set<number>();
+  const duplicates = new Set<number>();
+
+  for (const slot of listProjectHyprnavSlots(settings)) {
+    if (seen.has(slot)) {
+      duplicates.add(slot);
+      continue;
+    }
+    seen.add(slot);
+  }
+
+  return [...duplicates].toSorted((left, right) => left - right);
+}
+
+export function projectHyprnavSettingsHasDuplicateSlots(settings: ProjectHyprnavSettings): boolean {
+  return findProjectHyprnavDuplicateSlots(settings).length > 0;
+}
+
 export const OrchestrationWorktreeGroupTitleStatus = Schema.Literals([
   "pending",
   "ready",
@@ -169,6 +347,9 @@ export const OrchestrationProject = Schema.Struct({
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
+  hyprnav: ProjectHyprnavSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROJECT_HYPRNAV_SETTINGS)),
+  ),
   worktreeGroupTitles: Schema.optional(Schema.Array(OrchestrationWorktreeGroupTitle)).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -354,6 +535,9 @@ export const OrchestrationProjectShell = Schema.Struct({
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
+  hyprnav: ProjectHyprnavSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROJECT_HYPRNAV_SETTINGS)),
+  ),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -456,6 +640,7 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  hyprnav: Schema.optional(ProjectHyprnavSettings),
   worktreeGroupTitles: Schema.optional(Schema.Array(OrchestrationWorktreeGroupTitle)),
 });
 
@@ -819,6 +1004,9 @@ export const ProjectCreatedPayload = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   scripts: Schema.Array(ProjectScript),
+  hyprnav: ProjectHyprnavSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROJECT_HYPRNAV_SETTINGS)),
+  ),
   worktreeGroupTitles: Schema.optional(Schema.Array(OrchestrationWorktreeGroupTitle)).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -833,6 +1021,7 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  hyprnav: Schema.optional(ProjectHyprnavSettings),
   worktreeGroupTitles: Schema.optional(Schema.Array(OrchestrationWorktreeGroupTitle)),
   updatedAt: IsoDateTime,
 });

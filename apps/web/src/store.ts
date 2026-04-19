@@ -142,6 +142,12 @@ function mapProjectScripts(scripts: ReadonlyArray<Project["scripts"][number]>): 
   return scripts.map((script) => ({ ...script }));
 }
 
+function mapProjectHyprnav(hyprnav: Project["hyprnav"]): Project["hyprnav"] {
+  return {
+    bindings: hyprnav.bindings.map((binding) => ({ ...binding })),
+  };
+}
+
 function mapSession(session: OrchestrationSession): ThreadSession {
   return {
     provider: toLegacyProvider(session.providerName),
@@ -224,6 +230,7 @@ function mapProject(
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
     scripts: mapProjectScripts(project.scripts),
+    hyprnav: mapProjectHyprnav(project.hyprnav),
     worktreeGroupTitles: Array.from(
       "worktreeGroupTitles" in project ? (project.worktreeGroupTitles ?? []) : [],
     ),
@@ -1163,6 +1170,7 @@ function applyEnvironmentOrchestrationEvent(
           repositoryIdentity: event.payload.repositoryIdentity ?? null,
           defaultModelSelection: event.payload.defaultModelSelection,
           scripts: event.payload.scripts,
+          hyprnav: event.payload.hyprnav,
           createdAt: event.payload.createdAt,
           updatedAt: event.payload.updatedAt,
           deletedAt: null,
@@ -1226,6 +1234,9 @@ function applyEnvironmentOrchestrationEvent(
           : {}),
         ...(event.payload.scripts !== undefined
           ? { scripts: mapProjectScripts(event.payload.scripts) }
+          : {}),
+        ...(event.payload.hyprnav !== undefined
+          ? { hyprnav: mapProjectHyprnav(event.payload.hyprnav) }
           : {}),
         updatedAt: event.payload.updatedAt,
       };

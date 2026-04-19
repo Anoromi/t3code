@@ -4,12 +4,15 @@ import { Effect, Schema } from "effect";
 
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
+  DEFAULT_PROJECT_HYPRNAV_SETTINGS,
   DEFAULT_RUNTIME_MODE,
+  findProjectHyprnavDuplicateSlots,
   OrchestrationCommand,
   OrchestrationEvent,
   OrchestrationGetTurnDiffInput,
   OrchestrationLatestTurn,
   ProjectCreatedPayload,
+  ProjectHyprnavSettings,
   ProjectMetaUpdatedPayload,
   OrchestrationProposedPlan,
   OrchestrationSession,
@@ -28,6 +31,7 @@ const decodeTurnDiffInput = Schema.decodeUnknownEffect(OrchestrationGetTurnDiffI
 const decodeThreadTurnDiff = Schema.decodeUnknownEffect(ThreadTurnDiff);
 const decodeProjectCreateCommand = Schema.decodeUnknownEffect(ProjectCreateCommand);
 const decodeProjectCreatedPayload = Schema.decodeUnknownEffect(ProjectCreatedPayload);
+const decodeProjectHyprnavSettings = Schema.decodeUnknownEffect(ProjectHyprnavSettings);
 const decodeProjectMetaUpdatedPayload = Schema.decodeUnknownEffect(ProjectMetaUpdatedPayload);
 const decodeThreadTurnStartCommand = Schema.decodeUnknownEffect(ThreadTurnStartCommand);
 const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
@@ -156,6 +160,83 @@ it.effect("decodes legacy project.created payloads without defaultModelSelection
     assert.strictEqual(parsed.defaultModelSelection, null);
   }),
 );
+
+it.effect("decodes project Hyprnav defaults", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectHyprnavSettings({});
+    assert.deepStrictEqual(parsed, DEFAULT_PROJECT_HYPRNAV_SETTINGS);
+  }),
+);
+
+it.effect("decodes legacy project.created payloads with default Hyprnav settings", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectCreatedPayload({
+      projectId: "project-1",
+      title: "Project Title",
+      workspaceRoot: "/tmp/workspace",
+      scripts: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.deepStrictEqual(parsed.hyprnav, DEFAULT_PROJECT_HYPRNAV_SETTINGS);
+  }),
+);
+
+it.effect("decodes project.meta-updated payloads carrying Hyprnav settings", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectMetaUpdatedPayload({
+      projectId: "project-1",
+      hyprnav: {
+        bindings: [
+          { id: "terminal", slot: 3, action: "worktree-terminal" },
+          { id: "editor", slot: 5, action: "open-favorite-editor" },
+          { id: "custom", slot: 6, action: "shell-command", command: "tmux" },
+        ],
+      },
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.deepStrictEqual(parsed.hyprnav, {
+      bindings: [
+        { id: "terminal", slot: 3, action: "worktree-terminal" },
+        { id: "editor", slot: 5, action: "open-favorite-editor" },
+        { id: "custom", slot: 6, action: "shell-command", command: "tmux" },
+      ],
+    });
+  }),
+);
+
+it.effect("decodes legacy project Hyprnav settings and drops Corkdiff", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectHyprnavSettings({
+      terminalWorktree: { slot: 3, command: null },
+      openFavorite: { slot: 2, command: "cursor ." },
+      corkdiff: { slot: 4, command: "ignored" },
+    });
+    assert.deepStrictEqual(parsed, {
+      bindings: [
+        { id: "worktree-terminal", slot: 3, action: "worktree-terminal" },
+        {
+          id: "open-favorite-editor-command",
+          slot: 2,
+          action: "shell-command",
+          command: "cursor .",
+        },
+      ],
+    });
+  }),
+);
+
+it("detects duplicate project Hyprnav slots", () => {
+  assert.deepStrictEqual(
+    findProjectHyprnavDuplicateSlots({
+      bindings: [
+        { id: "terminal", slot: 1, action: "worktree-terminal" },
+        { id: "editor", slot: 1, action: "open-favorite-editor" },
+      ],
+    }),
+    [1],
+  );
+});
 
 it.effect("decodes project.meta-updated payloads with explicit default provider", () =>
   Effect.gen(function* () {

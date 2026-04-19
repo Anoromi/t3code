@@ -42,6 +42,7 @@ import Migration0026 from "./Migrations/026_ProjectionProjectsWorktreeGroupTitle
 import Migration0027 from "./Migrations/027_RepairForkedMigrationDrift.ts";
 import Migration0028 from "./Migrations/028_RepairMissingAuthAccessTables.ts";
 import Migration0029 from "./Migrations/029_RepairProjectionThreadLatestTurnIds.ts";
+import Migration0030 from "./Migrations/030_ProjectionProjectsHyprnavSettings.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -83,6 +84,7 @@ export const migrationEntries = [
   [27, "RepairForkedMigrationDrift", Migration0027],
   [28, "RepairMissingAuthAccessTables", Migration0028],
   [29, "RepairProjectionThreadLatestTurnIds", Migration0029],
+  [30, "ProjectionProjectsHyprnavSettings", Migration0030],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

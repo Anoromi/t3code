@@ -75,6 +75,10 @@
     "./path": {
       "types": "./src/path.ts",
       "import": "./src/path.ts"
+    },
+    "./editorLaunch": {
+      "types": "./src/editorLaunch.ts",
+      "import": "./src/editorLaunch.ts"
     }
   },
   "scripts": {

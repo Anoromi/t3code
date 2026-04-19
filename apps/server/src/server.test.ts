@@ -4,6 +4,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import {
   CommandId,
+  DEFAULT_PROJECT_HYPRNAV_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   EventId,
@@ -138,6 +139,7 @@ const makeDefaultOrchestrationReadModel = () => {
         workspaceRoot: "/tmp/default-project",
         defaultModelSelection,
         scripts: [],
+        hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
         createdAt: now,
         updatedAt: now,
         deletedAt: null,
@@ -2885,6 +2887,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             workspaceRoot: "/tmp/project-a",
             defaultModelSelection,
             scripts: [],
+            hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
             createdAt: now,
             updatedAt: now,
             deletedAt: null,
@@ -3031,6 +3034,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   workspaceRoot: "/tmp/default-project",
                   defaultModelSelection,
                   scripts: [],
+                  hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
                   createdAt: "2026-04-05T00:00:00.000Z",
                   updatedAt: "2026-04-05T00:00:00.000Z",
                 },

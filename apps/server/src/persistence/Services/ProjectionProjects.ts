@@ -9,6 +9,7 @@
 import {
   IsoDateTime,
   ModelSelection,
+  ProjectHyprnavSettings,
   OrchestrationWorktreeGroupTitle,
   ProjectId,
   ProjectScript,
@@ -23,6 +24,7 @@ export const ProjectionProject = Schema.Struct({
   workspaceRoot: Schema.String,
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
+  hyprnav: ProjectHyprnavSettings,
   worktreeGroupTitles: Schema.optional(Schema.Array(OrchestrationWorktreeGroupTitle)).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),

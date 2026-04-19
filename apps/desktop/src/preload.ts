@@ -9,6 +9,8 @@ const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 const TOGGLE_EXTERNAL_CORKDIFF_CHANNEL = "desktop:toggle-external-corkdiff";
 const OPEN_WORKTREE_TERMINAL_CHANNEL = "desktop:open-worktree-terminal";
 const LIST_OPEN_WORKTREE_TERMINALS_CHANNEL = "desktop:list-open-worktree-terminals";
+const SYNC_HYPRNAV_ENVIRONMENT_CHANNEL = "desktop:sync-hyprnav-environment";
+const LOCK_HYPRNAV_ENVIRONMENT_CHANNEL = "desktop:lock-hyprnav-environment";
 const FOCUS_APP_WINDOW_CHANNEL = "desktop:focus-app-window";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
 const UPDATE_STATE_CHANNEL = "desktop:update-state";
@@ -65,6 +67,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   toggleExternalCorkdiff: (input) => ipcRenderer.invoke(TOGGLE_EXTERNAL_CORKDIFF_CHANNEL, input),
   openWorktreeTerminal: (input) => ipcRenderer.invoke(OPEN_WORKTREE_TERMINAL_CHANNEL, input),
   listOpenWorktreeTerminals: () => ipcRenderer.invoke(LIST_OPEN_WORKTREE_TERMINALS_CHANNEL),
+  syncHyprnavEnvironment: (input) => ipcRenderer.invoke(SYNC_HYPRNAV_ENVIRONMENT_CHANNEL, input),
+  lockHyprnavEnvironment: (input) => ipcRenderer.invoke(LOCK_HYPRNAV_ENVIRONMENT_CHANNEL, input),
   focusAppWindow: () => ipcRenderer.invoke(FOCUS_APP_WINDOW_CHANNEL),
   onMenuAction: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, action: unknown) => {

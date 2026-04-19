@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
+import { DEFAULT_PROJECT_HYPRNAV_SETTINGS, ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
 import { Effect, Exit, Layer, ManagedRuntime, Option, Scope, Stream } from "effect";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -69,6 +69,7 @@ function makeReadModel(
         workspaceRoot: "/tmp/provider-reaper-project",
         defaultModelSelection,
         scripts: [],
+        hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
         worktreeGroupTitles: [],
         createdAt: now,
         updatedAt: now,

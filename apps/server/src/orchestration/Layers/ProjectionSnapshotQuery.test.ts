@@ -1,4 +1,12 @@
-import { CheckpointRef, EventId, MessageId, ProjectId, ThreadId, TurnId } from "@t3tools/contracts";
+import {
+  CheckpointRef,
+  DEFAULT_PROJECT_HYPRNAV_SETTINGS,
+  EventId,
+  MessageId,
+  ProjectId,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import { Effect, Layer } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -274,6 +282,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               runOnWorktreeCreate: false,
             },
           ],
+          hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
           worktreeGroupTitles: [],
           createdAt: "2026-02-24T00:00:00.000Z",
           updatedAt: "2026-02-24T00:00:01.000Z",
@@ -387,6 +396,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
               runOnWorktreeCreate: false,
             },
           ],
+          hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
           createdAt: "2026-02-24T00:00:00.000Z",
           updatedAt: "2026-02-24T00:00:01.000Z",
         },
@@ -1138,6 +1148,7 @@ legacyProjectionSnapshotLayer("ProjectionSnapshotQuery legacy schema compatibili
             model: "gpt-5.4",
           },
           scripts: [],
+          hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
           worktreeGroupTitles: [],
           createdAt: "2026-02-24T00:00:00.000Z",
           updatedAt: "2026-02-24T00:00:01.000Z",

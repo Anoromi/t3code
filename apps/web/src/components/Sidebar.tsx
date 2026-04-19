@@ -178,6 +178,7 @@ import {
   sortProjectsForSidebar,
   shouldDisableWorktreeTitleRegenerate,
   createThreadJumpHintSessionController,
+  hasActiveModifierAfterKeyUp,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
   THREAD_JUMP_HINT_REARM_DELAY_MS,
   type SidebarProjectThreadEntry,
@@ -1757,7 +1758,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
         const actionHandlers = new Map<string, () => Promise<void> | void>();
         const makeLeaf = (
-          action: "rename" | "grouping" | "copy-path" | "delete",
+          action: "settings" | "rename" | "grouping" | "copy-path" | "delete",
           member: SidebarProjectGroupMember,
           options?: {
             destructive?: boolean;
@@ -1767,6 +1768,15 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           const id = `${action}:${member.physicalProjectKey}`;
           actionHandlers.set(id, () => {
             switch (action) {
+              case "settings":
+                void router.navigate({
+                  to: "/settings/projects/$environmentId/$projectId",
+                  params: {
+                    environmentId: member.environmentId,
+                    projectId: member.id,
+                  },
+                });
+                return;
               case "rename":
                 openProjectRenameDialog(member);
                 return;
@@ -1790,7 +1800,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         };
 
         const buildTargetedItem = (
-          action: "rename" | "grouping" | "copy-path" | "delete",
+          action: "settings" | "rename" | "grouping" | "copy-path" | "delete",
           label: string,
           options?: {
             destructive?: boolean;
@@ -1822,6 +1832,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
         const clicked = await api.contextMenu.show(
           [
+            buildTargetedItem("settings", "Project settings"),
             buildTargetedItem("rename", "Rename project"),
             buildTargetedItem("grouping", "Project grouping…"),
             buildTargetedItem("copy-path", "Copy Project Path"),
@@ -1852,6 +1863,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       openProjectRenameDialog,
       project.groupedProjectCount,
       project.memberProjects,
+      router,
       suppressProjectClickForContextMenuRef,
     ],
   );
@@ -3605,7 +3617,7 @@ export default function Sidebar() {
     };
 
     const onWindowKeyUp = (event: globalThis.KeyboardEvent) => {
-      if (!hasActiveModifier(event)) {
+      if (!hasActiveModifierAfterKeyUp(event)) {
         threadJumpHintSessionController.handle("keyUpNoActiveModifiers");
         return;
       }

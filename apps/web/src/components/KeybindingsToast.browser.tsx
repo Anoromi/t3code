@@ -1,6 +1,7 @@
 import "../index.css";
 
 import {
+  DEFAULT_PROJECT_HYPRNAV_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   ORCHESTRATION_WS_METHODS,
@@ -117,6 +118,7 @@ function createMinimalSnapshot(): OrchestrationReadModel {
           model: "gpt-5",
         },
         scripts: [],
+        hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
         worktreeGroupTitles: [],
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,

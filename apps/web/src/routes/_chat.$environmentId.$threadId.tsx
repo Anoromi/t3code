@@ -1,5 +1,6 @@
+import { scopeProjectRef } from "@t3tools/client-runtime";
 import { createFileRoute, retainSearchParams, useNavigate } from "@tanstack/react-router";
-import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import ChatView from "../components/ChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
@@ -16,12 +17,22 @@ import {
   parseDiffRouteSearch,
   stripDiffSearchParams,
 } from "../diffRouteSearch";
+import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { isElectron } from "../env";
+import { usePrimaryEnvironmentId } from "../environments/primary";
 import { useMediaQuery } from "../hooks/useMediaQuery";
+import { resolveActiveHyprnavLockTarget } from "../hyprnavSettings";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
-import { selectEnvironmentState, selectThreadExistsByRef, useStore } from "../store";
+import { useServerAvailableEditors } from "../rpc/serverState";
+import {
+  selectEnvironmentState,
+  selectProjectByRef,
+  selectThreadExistsByRef,
+  useStore,
+} from "../store";
 import { createThreadSelectorByRef } from "../storeSelectors";
 import { resolveThreadRouteRef, buildThreadRouteParams } from "../threadRoutes";
+import { toastManager } from "../components/ui/toast";
 import { RightPanelSheet } from "../components/RightPanelSheet";
 import { Sidebar, SidebarInset, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
 
@@ -147,6 +158,13 @@ function ChatThreadRouteView() {
     (store) => selectEnvironmentState(store, threadRef?.environmentId ?? null).bootstrapComplete,
   );
   const serverThread = useStore(useMemo(() => createThreadSelectorByRef(threadRef), [threadRef]));
+  const serverThreadProjectRef = serverThread
+    ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
+    : null;
+  const serverThreadProject = useStore((store) =>
+    selectProjectByRef(store, serverThreadProjectRef),
+  );
+  const availableEditors = useServerAvailableEditors();
   const threadExists = useStore((store) => selectThreadExistsByRef(store, threadRef));
   const environmentHasServerThreads = useStore(
     (store) => selectEnvironmentState(store, threadRef?.environmentId ?? null).threadIds.length > 0,
@@ -168,7 +186,24 @@ function ChatThreadRouteView() {
   const environmentHasAnyThreads = environmentHasServerThreads || environmentHasDraftThreads;
   const diffOpen = !isElectron && search.diff === "1";
   const shouldUseDiffSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const localDesktopEnvironmentId = isElectron ? primaryEnvironmentId : null;
+  const hyprnavLockTarget = resolveActiveHyprnavLockTarget({
+    localEnvironmentId: localDesktopEnvironmentId,
+    activeThread: serverThread,
+    project: serverThreadProject,
+  });
   const currentThreadKey = threadRef ? `${threadRef.environmentId}:${threadRef.threadId}` : null;
+  const needsPreferredEditor =
+    serverThreadProject?.hyprnav.bindings.some(
+      (binding) => binding.action === "open-favorite-editor",
+    ) ?? false;
+  const availableEditorKey = needsPreferredEditor ? availableEditors.join(",") : "";
+  const hyprnavSyncRequestKey =
+    currentThreadKey && hyprnavLockTarget
+      ? `${currentThreadKey}:${hyprnavLockTarget}:${availableEditorKey}`
+      : null;
+  const lastHyprnavSyncRequestKeyRef = useRef<string | null>(null);
   const [diffPanelMountState, setDiffPanelMountState] = useState(() => ({
     threadKey: currentThreadKey,
     hasOpenedDiff: diffOpen,
@@ -229,6 +264,66 @@ function ChatThreadRouteView() {
     }
     finalizePromotedDraftThreadByRef(threadRef);
   }, [draftThread?.promotedTo, serverThreadStarted, threadRef]);
+
+  useEffect(() => {
+    if (!isElectron || !hyprnavLockTarget || !hyprnavSyncRequestKey || !serverThreadProject) {
+      return;
+    }
+
+    const syncHyprnavEnvironment = window.desktopBridge?.syncHyprnavEnvironment;
+    if (typeof syncHyprnavEnvironment !== "function") {
+      return;
+    }
+
+    if (lastHyprnavSyncRequestKeyRef.current === hyprnavSyncRequestKey) {
+      return;
+    }
+    lastHyprnavSyncRequestKeyRef.current = hyprnavSyncRequestKey;
+
+    let cancelled = false;
+    const preferredEditor = needsPreferredEditor
+      ? resolveAndPersistPreferredEditor(availableEditors)
+      : null;
+    void syncHyprnavEnvironment({
+      environmentPath: hyprnavLockTarget,
+      projectRoot: serverThreadProject.cwd,
+      hyprnav: serverThreadProject.hyprnav,
+      preferredEditor,
+      clearSlots: [],
+      lock: true,
+    })
+      .then((result) => {
+        if (cancelled || result.status === "ok") {
+          return;
+        }
+        toastManager.add({
+          type: "warning",
+          title: "Hyprnav sync failed",
+          description: result.message ?? "Hyprnav could not sync the active worktree.",
+        });
+      })
+      .catch((error: unknown) => {
+        if (cancelled) {
+          return;
+        }
+        toastManager.add({
+          type: "warning",
+          title: "Hyprnav sync failed",
+          description:
+            error instanceof Error ? error.message : "Hyprnav could not sync the active worktree.",
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    availableEditors,
+    hyprnavLockTarget,
+    hyprnavSyncRequestKey,
+    needsPreferredEditor,
+    serverThreadProject,
+  ]);
 
   if (!threadRef || !bootstrapComplete || !routeThreadExists) {
     return null;

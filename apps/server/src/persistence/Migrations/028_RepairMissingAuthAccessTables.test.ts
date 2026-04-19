@@ -81,7 +81,7 @@ layer("028_RepairMissingAuthAccessTables", (it) => {
       assert.equal(initialTableNames.has("auth_pairing_links"), false);
       assert.equal(initialTableNames.has("auth_sessions"), false);
 
-      yield* runMigrations();
+      yield* runMigrations({ toMigrationInclusive: 28 });
 
       const tableNames = yield* getTableNames;
       const indexNames = yield* getIndexNames;
@@ -222,7 +222,7 @@ layer("028_RepairMissingAuthAccessTables", (it) => {
         )
       `;
 
-      yield* runMigrations();
+      yield* runMigrations({ toMigrationInclusive: 28 });
 
       const pairingLinkColumns = yield* getPairingLinkColumnNames;
       const sessionColumns = yield* getSessionColumnNames;
