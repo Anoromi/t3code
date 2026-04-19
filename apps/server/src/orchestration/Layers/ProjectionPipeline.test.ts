@@ -2167,6 +2167,266 @@ it.effect("restores pending turn-start metadata across projection pipeline resta
   ),
 );
 
+it.layer(BaseTestLayer)("OrchestrationProjectionPipeline latest turn sessions", (it) => {
+  it.effect("preserves latest turn id when a session stops after a completed turn", () =>
+    Effect.gen(function* () {
+      const eventStore = yield* OrchestrationEventStore;
+      const projectionPipeline = yield* OrchestrationProjectionPipeline;
+      const sql = yield* SqlClient.SqlClient;
+
+      const projectId = ProjectId.make("project-latest-turn-preserve");
+      const threadId = ThreadId.make("thread-latest-turn-preserve");
+      const emptyThreadId = ThreadId.make("thread-latest-turn-empty");
+      const turnId = TurnId.make("turn-latest-turn-preserve");
+      const messageId = MessageId.make("message-latest-turn-preserve");
+      const createdAt = "2026-04-19T09:00:00.000Z";
+      const runningAt = "2026-04-19T09:00:05.000Z";
+      const completedAt = "2026-04-19T09:01:00.000Z";
+      const stoppedAt = "2026-04-19T09:31:00.000Z";
+
+      yield* eventStore.append({
+        type: "project.created",
+        eventId: EventId.make("evt-latest-turn-preserve-project"),
+        aggregateKind: "project",
+        aggregateId: projectId,
+        occurredAt: createdAt,
+        commandId: CommandId.make("cmd-latest-turn-preserve-project"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("corr-latest-turn-preserve"),
+        metadata: {},
+        payload: {
+          projectId,
+          title: "Latest Turn Preserve Project",
+          workspaceRoot: "/tmp/latest-turn-preserve",
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt,
+          updatedAt: createdAt,
+        },
+      });
+
+      yield* eventStore.append({
+        type: "thread.created",
+        eventId: EventId.make("evt-latest-turn-preserve-thread"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: createdAt,
+        commandId: CommandId.make("cmd-latest-turn-preserve-thread"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("corr-latest-turn-preserve"),
+        metadata: {},
+        payload: {
+          threadId,
+          projectId,
+          title: "Latest Turn Preserve Thread",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      });
+
+      yield* eventStore.append({
+        type: "thread.turn-start-requested",
+        eventId: EventId.make("evt-latest-turn-preserve-turn-requested"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: createdAt,
+        commandId: CommandId.make("cmd-latest-turn-preserve-turn-requested"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("corr-latest-turn-preserve"),
+        metadata: {},
+        payload: {
+          threadId,
+          messageId,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          createdAt,
+        },
+      });
+
+      yield* eventStore.append({
+        type: "thread.session-set",
+        eventId: EventId.make("evt-latest-turn-preserve-running"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: runningAt,
+        commandId: CommandId.make("cmd-latest-turn-preserve-running"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("corr-latest-turn-preserve"),
+        metadata: {},
+        payload: {
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: turnId,
+            lastError: null,
+            updatedAt: runningAt,
+          },
+        },
+      });
+
+      yield* eventStore.append({
+        type: "thread.turn-diff-completed",
+        eventId: EventId.make("evt-latest-turn-preserve-diff"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: completedAt,
+        commandId: CommandId.make("cmd-latest-turn-preserve-diff"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("corr-latest-turn-preserve"),
+        metadata: {},
+        payload: {
+          threadId,
+          turnId,
+          checkpointTurnCount: 1,
+          checkpointRef: CheckpointRef.make("checkpoint-latest-turn-preserve"),
+          status: "ready",
+          files: [],
+          assistantMessageId: null,
+          completedAt,
+        },
+      });
+
+      yield* eventStore.append({
+        type: "thread.session-set",
+        eventId: EventId.make("evt-latest-turn-preserve-stopped"),
+        aggregateKind: "thread",
+        aggregateId: threadId,
+        occurredAt: stoppedAt,
+        commandId: CommandId.make("cmd-latest-turn-preserve-stopped"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("corr-latest-turn-preserve"),
+        metadata: {},
+        payload: {
+          threadId,
+          session: {
+            threadId,
+            status: "stopped",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: stoppedAt,
+          },
+        },
+      });
+
+      yield* eventStore.append({
+        type: "thread.created",
+        eventId: EventId.make("evt-latest-turn-empty-thread"),
+        aggregateKind: "thread",
+        aggregateId: emptyThreadId,
+        occurredAt: createdAt,
+        commandId: CommandId.make("cmd-latest-turn-empty-thread"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("corr-latest-turn-empty"),
+        metadata: {},
+        payload: {
+          threadId: emptyThreadId,
+          projectId,
+          title: "Latest Turn Empty Thread",
+          modelSelection: {
+            provider: "codex",
+            model: "gpt-5-codex",
+          },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      });
+
+      yield* eventStore.append({
+        type: "thread.session-set",
+        eventId: EventId.make("evt-latest-turn-empty-stopped"),
+        aggregateKind: "thread",
+        aggregateId: emptyThreadId,
+        occurredAt: stoppedAt,
+        commandId: CommandId.make("cmd-latest-turn-empty-stopped"),
+        causationEventId: null,
+        correlationId: CorrelationId.make("corr-latest-turn-empty"),
+        metadata: {},
+        payload: {
+          threadId: emptyThreadId,
+          session: {
+            threadId: emptyThreadId,
+            status: "stopped",
+            providerName: "codex",
+            runtimeMode: "full-access",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: stoppedAt,
+          },
+        },
+      });
+
+      yield* projectionPipeline.bootstrap;
+
+      const threadRows = yield* sql<{
+        readonly threadId: string;
+        readonly latestTurnId: string | null;
+      }>`
+        SELECT
+          thread_id AS "threadId",
+          latest_turn_id AS "latestTurnId"
+        FROM projection_threads
+        WHERE thread_id IN (${threadId}, ${emptyThreadId})
+        ORDER BY thread_id ASC
+      `;
+      const latestTurnRows = yield* sql<{
+        readonly turnId: string;
+        readonly state: string;
+        readonly completedAt: string | null;
+      }>`
+        SELECT
+          turns.turn_id AS "turnId",
+          turns.state,
+          turns.completed_at AS "completedAt"
+        FROM projection_threads AS threads
+        JOIN projection_turns AS turns
+          ON turns.thread_id = threads.thread_id
+          AND turns.turn_id = threads.latest_turn_id
+        WHERE threads.thread_id = ${threadId}
+      `;
+      const sessionRows = yield* sql<{
+        readonly status: string;
+        readonly activeTurnId: string | null;
+      }>`
+        SELECT
+          status,
+          active_turn_id AS "activeTurnId"
+        FROM projection_thread_sessions
+        WHERE thread_id = ${threadId}
+      `;
+
+      assert.deepEqual(threadRows, [
+        { threadId: "thread-latest-turn-empty", latestTurnId: null },
+        { threadId: "thread-latest-turn-preserve", latestTurnId: "turn-latest-turn-preserve" },
+      ]);
+      assert.deepEqual(latestTurnRows, [
+        {
+          turnId: "turn-latest-turn-preserve",
+          state: "completed",
+          completedAt,
+        },
+      ]);
+      assert.deepEqual(sessionRows, [{ status: "stopped", activeTurnId: null }]);
+    }),
+  );
+});
+
 const engineLayer = it.layer(
   (() => {
     const providerServiceLayer = Layer.succeed(ProviderService, {
