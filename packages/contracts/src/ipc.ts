@@ -50,6 +50,7 @@ import type {
   OrchestrationShellStreamItem,
   OrchestrationSubscribeThreadInput,
   OrchestrationThreadStreamItem,
+  ProjectHyprnavScope,
   ProjectHyprnavSettings,
 } from "./orchestration.ts";
 import type { EnvironmentId } from "./baseSchemas.ts";
@@ -147,17 +148,29 @@ export interface PickFolderOptions {
   initialPath?: string | null;
 }
 
+export interface DesktopHyprnavScopedSlot {
+  slot: number;
+  scope: ProjectHyprnavScope;
+}
+
+export interface DesktopHyprnavCorkdiffConnectionInput {
+  serverUrl: string;
+  token: string | null;
+}
+
 export interface DesktopHyprnavSyncInput {
-  environmentPath: string;
   projectRoot: string;
+  worktreePath?: string | null | undefined;
+  threadId?: string | null | undefined;
   hyprnav: ProjectHyprnavSettings;
   preferredEditor?: EditorId | null | undefined;
-  clearSlots?: readonly number[] | undefined;
+  clearBindings?: readonly DesktopHyprnavScopedSlot[] | undefined;
+  corkdiffConnection?: DesktopHyprnavCorkdiffConnectionInput | null | undefined;
   lock: boolean;
 }
 
 export interface DesktopHyprnavLockInput {
-  environmentPath: string;
+  envId: string;
 }
 
 export interface DesktopHyprnavSyncResult {

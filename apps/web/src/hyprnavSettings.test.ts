@@ -9,8 +9,10 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildProjectHyprnavSyncJobs,
-  computeRemovedHyprnavSlots,
+  computeRemovedHyprnavBindings,
+  projectHyprnavNeedsCorkdiffConnection,
   resolveActiveHyprnavLockTarget,
+  resolveActiveHyprnavSyncTarget,
   validateProjectHyprnavSettings,
 } from "./hyprnavSettings";
 import type { Project, Thread, ThreadShell } from "./types";
@@ -59,85 +61,89 @@ function makeThreadShell(overrides: Partial<ThreadShell> = {}): ThreadShell {
 }
 
 describe("hyprnavSettings", () => {
-  it("validates duplicate project slots", () => {
+  it("validates duplicate project slots within the same scope only", () => {
     expect(
       validateProjectHyprnavSettings({
         bindings: [
-          { id: "terminal", slot: 1, action: "worktree-terminal" },
-          { id: "editor", slot: 1, action: "open-favorite-editor" },
+          { id: "terminal", slot: 1, scope: "worktree", action: "worktree-terminal" },
+          { id: "editor", slot: 1, scope: "worktree", action: "open-favorite-editor" },
+          { id: "custom", slot: 1, scope: "project", action: "shell-command", command: "tmux" },
         ],
-      }).duplicateSlots,
-    ).toEqual([1]);
+      }).duplicateScopedSlots,
+    ).toEqual([{ scope: "worktree", slot: 1 }]);
   });
 
   it("validates empty shell commands", () => {
     expect(
       validateProjectHyprnavSettings({
-        bindings: [{ id: "custom", slot: 3, action: "shell-command", command: "" }],
+        bindings: [
+          { id: "custom", slot: 3, scope: "thread", action: "shell-command", command: "" },
+        ],
       }).emptyShellCommandBindingIds,
     ).toEqual(["custom"]);
   });
 
-  it("emits clearSlots only when a slot number is removed", () => {
+  it("emits removed bindings when slot or scope ownership changes", () => {
     expect(
-      computeRemovedHyprnavSlots(
+      computeRemovedHyprnavBindings(
         {
           bindings: [
-            { id: "terminal", slot: 1, action: "worktree-terminal" },
-            { id: "editor", slot: 2, action: "open-favorite-editor" },
-            { id: "custom", slot: 4, action: "shell-command", command: "old" },
+            { id: "terminal", slot: 1, scope: "worktree", action: "worktree-terminal" },
+            { id: "editor", slot: 2, scope: "project", action: "open-favorite-editor" },
+            { id: "custom", slot: 8, scope: "thread", action: "shell-command", command: "old" },
           ],
         },
         {
           bindings: [
-            { id: "terminal", slot: 7, action: "worktree-terminal" },
-            { id: "editor", slot: 2, action: "open-favorite-editor" },
+            { id: "terminal", slot: 7, scope: "worktree", action: "worktree-terminal" },
+            { id: "editor", slot: 2, scope: "project", action: "open-favorite-editor" },
+            { id: "custom", slot: 8, scope: "project", action: "shell-command", command: "new" },
           ],
         },
       ),
-    ).toEqual([1, 4]);
+    ).toEqual([
+      { scope: "thread", slot: 8 },
+      { scope: "worktree", slot: 1 },
+    ]);
   });
 
-  it("does not emit clearSlots when only actions or commands change", () => {
+  it("does not emit removed bindings when only actions or commands change", () => {
     expect(
-      computeRemovedHyprnavSlots(
+      computeRemovedHyprnavBindings(
         {
-          bindings: [{ id: "slot-1", slot: 1, action: "shell-command", command: "old" }],
+          bindings: [
+            { id: "slot-1", slot: 1, scope: "worktree", action: "shell-command", command: "old" },
+          ],
         },
         {
-          bindings: [{ id: "slot-1", slot: 1, action: "worktree-terminal" }],
+          bindings: [{ id: "slot-1", slot: 1, scope: "worktree", action: "worktree-terminal" }],
         },
       ),
     ).toEqual([]);
   });
 
-  it("locks the worktree environment for active worktree threads", () => {
+  it("resolves active sync targets from project, worktree, and thread identity", () => {
     const activeThread = {
+      id: ThreadId.make("thread-1"),
       environmentId: localEnvironmentId,
       projectId,
       worktreePath: "/repo/worktrees/feature-a",
-    } satisfies Pick<Thread, "environmentId" | "projectId" | "worktreePath">;
+    } satisfies Pick<Thread, "id" | "environmentId" | "projectId" | "worktreePath">;
 
     expect(
-      buildProjectHyprnavSyncJobs({
+      resolveActiveHyprnavSyncTarget({
         localEnvironmentId,
-        projects: [makeProject()],
-        threadShells: [],
         activeThread,
-        clearSlotsByProjectKey: new Map(),
+        project: makeProject(),
       }),
-    ).toEqual([
-      {
-        environmentPath: "/repo/worktrees/feature-a",
-        projectRoot: "/repo",
-        hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
-        clearSlots: [],
-        lock: true,
-      },
-    ]);
+    ).toEqual({
+      projectRoot: "/repo",
+      worktreePath: "/repo/worktrees/feature-a",
+      threadId: ThreadId.make("thread-1"),
+    });
   });
 
-  it("resolves active lock targets from worktree paths", () => {
+  it("resolves legacy lock targets from worktree paths", () => {
     const project = makeProject();
 
     expect(
@@ -149,93 +155,93 @@ describe("hyprnavSettings", () => {
     ).toBe("/repo/worktrees/feature-a");
   });
 
-  it("falls back to the project cwd when active threads have no worktree path", () => {
-    const project = makeProject();
-
+  it("does not resolve sync targets for remote environments", () => {
     expect(
-      resolveActiveHyprnavLockTarget({
+      resolveActiveHyprnavSyncTarget({
         localEnvironmentId,
-        activeThread: makeThreadShell({ worktreePath: null }),
-        project,
-      }),
-    ).toBe("/repo");
-  });
-
-  it("does not resolve lock targets for remote environments", () => {
-    expect(
-      resolveActiveHyprnavLockTarget({
-        localEnvironmentId,
-        activeThread: makeThreadShell({
+        activeThread: {
+          id: ThreadId.make("thread-1"),
           environmentId: remoteEnvironmentId,
+          projectId,
           worktreePath: "/remote/worktree",
-        }),
+        },
         project: makeProject({ environmentId: remoteEnvironmentId }),
       }),
     ).toBeNull();
   });
 
-  it("locks the project root environment for active non-worktree threads", () => {
-    const activeThread = {
-      environmentId: localEnvironmentId,
-      projectId,
-      worktreePath: null,
-    } satisfies Pick<Thread, "environmentId" | "projectId" | "worktreePath">;
+  it("builds project, worktree, and thread jobs for known local threads", () => {
+    expect(
+      buildProjectHyprnavSyncJobs({
+        localEnvironmentId,
+        projects: [makeProject()],
+        threadShells: [
+          makeThreadShell({
+            id: ThreadId.make("thread-1"),
+            worktreePath: "/repo/worktrees/feature-a",
+          }),
+          makeThreadShell({
+            id: ThreadId.make("thread-2"),
+            worktreePath: "/repo/worktrees/feature-a",
+          }),
+        ],
+        activeThread: {
+          id: ThreadId.make("thread-2"),
+          environmentId: localEnvironmentId,
+          projectId,
+          worktreePath: "/repo/worktrees/feature-a",
+        },
+        clearBindingsByProjectKey: new Map([[projectKey, [{ scope: "thread", slot: 8 }]]]),
+      }),
+    ).toEqual([
+      {
+        projectRoot: "/repo",
+        worktreePath: "/repo/worktrees/feature-a",
+        threadId: ThreadId.make("thread-1"),
+        hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
+        clearBindings: [{ scope: "thread", slot: 8 }],
+        lock: false,
+      },
+      {
+        projectRoot: "/repo",
+        worktreePath: "/repo/worktrees/feature-a",
+        threadId: ThreadId.make("thread-2"),
+        hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
+        clearBindings: [{ scope: "thread", slot: 8 }],
+        lock: true,
+      },
+    ]);
+  });
 
+  it("falls back to a project-root job when no local threads are known", () => {
     expect(
       buildProjectHyprnavSyncJobs({
         localEnvironmentId,
         projects: [makeProject()],
         threadShells: [],
-        activeThread,
-        clearSlotsByProjectKey: new Map(),
-      })[0]?.environmentPath,
-    ).toBe("/repo");
-  });
-
-  it("syncs passive worktrees without locking", () => {
-    expect(
-      buildProjectHyprnavSyncJobs({
-        localEnvironmentId,
-        projects: [makeProject()],
-        threadShells: [makeThreadShell({ worktreePath: "/repo/worktrees/feature-a" })],
         activeThread: null,
-        clearSlotsByProjectKey: new Map(),
+        clearBindingsByProjectKey: new Map([[projectKey, [{ scope: "project", slot: 2 }]]]),
       }),
     ).toEqual([
       {
-        environmentPath: "/repo/worktrees/feature-a",
         projectRoot: "/repo",
+        worktreePath: null,
+        threadId: null,
         hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
-        clearSlots: [],
+        clearBindings: [{ scope: "project", slot: 2 }],
         lock: false,
       },
     ]);
   });
 
-  it("ignores remote environment worktrees and attaches clearSlots to local jobs", () => {
+  it("detects when Hyprnav settings need a Corkdiff connection", () => {
+    expect(projectHyprnavNeedsCorkdiffConnection(DEFAULT_PROJECT_HYPRNAV_SETTINGS)).toBe(true);
     expect(
-      buildProjectHyprnavSyncJobs({
-        localEnvironmentId,
-        projects: [
-          makeProject(),
-          makeProject({
-            environmentId: remoteEnvironmentId,
-            id: projectId,
-          }),
+      projectHyprnavNeedsCorkdiffConnection({
+        bindings: [
+          { id: "custom", slot: 5, scope: "project", action: "shell-command", command: "tmux" },
         ],
-        threadShells: [
-          makeThreadShell({ worktreePath: "/repo/worktrees/feature-a" }),
-          makeThreadShell({
-            environmentId: remoteEnvironmentId,
-            worktreePath: "/remote/worktree",
-          }),
-        ],
-        activeThread: null,
-        clearSlotsByProjectKey: new Map([[projectKey, [4]]]),
-      }).map((job) => ({
-        environmentPath: job.environmentPath,
-        clearSlots: job.clearSlots,
-      })),
-    ).toEqual([{ environmentPath: "/repo/worktrees/feature-a", clearSlots: [4] }]);
+      }),
+    ).toBe(false);
   });
 });

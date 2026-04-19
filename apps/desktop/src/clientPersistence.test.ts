@@ -58,6 +58,7 @@ const clientSettings: ClientSettings = {
   sidebarProjectGroupingOverrides: {
     "environment-1:/tmp/project-a": "separate",
   },
+  groupedProjectHyprnavStateByLogicalProjectKey: {},
   sidebarProjectSortOrder: "manual",
   sidebarThreadSortOrder: "created_at",
   timestampFormat: "24-hour",

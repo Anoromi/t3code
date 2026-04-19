@@ -21,7 +21,10 @@ import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { isElectron } from "../env";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import { useMediaQuery } from "../hooks/useMediaQuery";
-import { resolveActiveHyprnavLockTarget } from "../hyprnavSettings";
+import {
+  projectHyprnavNeedsCorkdiffConnection,
+  resolveActiveHyprnavSyncTarget,
+} from "../hyprnavSettings";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { useServerAvailableEditors } from "../rpc/serverState";
 import {
@@ -34,6 +37,7 @@ import { createThreadSelectorByRef } from "../storeSelectors";
 import { resolveThreadRouteRef, buildThreadRouteParams } from "../threadRoutes";
 import { toastManager } from "../components/ui/toast";
 import { RightPanelSheet } from "../components/RightPanelSheet";
+import { resolveExternalCorkdiffConnection } from "../lib/externalCorkdiff";
 import { Sidebar, SidebarInset, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
 
 const DiffPanel = lazy(() => import("../components/DiffPanel"));
@@ -188,7 +192,7 @@ function ChatThreadRouteView() {
   const shouldUseDiffSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const localDesktopEnvironmentId = isElectron ? primaryEnvironmentId : null;
-  const hyprnavLockTarget = resolveActiveHyprnavLockTarget({
+  const hyprnavSyncTarget = resolveActiveHyprnavSyncTarget({
     localEnvironmentId: localDesktopEnvironmentId,
     activeThread: serverThread,
     project: serverThreadProject,
@@ -198,10 +202,17 @@ function ChatThreadRouteView() {
     serverThreadProject?.hyprnav.bindings.some(
       (binding) => binding.action === "open-favorite-editor",
     ) ?? false;
+  const needsCorkdiffConnection = serverThreadProject?.hyprnav
+    ? projectHyprnavNeedsCorkdiffConnection(serverThreadProject.hyprnav)
+    : false;
+  const hyprnavSettingsKey = serverThreadProject ? JSON.stringify(serverThreadProject.hyprnav) : "";
   const availableEditorKey = needsPreferredEditor ? availableEditors.join(",") : "";
+  const hyprnavTargetKey = hyprnavSyncTarget
+    ? `${hyprnavSyncTarget.projectRoot}:${hyprnavSyncTarget.worktreePath ?? ""}:${hyprnavSyncTarget.threadId}`
+    : null;
   const hyprnavSyncRequestKey =
-    currentThreadKey && hyprnavLockTarget
-      ? `${currentThreadKey}:${hyprnavLockTarget}:${availableEditorKey}`
+    currentThreadKey && hyprnavTargetKey
+      ? `${currentThreadKey}:${hyprnavTargetKey}:${availableEditorKey}:${needsCorkdiffConnection ? "corkdiff" : "plain"}:${hyprnavSettingsKey}`
       : null;
   const lastHyprnavSyncRequestKeyRef = useRef<string | null>(null);
   const [diffPanelMountState, setDiffPanelMountState] = useState(() => ({
@@ -266,7 +277,7 @@ function ChatThreadRouteView() {
   }, [draftThread?.promotedTo, serverThreadStarted, threadRef]);
 
   useEffect(() => {
-    if (!isElectron || !hyprnavLockTarget || !hyprnavSyncRequestKey || !serverThreadProject) {
+    if (!isElectron || !hyprnavSyncTarget || !hyprnavSyncRequestKey || !serverThreadProject) {
       return;
     }
 
@@ -281,17 +292,36 @@ function ChatThreadRouteView() {
     lastHyprnavSyncRequestKeyRef.current = hyprnavSyncRequestKey;
 
     let cancelled = false;
-    const preferredEditor = needsPreferredEditor
-      ? resolveAndPersistPreferredEditor(availableEditors)
-      : null;
-    void syncHyprnavEnvironment({
-      environmentPath: hyprnavLockTarget,
-      projectRoot: serverThreadProject.cwd,
-      hyprnav: serverThreadProject.hyprnav,
-      preferredEditor,
-      clearSlots: [],
-      lock: true,
-    })
+    void (async () => {
+      const preferredEditor = needsPreferredEditor
+        ? resolveAndPersistPreferredEditor(availableEditors)
+        : null;
+      const corkdiffConnection = needsCorkdiffConnection
+        ? await (async () => {
+            const bootstrap = window.desktopBridge?.getLocalEnvironmentBootstrap() ?? null;
+            const bridgeWsUrl = bootstrap?.wsBaseUrl ?? null;
+            if (!bridgeWsUrl) {
+              throw new Error("Desktop websocket URL is unavailable.");
+            }
+
+            return await resolveExternalCorkdiffConnection({
+              wsBaseUrl: bridgeWsUrl,
+              httpBaseUrl: bootstrap?.httpBaseUrl ?? null,
+            });
+          })()
+        : null;
+
+      return await syncHyprnavEnvironment({
+        projectRoot: hyprnavSyncTarget.projectRoot,
+        worktreePath: hyprnavSyncTarget.worktreePath,
+        threadId: hyprnavSyncTarget.threadId,
+        hyprnav: serverThreadProject.hyprnav,
+        preferredEditor,
+        clearBindings: [],
+        corkdiffConnection,
+        lock: true,
+      });
+    })()
       .then((result) => {
         if (cancelled || result.status === "ok") {
           return;
@@ -319,8 +349,10 @@ function ChatThreadRouteView() {
     };
   }, [
     availableEditors,
-    hyprnavLockTarget,
+    hyprnavSyncTarget,
     hyprnavSyncRequestKey,
+    hyprnavSettingsKey,
+    needsCorkdiffConnection,
     needsPreferredEditor,
     serverThreadProject,
   ]);

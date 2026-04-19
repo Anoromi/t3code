@@ -131,8 +131,8 @@ describe("decider project scripts", () => {
 
     const hyprnav = {
       bindings: [
-        { id: "terminal", slot: 3, action: "worktree-terminal" },
-        { id: "custom", slot: 4, action: "shell-command", command: "tmux" },
+        { id: "terminal", slot: 3, scope: "worktree", action: "worktree-terminal" },
+        { id: "custom", slot: 4, scope: "worktree", action: "shell-command", command: "tmux" },
       ],
     } as const;
 
@@ -191,8 +191,8 @@ describe("decider project scripts", () => {
             projectId: asProjectId("project-hyprnav-duplicate"),
             hyprnav: {
               bindings: [
-                { id: "terminal", slot: 1, action: "worktree-terminal" },
-                { id: "editor", slot: 1, action: "open-favorite-editor" },
+                { id: "terminal", slot: 1, scope: "worktree", action: "worktree-terminal" },
+                { id: "editor", slot: 1, scope: "worktree", action: "open-favorite-editor" },
               ],
             },
           },

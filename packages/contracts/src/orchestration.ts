@@ -153,14 +153,20 @@ export const ProjectHyprnavAction = Schema.Literals([
 ]);
 export type ProjectHyprnavAction = typeof ProjectHyprnavAction.Type;
 
+export const ProjectHyprnavScope = Schema.Literals(["project", "worktree", "thread"]);
+export type ProjectHyprnavScope = typeof ProjectHyprnavScope.Type;
+
 export const PROJECT_HYPRNAV_WORKTREE_TERMINAL_ID = "worktree-terminal";
 export const PROJECT_HYPRNAV_OPEN_FAVORITE_EDITOR_ID = "open-favorite-editor";
+export const PROJECT_HYPRNAV_CORKDIFF_ID = "corkdiff-viewer";
+export const PROJECT_HYPRNAV_CORKDIFF_COMMAND_TEMPLATE = "{corkdiffLaunchCommand}";
 
 const ProjectHyprnavBuiltinAction = Schema.Literals(["worktree-terminal", "open-favorite-editor"]);
 
 export const ProjectHyprnavBuiltinBinding = Schema.Struct({
   id: TrimmedNonEmptyString,
   slot: PositiveInt,
+  scope: ProjectHyprnavScope,
   action: ProjectHyprnavBuiltinAction,
 });
 export type ProjectHyprnavBuiltinBinding = typeof ProjectHyprnavBuiltinBinding.Type;
@@ -168,10 +174,38 @@ export type ProjectHyprnavBuiltinBinding = typeof ProjectHyprnavBuiltinBinding.T
 export const ProjectHyprnavShellCommandBinding = Schema.Struct({
   id: TrimmedNonEmptyString,
   slot: PositiveInt,
+  scope: ProjectHyprnavScope,
   action: Schema.Literal("shell-command"),
   command: TrimmedNonEmptyString,
 });
 export type ProjectHyprnavShellCommandBinding = typeof ProjectHyprnavShellCommandBinding.Type;
+
+const ProjectHyprnavBuiltinBindingInput = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  slot: PositiveInt,
+  scope: Schema.optional(ProjectHyprnavScope).pipe(
+    Schema.withDecodingDefault(Effect.succeed("worktree")),
+  ),
+  action: ProjectHyprnavBuiltinAction,
+});
+type ProjectHyprnavBuiltinBindingInput = typeof ProjectHyprnavBuiltinBindingInput.Type;
+
+const ProjectHyprnavShellCommandBindingInput = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  slot: PositiveInt,
+  scope: Schema.optional(ProjectHyprnavScope).pipe(
+    Schema.withDecodingDefault(Effect.succeed("worktree")),
+  ),
+  action: Schema.Literal("shell-command"),
+  command: TrimmedNonEmptyString,
+});
+type ProjectHyprnavShellCommandBindingInput = typeof ProjectHyprnavShellCommandBindingInput.Type;
+
+const ProjectHyprnavBindingInput = Schema.Union([
+  ProjectHyprnavBuiltinBindingInput,
+  ProjectHyprnavShellCommandBindingInput,
+]);
+type ProjectHyprnavBindingInput = typeof ProjectHyprnavBindingInput.Type;
 
 export const ProjectHyprnavBinding = Schema.Union([
   ProjectHyprnavBuiltinBinding,
@@ -189,12 +223,21 @@ export const DEFAULT_PROJECT_HYPRNAV_SETTINGS = {
     {
       id: PROJECT_HYPRNAV_WORKTREE_TERMINAL_ID,
       slot: 1,
+      scope: "worktree",
       action: "worktree-terminal",
     },
     {
       id: PROJECT_HYPRNAV_OPEN_FAVORITE_EDITOR_ID,
       slot: 2,
+      scope: "worktree",
       action: "open-favorite-editor",
+    },
+    {
+      id: PROJECT_HYPRNAV_CORKDIFF_ID,
+      slot: 8,
+      scope: "thread",
+      action: "shell-command",
+      command: PROJECT_HYPRNAV_CORKDIFF_COMMAND_TEMPLATE,
     },
   ],
 } as const satisfies typeof ProjectHyprnavSettingsCanonical.Type;
@@ -240,6 +283,7 @@ function legacyHyprnavBindingToCanonical(input: {
       {
         id: `${input.id}-command`,
         slot: input.binding.slot,
+        scope: "worktree",
         action: "shell-command",
         command: input.binding.command,
       },
@@ -250,38 +294,76 @@ function legacyHyprnavBindingToCanonical(input: {
     {
       id: input.id,
       slot: input.binding.slot,
+      scope: "worktree",
       action: input.action,
     },
   ];
 }
 
+function legacyCorkdiffBindingToCanonical(
+  binding: LegacyProjectHyprnavActionBinding,
+): ProjectHyprnavBinding[] {
+  if (binding.slot === null) {
+    return [];
+  }
+
+  return [
+    {
+      id: PROJECT_HYPRNAV_CORKDIFF_ID,
+      slot: binding.slot,
+      scope: "thread",
+      action: "shell-command",
+      command: binding.command ?? PROJECT_HYPRNAV_CORKDIFF_COMMAND_TEMPLATE,
+    },
+  ];
+}
+
 function normalizeProjectHyprnavSettings(
-  input: ProjectHyprnavSettingsCanonical | LegacyProjectHyprnavSettings,
+  input:
+    | {
+        readonly bindings: readonly ProjectHyprnavBindingInput[];
+      }
+    | LegacyProjectHyprnavSettings,
 ): ProjectHyprnavSettingsCanonical {
   if ("bindings" in input) {
     return {
-      bindings: input.bindings.map((binding) => ({ ...binding })),
+      bindings: input.bindings.map((binding) => ({
+        ...binding,
+        scope: binding.scope ?? "worktree",
+      })),
     };
   }
 
+  const legacyBindings = [
+    ...legacyHyprnavBindingToCanonical({
+      id: PROJECT_HYPRNAV_WORKTREE_TERMINAL_ID,
+      action: "worktree-terminal",
+      binding: input.terminalWorktree,
+    }),
+    ...legacyHyprnavBindingToCanonical({
+      id: PROJECT_HYPRNAV_OPEN_FAVORITE_EDITOR_ID,
+      action: "open-favorite-editor",
+      binding: input.openFavorite,
+    }),
+    ...legacyCorkdiffBindingToCanonical(input.corkdiff),
+  ];
+
   return {
-    bindings: [
-      ...legacyHyprnavBindingToCanonical({
-        id: PROJECT_HYPRNAV_WORKTREE_TERMINAL_ID,
-        action: "worktree-terminal",
-        binding: input.terminalWorktree,
-      }),
-      ...legacyHyprnavBindingToCanonical({
-        id: PROJECT_HYPRNAV_OPEN_FAVORITE_EDITOR_ID,
-        action: "open-favorite-editor",
-        binding: input.openFavorite,
-      }),
-    ],
+    bindings: legacyBindings.some((binding) => binding.id === PROJECT_HYPRNAV_CORKDIFF_ID)
+      ? legacyBindings
+      : [
+          ...legacyBindings,
+          ...DEFAULT_PROJECT_HYPRNAV_SETTINGS.bindings.filter(
+            (binding) => binding.id === PROJECT_HYPRNAV_CORKDIFF_ID,
+          ),
+        ],
   };
 }
 
 const ProjectHyprnavSettingsInput = Schema.Union([
-  ProjectHyprnavSettingsCanonical,
+  Schema.Struct({
+    bindings: Schema.Array(ProjectHyprnavBindingInput),
+  }),
   LegacyProjectHyprnavSettings,
 ]).pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROJECT_HYPRNAV_SETTINGS)));
 type ProjectHyprnavSettingsInput = typeof ProjectHyprnavSettingsInput.Type;
@@ -304,15 +386,16 @@ export function listProjectHyprnavSlots(settings: ProjectHyprnavSettings): Reado
 export function findProjectHyprnavDuplicateSlots(
   settings: ProjectHyprnavSettings,
 ): ReadonlyArray<number> {
-  const seen = new Set<number>();
+  const seen = new Set<string>();
   const duplicates = new Set<number>();
 
-  for (const slot of listProjectHyprnavSlots(settings)) {
-    if (seen.has(slot)) {
-      duplicates.add(slot);
+  for (const binding of settings.bindings) {
+    const key = `${binding.scope}:${String(binding.slot)}`;
+    if (seen.has(key)) {
+      duplicates.add(binding.slot);
       continue;
     }
-    seen.add(slot);
+    seen.add(key);
   }
 
   return [...duplicates].toSorted((left, right) => left - right);

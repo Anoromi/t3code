@@ -32,6 +32,18 @@ export const SidebarProjectGroupingMode = Schema.Literals([
 export type SidebarProjectGroupingMode = typeof SidebarProjectGroupingMode.Type;
 export const DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE: SidebarProjectGroupingMode = "repository";
 
+export const GroupedProjectHyprnavMode = Schema.Literals(["same", "separate"]);
+export type GroupedProjectHyprnavMode = typeof GroupedProjectHyprnavMode.Type;
+export const DEFAULT_GROUPED_PROJECT_HYPRNAV_MODE: GroupedProjectHyprnavMode = "same";
+
+export const GroupedProjectHyprnavState = Schema.Struct({
+  mode: GroupedProjectHyprnavMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_GROUPED_PROJECT_HYPRNAV_MODE)),
+  ),
+  defaultProjectKey: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type GroupedProjectHyprnavState = typeof GroupedProjectHyprnavState.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -46,6 +58,10 @@ export const ClientSettingsSchema = Schema.Struct({
   sidebarProjectGroupingOverrides: Schema.Record(
     TrimmedNonEmptyString,
     SidebarProjectGroupingMode,
+  ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  groupedProjectHyprnavStateByLogicalProjectKey: Schema.Record(
+    TrimmedNonEmptyString,
+    GroupedProjectHyprnavState,
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   sidebarProjectSortOrder: SidebarProjectSortOrder.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_SORT_ORDER)),

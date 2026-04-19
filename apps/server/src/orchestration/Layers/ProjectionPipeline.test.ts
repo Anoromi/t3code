@@ -2572,8 +2572,8 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         },
         hyprnav: {
           bindings: [
-            { id: "terminal", slot: 3, action: "worktree-terminal" },
-            { id: "custom", slot: 4, action: "shell-command", command: "tmux" },
+            { id: "terminal", slot: 3, scope: "worktree", action: "worktree-terminal" },
+            { id: "custom", slot: 4, scope: "worktree", action: "shell-command", command: "tmux" },
           ],
         },
       });
@@ -2596,7 +2596,7 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
             '[{"id":"script-1","name":"Build","command":"bun run build","icon":"build","runOnWorktreeCreate":false}]',
           defaultModelSelection: '{"provider":"codex","model":"gpt-5"}',
           hyprnavJson:
-            '{"bindings":[{"id":"terminal","slot":3,"action":"worktree-terminal"},{"id":"custom","slot":4,"action":"shell-command","command":"tmux"}]}',
+            '{"bindings":[{"id":"terminal","slot":3,"scope":"worktree","action":"worktree-terminal"},{"id":"custom","slot":4,"scope":"worktree","action":"shell-command","command":"tmux"}]}',
         },
       ]);
     }),

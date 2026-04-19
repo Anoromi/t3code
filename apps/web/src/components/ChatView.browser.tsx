@@ -1519,6 +1519,25 @@ function dispatchNavigationCommandMenuShortcut(): void {
   );
 }
 
+function configureNavigationCommandMenuShortcut(nextFixture: TestFixture): void {
+  nextFixture.serverConfig = {
+    ...nextFixture.serverConfig,
+    keybindings: [
+      {
+        command: "navigation.commandMenu",
+        shortcut: {
+          key: "k",
+          metaKey: false,
+          ctrlKey: false,
+          shiftKey: false,
+          altKey: false,
+          modKey: true,
+        },
+      },
+    ],
+  };
+}
+
 function dispatchKey(target: EventTarget, key: string): void {
   target.dispatchEvent(
     new KeyboardEvent("keydown", {
@@ -1526,6 +1545,19 @@ function dispatchKey(target: EventTarget, key: string): void {
       bubbles: true,
       cancelable: true,
     }),
+  );
+}
+
+async function fillNavigationCommandMenuInput(
+  input: HTMLInputElement,
+  value: string,
+): Promise<void> {
+  await page.getByPlaceholder("Search threads...").fill(value);
+  await vi.waitFor(
+    () => {
+      expect(input.value).toBe(value);
+    },
+    { timeout: 8_000, interval: 16 },
   );
 }
 
@@ -1615,6 +1647,45 @@ async function waitForHighlightedCommandItem(expectedText: string): Promise<HTML
     }
     return highlighted;
   }, `Unable to find highlighted command item containing "${expectedText}".`);
+}
+
+function getCommandItems(): HTMLElement[] {
+  return Array.from(document.querySelectorAll<HTMLElement>('[data-slot="command-item"]'));
+}
+
+function getHighlightedCommandItem(): HTMLElement | null {
+  return document.querySelector<HTMLElement>('[data-slot="command-item"][data-highlighted]');
+}
+
+async function waitForCommandItems(count: number): Promise<HTMLElement[]> {
+  let items: HTMLElement[] = [];
+  await vi.waitFor(
+    () => {
+      items = getCommandItems();
+      expect(
+        items.length,
+        `Unable to find at least ${count} command items.`,
+      ).toBeGreaterThanOrEqual(count);
+    },
+    { timeout: 8_000, interval: 16 },
+  );
+  return items;
+}
+
+async function waitForHighlightedCommandItemAtIndex(index: number): Promise<HTMLElement> {
+  return waitForElement(() => {
+    const items = getCommandItems();
+    const highlighted = getHighlightedCommandItem();
+    return highlighted && items[index] === highlighted ? highlighted : null;
+  }, `Unable to find highlighted command item at index ${index}.`);
+}
+
+function threadPathForCommandItemText(text: string | null | undefined): string {
+  const value = text ?? "";
+  if (value.includes(NEWEST_THREAD_TITLE)) return `/${THREAD_ID}`;
+  if (value.includes(MIDDLE_THREAD_TITLE)) return `/${MIDDLE_THREAD_ID}`;
+  if (value.includes(OLDER_THREAD_TITLE)) return `/${OLDER_THREAD_ID}`;
+  throw new Error(`Unable to resolve command item thread from text: ${value}`);
 }
 
 async function moveCommandHighlightTo(
@@ -5635,24 +5706,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
       snapshot: createSnapshotWithRecentThreads(),
-      configureFixture: (nextFixture) => {
-        nextFixture.serverConfig = {
-          ...nextFixture.serverConfig,
-          keybindings: [
-            {
-              command: "navigation.commandMenu",
-              shortcut: {
-                key: "k",
-                metaKey: false,
-                ctrlKey: false,
-                shiftKey: false,
-                altKey: false,
-                modKey: true,
-              },
-            },
-          ],
-        };
-      },
+      configureFixture: configureNavigationCommandMenuShortcut,
     });
 
     try {
@@ -5682,6 +5736,84 @@ describe("ChatView timeline estimator parity (full app)", () => {
         mounted.router,
         (path) => path === `/${OLDER_THREAD_ID}`,
         "Click should open the clicked thread even after hover stops changing selection.",
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("moves navigation command menu highlight once per arrow key after search", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithRecentThreads(),
+      configureFixture: configureNavigationCommandMenuShortcut,
+    });
+
+    try {
+      await waitForServerConfigToApply();
+
+      const menuInput = await openNavigationCommandMenu();
+      await fillNavigationCommandMenuInput(menuInput, "browser thread");
+      await waitForCommandItems(3);
+      await waitForHighlightedCommandItemAtIndex(0);
+
+      dispatchKey(menuInput, "ArrowDown");
+      await waitForHighlightedCommandItemAtIndex(1);
+
+      dispatchKey(menuInput, "ArrowDown");
+      await waitForHighlightedCommandItemAtIndex(2);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not reset navigation command menu highlight after immediate search navigation", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithRecentThreads(),
+      configureFixture: configureNavigationCommandMenuShortcut,
+    });
+
+    try {
+      await waitForServerConfigToApply();
+
+      const menuInput = await openNavigationCommandMenu();
+      await fillNavigationCommandMenuInput(menuInput, "browser thread");
+      await waitForCommandItems(3);
+
+      dispatchKey(menuInput, "ArrowDown");
+      await waitForLayout();
+      await waitForHighlightedCommandItemAtIndex(1);
+      await waitForLayout();
+      await waitForHighlightedCommandItemAtIndex(1);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens the searched navigation command menu item selected by keyboard", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithRecentThreads(),
+      configureFixture: configureNavigationCommandMenuShortcut,
+    });
+
+    try {
+      await waitForServerConfigToApply();
+
+      const menuInput = await openNavigationCommandMenu();
+      await fillNavigationCommandMenuInput(menuInput, "browser thread");
+      await waitForCommandItems(3);
+
+      dispatchKey(menuInput, "ArrowDown");
+      const highlightedItem = await waitForHighlightedCommandItemAtIndex(1);
+      const selectedThreadPath = threadPathForCommandItemText(highlightedItem.textContent);
+      dispatchKey(menuInput, "Enter");
+
+      await waitForURL(
+        mounted.router,
+        (path) => path.endsWith(selectedThreadPath),
+        "Enter should open the searched keyboard-selected thread.",
       );
     } finally {
       await mounted.cleanup();

@@ -188,24 +188,24 @@ it.effect("decodes project.meta-updated payloads carrying Hyprnav settings", () 
       projectId: "project-1",
       hyprnav: {
         bindings: [
-          { id: "terminal", slot: 3, action: "worktree-terminal" },
-          { id: "editor", slot: 5, action: "open-favorite-editor" },
-          { id: "custom", slot: 6, action: "shell-command", command: "tmux" },
+          { id: "terminal", slot: 3, scope: "project", action: "worktree-terminal" },
+          { id: "editor", slot: 5, scope: "worktree", action: "open-favorite-editor" },
+          { id: "custom", slot: 6, scope: "thread", action: "shell-command", command: "tmux" },
         ],
       },
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     assert.deepStrictEqual(parsed.hyprnav, {
       bindings: [
-        { id: "terminal", slot: 3, action: "worktree-terminal" },
-        { id: "editor", slot: 5, action: "open-favorite-editor" },
-        { id: "custom", slot: 6, action: "shell-command", command: "tmux" },
+        { id: "terminal", slot: 3, scope: "project", action: "worktree-terminal" },
+        { id: "editor", slot: 5, scope: "worktree", action: "open-favorite-editor" },
+        { id: "custom", slot: 6, scope: "thread", action: "shell-command", command: "tmux" },
       ],
     });
   }),
 );
 
-it.effect("decodes legacy project Hyprnav settings and drops Corkdiff", () =>
+it.effect("decodes legacy project Hyprnav settings and upgrades scope and Corkdiff", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeProjectHyprnavSettings({
       terminalWorktree: { slot: 3, command: null },
@@ -214,27 +214,62 @@ it.effect("decodes legacy project Hyprnav settings and drops Corkdiff", () =>
     });
     assert.deepStrictEqual(parsed, {
       bindings: [
-        { id: "worktree-terminal", slot: 3, action: "worktree-terminal" },
+        { id: "worktree-terminal", slot: 3, scope: "worktree", action: "worktree-terminal" },
         {
           id: "open-favorite-editor-command",
           slot: 2,
+          scope: "worktree",
           action: "shell-command",
           command: "cursor .",
+        },
+        {
+          id: "corkdiff-viewer",
+          slot: 4,
+          scope: "thread",
+          action: "shell-command",
+          command: "ignored",
         },
       ],
     });
   }),
 );
 
-it("detects duplicate project Hyprnav slots", () => {
+it.effect("defaults missing binding scope to worktree", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectHyprnavSettings({
+      bindings: [{ id: "custom", slot: 7, action: "shell-command", command: "tmux" }],
+    });
+
+    assert.deepStrictEqual(parsed, {
+      bindings: [
+        { id: "custom", slot: 7, scope: "worktree", action: "shell-command", command: "tmux" },
+      ],
+    });
+  }),
+);
+
+it("detects duplicate project Hyprnav slots within the same scope", () => {
   assert.deepStrictEqual(
     findProjectHyprnavDuplicateSlots({
       bindings: [
-        { id: "terminal", slot: 1, action: "worktree-terminal" },
-        { id: "editor", slot: 1, action: "open-favorite-editor" },
+        { id: "terminal", slot: 1, scope: "worktree", action: "worktree-terminal" },
+        { id: "editor", slot: 1, scope: "worktree", action: "open-favorite-editor" },
       ],
     }),
     [1],
+  );
+});
+
+it("allows the same slot number across different Hyprnav scopes", () => {
+  assert.deepStrictEqual(
+    findProjectHyprnavDuplicateSlots({
+      bindings: [
+        { id: "terminal", slot: 1, scope: "project", action: "worktree-terminal" },
+        { id: "editor", slot: 1, scope: "worktree", action: "open-favorite-editor" },
+        { id: "custom", slot: 1, scope: "thread", action: "shell-command", command: "tmux" },
+      ],
+    }),
+    [],
   );
 });
 

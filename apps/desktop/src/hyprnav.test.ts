@@ -4,9 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   buildEditorCommand,
+  buildHyprnavEnvironmentIds,
   buildWorktreeTerminalCommand,
   createHyprnavEnvironmentSync,
-  normalizeClearSlots,
+  expandHyprnavCommandTemplate,
+  normalizeClearBindings,
 } from "./hyprnav.js";
 
 function spawnSyncResult(
@@ -29,9 +31,35 @@ function getSpawnSyncArgs(call: readonly unknown[]): readonly string[] | null {
 }
 
 describe("hyprnav helpers", () => {
-  it("deduplicates and filters clearSlots", () => {
-    expect(normalizeClearSlots([4, 0, 2, 4, -1, 2])).toEqual([2, 4]);
-    expect(normalizeClearSlots(undefined)).toEqual([]);
+  it("deduplicates and filters clear bindings", () => {
+    expect(
+      normalizeClearBindings([
+        { scope: "worktree", slot: 4 },
+        { scope: "worktree", slot: 4 },
+        { scope: "project", slot: 2 },
+        { scope: "thread", slot: -1 },
+      ] as never),
+    ).toEqual([
+      { scope: "project", slot: 2 },
+      { scope: "worktree", slot: 4 },
+    ]);
+    expect(normalizeClearBindings(undefined)).toEqual([]);
+  });
+
+  it("builds nested Hyprnav environment ids", () => {
+    expect(
+      buildHyprnavEnvironmentIds({
+        projectRoot: "/repo",
+        worktreePath: "/repo/worktrees/feature-a",
+        threadId: "thread-1",
+      }),
+    ).toEqual({
+      projectEnvId: "p.816fc349d3fa",
+      worktreeEnvId: "p.816fc349d3fa.w.7d4d8df2de1b",
+      threadEnvId: "p.816fc349d3fa.w.7d4d8df2de1b.t.thread-1",
+      lockEnvId: "p.816fc349d3fa.w.7d4d8df2de1b.t.thread-1",
+      targetPath: "/repo/worktrees/feature-a",
+    });
   });
 
   it("builds hidden commands for special actions", () => {
@@ -49,64 +77,42 @@ describe("hyprnav helpers", () => {
       }),
     ).toBe("'cursor' '/repo/worktrees/feature-a'");
   });
+
+  it("expands Hyprnav command templates", () => {
+    expect(
+      expandHyprnavCommandTemplate("printf %s {threadId} {worktreePath}", {
+        projectRoot: "/repo",
+        targetPath: "/repo/worktrees/feature-a",
+        threadId: "thread-1",
+        corkdiffConnection: {
+          serverUrl: "ws://127.0.0.1:1234/ws",
+          token: null,
+        },
+      }),
+    ).toEqual({
+      ok: true,
+      command: "printf %s 'thread-1' '/repo/worktrees/feature-a'",
+    });
+  });
 });
 
 describe("HyprnavEnvironmentSync", () => {
-  it("locks the canonical environment without syncing slots", async () => {
+  it("locks the explicit environment id without syncing slots", async () => {
     const spawnSync = vi.fn(() => spawnSyncResult());
     const sync = createHyprnavEnvironmentSync({
       spawnSync: spawnSync as unknown as typeof ChildProcess.spawnSync,
-      resolvePath: (value: string) => `/resolved${value}`,
-      realpathSync: (value: string) => `/real${value}`,
     });
 
     await expect(
-      sync.lockEnvironment({ environmentPath: "/repo/worktrees/feature-a" }),
+      sync.lockEnvironment({ envId: "p.project.w.worktree.t.thread-1" }),
     ).resolves.toEqual({ status: "ok", message: null });
 
     expect(spawnSync.mock.calls).toEqual([
-      ["hyprnav", ["lock", "/real/resolved/repo/worktrees/feature-a"], expect.any(Object)],
+      ["hyprnav", ["lock", "p.project.w.worktree.t.thread-1"], expect.any(Object)],
     ]);
   });
 
-  it("returns unavailable when lock-only hyprnav is missing", async () => {
-    const spawnSync = vi.fn(() =>
-      spawnSyncResult({ error: Object.assign(new Error("missing"), { code: "ENOENT" }) }),
-    );
-    const sync = createHyprnavEnvironmentSync({
-      spawnSync: spawnSync as unknown as typeof ChildProcess.spawnSync,
-      resolvePath: (value: string) => value,
-      realpathSync: (value: string) => value,
-    });
-
-    await expect(sync.lockEnvironment({ environmentPath: "/repo" })).resolves.toEqual({
-      status: "unavailable",
-      message: "hyprnav is not installed or not available in PATH.",
-    });
-  });
-
-  it("coalesces rapid lock-only requests for the same environment", async () => {
-    const spawnSync = vi.fn(() => spawnSyncResult());
-    const sync = createHyprnavEnvironmentSync({
-      spawnSync: spawnSync as unknown as typeof ChildProcess.spawnSync,
-      resolvePath: (value: string) => value,
-      realpathSync: (value: string) => value,
-    });
-
-    await expect(
-      Promise.all([
-        sync.lockEnvironment({ environmentPath: "/repo" }),
-        sync.lockEnvironment({ environmentPath: "/repo" }),
-      ]),
-    ).resolves.toEqual([
-      { status: "ok", message: null },
-      { status: "ok", message: null },
-    ]);
-
-    expect(spawnSync.mock.calls).toEqual([["hyprnav", ["lock", "/repo"], expect.any(Object)]]);
-  });
-
-  it("ensures, clears, assigns, stores typed action commands, and locks the canonical environment", async () => {
+  it("ensures nested environments, clears scoped slots, assigns commands, and locks the thread env", async () => {
     const spawnSync = vi.fn(() => spawnSyncResult());
     const sync = createHyprnavEnvironmentSync({
       spawnSync: spawnSync as unknown as typeof ChildProcess.spawnSync,
@@ -116,17 +122,31 @@ describe("HyprnavEnvironmentSync", () => {
 
     await expect(
       sync.sync({
-        environmentPath: "/repo/worktrees/feature-a",
         projectRoot: "/repo",
+        worktreePath: "/repo/worktrees/feature-a",
+        threadId: "thread-1",
         preferredEditor: "cursor",
+        corkdiffConnection: {
+          serverUrl: "ws://127.0.0.1:1234/ws?wsToken=abc",
+          token: null,
+        },
         hyprnav: {
           bindings: [
-            { id: "terminal", slot: 1, action: "worktree-terminal" },
-            { id: "editor", slot: 2, action: "open-favorite-editor" },
-            { id: "custom", slot: 5, action: "shell-command", command: "echo hi" },
+            { id: "terminal", slot: 1, scope: "worktree", action: "worktree-terminal" },
+            { id: "editor", slot: 2, scope: "project", action: "open-favorite-editor" },
+            {
+              id: "corkdiff",
+              slot: 8,
+              scope: "thread",
+              action: "shell-command",
+              command: "{corkdiffLaunchCommand}",
+            },
           ],
         },
-        clearSlots: [7],
+        clearBindings: [
+          { scope: "project", slot: 4 },
+          { scope: "thread", slot: 9 },
+        ],
         lock: true,
       }),
     ).resolves.toEqual({ status: "ok", message: null });
@@ -134,9 +154,52 @@ describe("HyprnavEnvironmentSync", () => {
     expect(spawnSync.mock.calls).toEqual([
       [
         "hyprnav",
-        ["env", "ensure", "--cwd", "/real/resolved/repo/worktrees/feature-a", "--client", "t3code"],
+        [
+          "env",
+          "ensure",
+          "--env",
+          "p.81cede1a43fc",
+          "--cwd",
+          "/real/resolved/repo",
+          "--client",
+          "t3code",
+        ],
         expect.any(Object),
       ],
+      [
+        "hyprnav",
+        [
+          "env",
+          "ensure",
+          "--env",
+          "p.81cede1a43fc.w.9430f831f299",
+          "--cwd",
+          "/real/resolved/repo/worktrees/feature-a",
+          "--client",
+          "t3code",
+        ],
+        expect.any(Object),
+      ],
+      [
+        "hyprnav",
+        [
+          "env",
+          "ensure",
+          "--env",
+          "p.81cede1a43fc.w.9430f831f299.t.thread-1",
+          "--cwd",
+          "/real/resolved/repo/worktrees/feature-a",
+          "--client",
+          "t3code",
+        ],
+        expect.any(Object),
+      ],
+      [
+        "hyprnav",
+        ["slot", "command", "clear", "--env", "p.81cede1a43fc", "--slot", "4"],
+        expect.any(Object),
+      ],
+      ["hyprnav", ["slot", "clear", "--env", "p.81cede1a43fc", "--slot", "4"], expect.any(Object)],
       [
         "hyprnav",
         [
@@ -144,15 +207,15 @@ describe("HyprnavEnvironmentSync", () => {
           "command",
           "clear",
           "--env",
-          "/real/resolved/repo/worktrees/feature-a",
+          "p.81cede1a43fc.w.9430f831f299.t.thread-1",
           "--slot",
-          "7",
+          "9",
         ],
         expect.any(Object),
       ],
       [
         "hyprnav",
-        ["slot", "clear", "--env", "/real/resolved/repo/worktrees/feature-a", "--slot", "7"],
+        ["slot", "clear", "--env", "p.81cede1a43fc.w.9430f831f299.t.thread-1", "--slot", "9"],
         expect.any(Object),
       ],
       [
@@ -160,8 +223,8 @@ describe("HyprnavEnvironmentSync", () => {
         [
           "slot",
           "assign",
-          "--cwd",
-          "/real/resolved/repo/worktrees/feature-a",
+          "--env",
+          "p.81cede1a43fc.w.9430f831f299",
           "--slot",
           "1",
           "--managed",
@@ -177,7 +240,7 @@ describe("HyprnavEnvironmentSync", () => {
           "command",
           "set",
           "--env",
-          "/real/resolved/repo/worktrees/feature-a",
+          "p.81cede1a43fc.w.9430f831f299",
           "--slot",
           "1",
           "--",
@@ -192,8 +255,8 @@ describe("HyprnavEnvironmentSync", () => {
         [
           "slot",
           "assign",
-          "--cwd",
-          "/real/resolved/repo/worktrees/feature-a",
+          "--env",
+          "p.81cede1a43fc",
           "--slot",
           "2",
           "--managed",
@@ -209,13 +272,13 @@ describe("HyprnavEnvironmentSync", () => {
           "command",
           "set",
           "--env",
-          "/real/resolved/repo/worktrees/feature-a",
+          "p.81cede1a43fc",
           "--slot",
           "2",
           "--",
           "sh",
           "-lc",
-          "'cursor' '/real/resolved/repo/worktrees/feature-a'",
+          "'cursor' '/real/resolved/repo'",
         ],
         expect.any(Object),
       ],
@@ -224,10 +287,10 @@ describe("HyprnavEnvironmentSync", () => {
         [
           "slot",
           "assign",
-          "--cwd",
-          "/real/resolved/repo/worktrees/feature-a",
+          "--env",
+          "p.81cede1a43fc.w.9430f831f299.t.thread-1",
           "--slot",
-          "5",
+          "8",
           "--managed",
           "--client",
           "t3code",
@@ -241,18 +304,72 @@ describe("HyprnavEnvironmentSync", () => {
           "command",
           "set",
           "--env",
-          "/real/resolved/repo/worktrees/feature-a",
+          "p.81cede1a43fc.w.9430f831f299.t.thread-1",
           "--slot",
-          "5",
+          "8",
           "--",
           "sh",
           "-lc",
-          "echo hi",
+          expect.any(String),
         ],
         expect.any(Object),
       ],
-      ["hyprnav", ["lock", "/real/resolved/repo/worktrees/feature-a"], expect.any(Object)],
+      ["hyprnav", ["lock", "p.81cede1a43fc.w.9430f831f299.t.thread-1"], expect.any(Object)],
     ]);
+
+    const corkdiffCommandSetCall = spawnSync.mock.calls.find((call) => {
+      const args = getSpawnSyncArgs(call);
+      return (
+        args?.[0] === "slot" &&
+        args[1] === "command" &&
+        args[2] === "set" &&
+        args.includes("p.81cede1a43fc.w.9430f831f299.t.thread-1") &&
+        args.includes("8")
+      );
+    });
+    const corkdiffCommand = getSpawnSyncArgs(corkdiffCommandSetCall ?? [])?.at(-1);
+    expect(corkdiffCommand).toContain(
+      "cd '/real/resolved/repo/worktrees/feature-a' && exec ghostty",
+    );
+    expect(corkdiffCommand).toContain("--class=dev.t3tools.t3code.corkdiff.t4b0a5fefc328");
+    expect(corkdiffCommand).toContain("CorkDiff t3code thread-1");
+    expect(corkdiffCommand).not.toContain("hyprnav spawn");
+  });
+
+  it("skips thread-scoped bindings when there is no active thread id", async () => {
+    const spawnSync = vi.fn(() => spawnSyncResult());
+    const sync = createHyprnavEnvironmentSync({
+      spawnSync: spawnSync as unknown as typeof ChildProcess.spawnSync,
+      resolvePath: (value: string) => value,
+      realpathSync: (value: string) => value,
+    });
+
+    await expect(
+      sync.sync({
+        projectRoot: "/repo",
+        worktreePath: null,
+        threadId: null,
+        hyprnav: {
+          bindings: [
+            {
+              id: "corkdiff",
+              slot: 8,
+              scope: "thread",
+              action: "shell-command",
+              command: "{corkdiffLaunchCommand}",
+            },
+          ],
+        },
+        lock: false,
+      }),
+    ).resolves.toEqual({ status: "ok", message: null });
+
+    expect(
+      spawnSync.mock.calls.every((call) => {
+        const args = getSpawnSyncArgs(call);
+        return !args?.includes("t.null");
+      }),
+    ).toBe(true);
   });
 
   it("returns unavailable when hyprnav is missing", async () => {
@@ -267,10 +384,17 @@ describe("HyprnavEnvironmentSync", () => {
 
     await expect(
       sync.sync({
-        environmentPath: "/repo",
         projectRoot: "/repo",
         hyprnav: {
-          bindings: [{ id: "custom", slot: 3, action: "shell-command", command: "echo hi" }],
+          bindings: [
+            {
+              id: "custom",
+              slot: 3,
+              scope: "project",
+              action: "shell-command",
+              command: "echo hi",
+            },
+          ],
         },
         lock: false,
       }),
@@ -290,10 +414,9 @@ describe("HyprnavEnvironmentSync", () => {
 
     await expect(
       sync.sync({
-        environmentPath: "/repo",
         projectRoot: "/repo",
         hyprnav: {
-          bindings: [{ id: "editor", slot: 2, action: "open-favorite-editor" }],
+          bindings: [{ id: "editor", slot: 2, scope: "project", action: "open-favorite-editor" }],
         },
         lock: false,
       }),
@@ -304,7 +427,7 @@ describe("HyprnavEnvironmentSync", () => {
     expect(spawnSync).not.toHaveBeenCalled();
   });
 
-  it("coalesces rapid requests for the same environment", async () => {
+  it("coalesces rapid requests for the same nested environment", async () => {
     let callCount = 0;
     const spawnSync = vi.fn(() => {
       callCount += 1;
@@ -317,21 +440,27 @@ describe("HyprnavEnvironmentSync", () => {
     });
 
     const first = sync.sync({
-      environmentPath: "/repo",
       projectRoot: "/repo",
+      worktreePath: "/repo/worktrees/feature-a",
+      threadId: "thread-1",
       hyprnav: {
-        bindings: [{ id: "first", slot: 1, action: "shell-command", command: "one" }],
+        bindings: [
+          { id: "first", slot: 1, scope: "project", action: "shell-command", command: "one" },
+        ],
       },
-      clearSlots: [7],
+      clearBindings: [{ scope: "project", slot: 7 }],
       lock: false,
     });
     const second = sync.sync({
-      environmentPath: "/repo",
       projectRoot: "/repo",
+      worktreePath: "/repo/worktrees/feature-a",
+      threadId: "thread-1",
       hyprnav: {
-        bindings: [{ id: "second", slot: 3, action: "shell-command", command: "two" }],
+        bindings: [
+          { id: "second", slot: 3, scope: "thread", action: "shell-command", command: "two" },
+        ],
       },
-      clearSlots: [8],
+      clearBindings: [{ scope: "thread", slot: 8 }],
       lock: true,
     });
 
@@ -343,19 +472,29 @@ describe("HyprnavEnvironmentSync", () => {
     expect(
       spawnSync.mock.calls.some((call) => {
         const args = getSpawnSyncArgs(call);
-        return args?.[0] === "lock" && args[1] === "/repo";
+        return args?.[0] === "lock" && args[1] === "p.816fc349d3fa.w.7d4d8df2de1b.t.thread-1";
       }),
     ).toBe(true);
     expect(
       spawnSync.mock.calls.some((call) => {
         const args = getSpawnSyncArgs(call);
-        return args?.[0] === "slot" && args[1] === "clear" && args[5] === "7";
+        return (
+          args?.[0] === "slot" &&
+          args[1] === "clear" &&
+          args.includes("p.816fc349d3fa") &&
+          args.includes("7")
+        );
       }),
     ).toBe(true);
     expect(
       spawnSync.mock.calls.some((call) => {
         const args = getSpawnSyncArgs(call);
-        return args?.[0] === "slot" && args[1] === "clear" && args[5] === "8";
+        return (
+          args?.[0] === "slot" &&
+          args[1] === "clear" &&
+          args.includes("p.816fc349d3fa.w.7d4d8df2de1b.t.thread-1") &&
+          args.includes("8")
+        );
       }),
     ).toBe(true);
   });
