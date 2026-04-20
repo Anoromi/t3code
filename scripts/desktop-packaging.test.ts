@@ -32,12 +32,23 @@ describe("desktop packaging and launch wiring", () => {
   it("keeps local desktop launch scripts explicit and user-path agnostic", () => {
     const runLocal = readRepoFile("scripts/run-local-desktop.sh");
     const hypr = readRepoFile("scripts/dev-desktop-wayland-hypr.sh");
+    const launcher = readRepoFile("scripts/local-desktop-launch.ts");
 
-    expect(runLocal).toContain("bun install --frozen-lockfile");
-    expect(runLocal).toContain("bun run --cwd apps/web build");
-    expect(runLocal).toContain("bun run build:desktop");
-    expect(runLocal).toContain("bun run --cwd apps/desktop start");
+    expect(runLocal).toContain('TERM="xterm-256color"');
+    expect(runLocal).toContain("unset IN_NIX_SHELL");
+    expect(runLocal).toContain("node scripts/local-desktop-launch.ts --repo-root");
     expect(runLocal).not.toContain("/home/");
+
+    expect(launcher).toContain(
+      '"bun", "install", "--frozen-lockfile", "--linker=hoisted", "--ignore-scripts"',
+    );
+    expect(launcher).toContain('"bun", "run", "--cwd", "apps/web", "build"');
+    expect(launcher).toContain('"bun", "run", "--cwd", "apps/server", "build"');
+    expect(launcher).toContain('"bun", "run", "--cwd", "apps/desktop", "build"');
+    expect(launcher).toContain("const desktopStartCommand = [");
+    expect(launcher).toContain('"apps/desktop"');
+    expect(launcher).toContain('"start"');
+    expect(launcher).not.toContain("/home/");
 
     expect(hypr).toContain("T3CODE_HYPR_WORKSPACE=$workspace");
     expect(hypr).toContain("bun run dev:desktop:wayland");

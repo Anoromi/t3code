@@ -17,8 +17,4 @@ fi
 
 unset IN_NIX_SHELL PS1 PS2 PS3 PS4 PROMPT PROMPT_COMMAND RPROMPT RPS1 SPROMPT
 
-bun install --frozen-lockfile --linker=hoisted --ignore-scripts
-bun run --cwd apps/web build
-bun run build:desktop
-
-exec bun run --cwd apps/desktop start -- "$@"
+exec node scripts/local-desktop-launch.ts --repo-root "$repo_root" -- "$@"
