@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 import {
+  DEFAULT_PROJECT_HYPRNAV_SETTINGS,
   EnvironmentId,
   type ClientSettings,
   type PersistedSavedEnvironmentRecord,
@@ -53,6 +54,7 @@ const clientSettings: ClientSettings = {
   confirmThreadDelete: false,
   defaultCodexFastMode: true,
   defaultCodexReasoningEffort: "high",
+  defaultProjectHyprnavSettings: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
   diffWordWrap: true,
   sidebarProjectGroupingMode: "repository_path",
   sidebarProjectGroupingOverrides: {

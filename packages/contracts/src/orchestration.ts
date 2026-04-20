@@ -149,6 +149,7 @@ export type ProjectScript = typeof ProjectScript.Type;
 export const ProjectHyprnavAction = Schema.Literals([
   "worktree-terminal",
   "open-favorite-editor",
+  "nothing",
   "shell-command",
 ]);
 export type ProjectHyprnavAction = typeof ProjectHyprnavAction.Type;
@@ -161,12 +162,43 @@ export const PROJECT_HYPRNAV_OPEN_FAVORITE_EDITOR_ID = "open-favorite-editor";
 export const PROJECT_HYPRNAV_CORKDIFF_ID = "corkdiff-viewer";
 export const PROJECT_HYPRNAV_CORKDIFF_COMMAND_TEMPLATE = "{corkdiffLaunchCommand}";
 
-const ProjectHyprnavBuiltinAction = Schema.Literals(["worktree-terminal", "open-favorite-editor"]);
+export const ProjectHyprnavManagedWorkspaceTarget = Schema.Struct({
+  mode: Schema.Literal("managed"),
+});
+export type ProjectHyprnavManagedWorkspaceTarget = typeof ProjectHyprnavManagedWorkspaceTarget.Type;
+
+export const ProjectHyprnavAbsoluteWorkspaceTarget = Schema.Struct({
+  mode: Schema.Literal("absolute"),
+  workspaceId: PositiveInt,
+});
+export type ProjectHyprnavAbsoluteWorkspaceTarget =
+  typeof ProjectHyprnavAbsoluteWorkspaceTarget.Type;
+
+export const ProjectHyprnavWorkspaceTarget = Schema.Union([
+  ProjectHyprnavManagedWorkspaceTarget,
+  ProjectHyprnavAbsoluteWorkspaceTarget,
+]);
+export type ProjectHyprnavWorkspaceTarget = typeof ProjectHyprnavWorkspaceTarget.Type;
+
+export const DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET = {
+  mode: "managed",
+} as const satisfies ProjectHyprnavWorkspaceTarget;
+
+const ProjectHyprnavWorkspaceTargetInput = Schema.optional(ProjectHyprnavWorkspaceTarget).pipe(
+  Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET)),
+);
+
+const ProjectHyprnavBuiltinAction = Schema.Literals([
+  "worktree-terminal",
+  "open-favorite-editor",
+  "nothing",
+]);
 
 export const ProjectHyprnavBuiltinBinding = Schema.Struct({
   id: TrimmedNonEmptyString,
   slot: PositiveInt,
   scope: ProjectHyprnavScope,
+  workspace: ProjectHyprnavWorkspaceTarget,
   action: ProjectHyprnavBuiltinAction,
 });
 export type ProjectHyprnavBuiltinBinding = typeof ProjectHyprnavBuiltinBinding.Type;
@@ -175,6 +207,7 @@ export const ProjectHyprnavShellCommandBinding = Schema.Struct({
   id: TrimmedNonEmptyString,
   slot: PositiveInt,
   scope: ProjectHyprnavScope,
+  workspace: ProjectHyprnavWorkspaceTarget,
   action: Schema.Literal("shell-command"),
   command: TrimmedNonEmptyString,
 });
@@ -186,6 +219,7 @@ const ProjectHyprnavBuiltinBindingInput = Schema.Struct({
   scope: Schema.optional(ProjectHyprnavScope).pipe(
     Schema.withDecodingDefault(Effect.succeed("worktree")),
   ),
+  workspace: ProjectHyprnavWorkspaceTargetInput,
   action: ProjectHyprnavBuiltinAction,
 });
 type ProjectHyprnavBuiltinBindingInput = typeof ProjectHyprnavBuiltinBindingInput.Type;
@@ -196,6 +230,7 @@ const ProjectHyprnavShellCommandBindingInput = Schema.Struct({
   scope: Schema.optional(ProjectHyprnavScope).pipe(
     Schema.withDecodingDefault(Effect.succeed("worktree")),
   ),
+  workspace: ProjectHyprnavWorkspaceTargetInput,
   action: Schema.Literal("shell-command"),
   command: TrimmedNonEmptyString,
 });
@@ -224,18 +259,21 @@ export const DEFAULT_PROJECT_HYPRNAV_SETTINGS = {
       id: PROJECT_HYPRNAV_WORKTREE_TERMINAL_ID,
       slot: 1,
       scope: "worktree",
+      workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
       action: "worktree-terminal",
     },
     {
       id: PROJECT_HYPRNAV_OPEN_FAVORITE_EDITOR_ID,
       slot: 2,
       scope: "worktree",
+      workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
       action: "open-favorite-editor",
     },
     {
       id: PROJECT_HYPRNAV_CORKDIFF_ID,
       slot: 8,
       scope: "thread",
+      workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
       action: "shell-command",
       command: PROJECT_HYPRNAV_CORKDIFF_COMMAND_TEMPLATE,
     },
@@ -284,6 +322,7 @@ function legacyHyprnavBindingToCanonical(input: {
         id: `${input.id}-command`,
         slot: input.binding.slot,
         scope: "worktree",
+        workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
         action: "shell-command",
         command: input.binding.command,
       },
@@ -295,6 +334,7 @@ function legacyHyprnavBindingToCanonical(input: {
       id: input.id,
       slot: input.binding.slot,
       scope: "worktree",
+      workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
       action: input.action,
     },
   ];
@@ -312,6 +352,7 @@ function legacyCorkdiffBindingToCanonical(
       id: PROJECT_HYPRNAV_CORKDIFF_ID,
       slot: binding.slot,
       scope: "thread",
+      workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
       action: "shell-command",
       command: binding.command ?? PROJECT_HYPRNAV_CORKDIFF_COMMAND_TEMPLATE,
     },
@@ -330,6 +371,7 @@ function normalizeProjectHyprnavSettings(
       bindings: input.bindings.map((binding) => ({
         ...binding,
         scope: binding.scope ?? "worktree",
+        workspace: binding.workspace ?? DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
       })),
     };
   }
@@ -378,6 +420,9 @@ export const ProjectHyprnavSettings = ProjectHyprnavSettingsInput.pipe(
   ),
 );
 export type ProjectHyprnavSettings = typeof ProjectHyprnavSettings.Type;
+
+export const ProjectHyprnavOverride = Schema.NullOr(ProjectHyprnavSettings);
+export type ProjectHyprnavOverride = typeof ProjectHyprnavOverride.Type;
 
 export function listProjectHyprnavSlots(settings: ProjectHyprnavSettings): ReadonlyArray<number> {
   return settings.bindings.map((binding) => binding.slot);
@@ -430,9 +475,7 @@ export const OrchestrationProject = Schema.Struct({
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
-  hyprnav: ProjectHyprnavSettings.pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROJECT_HYPRNAV_SETTINGS)),
-  ),
+  hyprnav: ProjectHyprnavOverride.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   worktreeGroupTitles: Schema.optional(Schema.Array(OrchestrationWorktreeGroupTitle)).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
@@ -618,9 +661,7 @@ export const OrchestrationProjectShell = Schema.Struct({
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.NullOr(ModelSelection),
   scripts: Schema.Array(ProjectScript),
-  hyprnav: ProjectHyprnavSettings.pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROJECT_HYPRNAV_SETTINGS)),
-  ),
+  hyprnav: ProjectHyprnavOverride.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -723,7 +764,7 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
-  hyprnav: Schema.optional(ProjectHyprnavSettings),
+  hyprnav: Schema.optional(ProjectHyprnavOverride),
   worktreeGroupTitles: Schema.optional(Schema.Array(OrchestrationWorktreeGroupTitle)),
 });
 
@@ -1087,7 +1128,7 @@ export const ProjectCreatedPayload = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   scripts: Schema.Array(ProjectScript),
-  hyprnav: ProjectHyprnavSettings.pipe(
+  hyprnav: ProjectHyprnavOverride.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROJECT_HYPRNAV_SETTINGS)),
   ),
   worktreeGroupTitles: Schema.optional(Schema.Array(OrchestrationWorktreeGroupTitle)).pipe(
@@ -1104,7 +1145,7 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
-  hyprnav: Schema.optional(ProjectHyprnavSettings),
+  hyprnav: Schema.optional(ProjectHyprnavOverride),
   worktreeGroupTitles: Schema.optional(Schema.Array(OrchestrationWorktreeGroupTitle)),
   updatedAt: IsoDateTime,
 });

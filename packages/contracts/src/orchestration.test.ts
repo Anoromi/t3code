@@ -5,12 +5,14 @@ import { Effect, Schema } from "effect";
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_PROJECT_HYPRNAV_SETTINGS,
+  DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
   DEFAULT_RUNTIME_MODE,
   findProjectHyprnavDuplicateSlots,
   OrchestrationCommand,
   OrchestrationEvent,
   OrchestrationGetTurnDiffInput,
   OrchestrationLatestTurn,
+  OrchestrationProject,
   ProjectCreatedPayload,
   ProjectHyprnavSettings,
   ProjectMetaUpdatedPayload,
@@ -39,6 +41,7 @@ const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
 );
 const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLatestTurn);
 const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
+const decodeOrchestrationProject = Schema.decodeUnknownEffect(OrchestrationProject);
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
 const decodeOrchestrationThread = Schema.decodeUnknownEffect(OrchestrationThread);
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
@@ -168,6 +171,74 @@ it.effect("decodes project Hyprnav defaults", () =>
   }),
 );
 
+it.effect("defaults missing binding workspace targets to managed", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectHyprnavSettings({
+      bindings: [{ id: "custom", slot: 7, action: "shell-command", command: "tmux" }],
+    });
+
+    assert.deepStrictEqual(parsed.bindings[0]?.workspace, DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET);
+  }),
+);
+
+it.effect("decodes absolute Hyprnav workspace targets", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectHyprnavSettings({
+      bindings: [
+        {
+          id: "custom",
+          slot: 7,
+          scope: "project",
+          workspace: { mode: "absolute", workspaceId: 9 },
+          action: "shell-command",
+          command: "tmux",
+        },
+      ],
+    });
+
+    assert.deepStrictEqual(parsed, {
+      bindings: [
+        {
+          id: "custom",
+          slot: 7,
+          scope: "project",
+          workspace: { mode: "absolute", workspaceId: 9 },
+          action: "shell-command",
+          command: "tmux",
+        },
+      ],
+    });
+  }),
+);
+
+it.effect("decodes Hyprnav bindings with nothing actions and no command", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeProjectHyprnavSettings({
+      bindings: [
+        {
+          id: "placeholder",
+          slot: 6,
+          scope: "thread",
+          workspace: { mode: "absolute", workspaceId: 4 },
+          action: "nothing",
+        },
+      ],
+    });
+
+    assert.deepStrictEqual(parsed, {
+      bindings: [
+        {
+          id: "placeholder",
+          slot: 6,
+          scope: "thread",
+          workspace: { mode: "absolute", workspaceId: 4 },
+          action: "nothing",
+        },
+      ],
+    });
+  }),
+);
+
 it.effect("decodes legacy project.created payloads with default Hyprnav settings", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeProjectCreatedPayload({
@@ -182,24 +253,82 @@ it.effect("decodes legacy project.created payloads with default Hyprnav settings
   }),
 );
 
+it.effect("decodes nullable project Hyprnav overrides on project snapshots", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationProject({
+      id: "project-1",
+      title: "Project Title",
+      workspaceRoot: "/tmp/workspace",
+      repositoryIdentity: null,
+      defaultModelSelection: null,
+      scripts: [],
+      hyprnav: null,
+      worktreeGroupTitles: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      deletedAt: null,
+    });
+
+    assert.strictEqual(parsed.hyprnav, null);
+  }),
+);
+
 it.effect("decodes project.meta-updated payloads carrying Hyprnav settings", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeProjectMetaUpdatedPayload({
       projectId: "project-1",
       hyprnav: {
         bindings: [
-          { id: "terminal", slot: 3, scope: "project", action: "worktree-terminal" },
-          { id: "editor", slot: 5, scope: "worktree", action: "open-favorite-editor" },
-          { id: "custom", slot: 6, scope: "thread", action: "shell-command", command: "tmux" },
+          {
+            id: "terminal",
+            slot: 3,
+            scope: "project",
+            workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+            action: "worktree-terminal",
+          },
+          {
+            id: "editor",
+            slot: 5,
+            scope: "worktree",
+            workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+            action: "open-favorite-editor",
+          },
+          {
+            id: "custom",
+            slot: 6,
+            scope: "thread",
+            workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+            action: "shell-command",
+            command: "tmux",
+          },
         ],
       },
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     assert.deepStrictEqual(parsed.hyprnav, {
       bindings: [
-        { id: "terminal", slot: 3, scope: "project", action: "worktree-terminal" },
-        { id: "editor", slot: 5, scope: "worktree", action: "open-favorite-editor" },
-        { id: "custom", slot: 6, scope: "thread", action: "shell-command", command: "tmux" },
+        {
+          id: "terminal",
+          slot: 3,
+          scope: "project",
+          workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+          action: "worktree-terminal",
+        },
+        {
+          id: "editor",
+          slot: 5,
+          scope: "worktree",
+          workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+          action: "open-favorite-editor",
+        },
+        {
+          id: "custom",
+          slot: 6,
+          scope: "thread",
+          workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+          action: "shell-command",
+          command: "tmux",
+        },
       ],
     });
   }),
@@ -214,11 +343,18 @@ it.effect("decodes legacy project Hyprnav settings and upgrades scope and Corkdi
     });
     assert.deepStrictEqual(parsed, {
       bindings: [
-        { id: "worktree-terminal", slot: 3, scope: "worktree", action: "worktree-terminal" },
+        {
+          id: "worktree-terminal",
+          slot: 3,
+          scope: "worktree",
+          workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+          action: "worktree-terminal",
+        },
         {
           id: "open-favorite-editor-command",
           slot: 2,
           scope: "worktree",
+          workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
           action: "shell-command",
           command: "cursor .",
         },
@@ -226,6 +362,7 @@ it.effect("decodes legacy project Hyprnav settings and upgrades scope and Corkdi
           id: "corkdiff-viewer",
           slot: 4,
           scope: "thread",
+          workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
           action: "shell-command",
           command: "ignored",
         },
@@ -242,7 +379,14 @@ it.effect("defaults missing binding scope to worktree", () =>
 
     assert.deepStrictEqual(parsed, {
       bindings: [
-        { id: "custom", slot: 7, scope: "worktree", action: "shell-command", command: "tmux" },
+        {
+          id: "custom",
+          slot: 7,
+          scope: "worktree",
+          workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+          action: "shell-command",
+          command: "tmux",
+        },
       ],
     });
   }),
@@ -252,8 +396,20 @@ it("detects duplicate project Hyprnav slots within the same scope", () => {
   assert.deepStrictEqual(
     findProjectHyprnavDuplicateSlots({
       bindings: [
-        { id: "terminal", slot: 1, scope: "worktree", action: "worktree-terminal" },
-        { id: "editor", slot: 1, scope: "worktree", action: "open-favorite-editor" },
+        {
+          id: "terminal",
+          slot: 1,
+          scope: "worktree",
+          workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+          action: "worktree-terminal",
+        },
+        {
+          id: "editor",
+          slot: 1,
+          scope: "worktree",
+          workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+          action: "open-favorite-editor",
+        },
       ],
     }),
     [1],
@@ -264,9 +420,28 @@ it("allows the same slot number across different Hyprnav scopes", () => {
   assert.deepStrictEqual(
     findProjectHyprnavDuplicateSlots({
       bindings: [
-        { id: "terminal", slot: 1, scope: "project", action: "worktree-terminal" },
-        { id: "editor", slot: 1, scope: "worktree", action: "open-favorite-editor" },
-        { id: "custom", slot: 1, scope: "thread", action: "shell-command", command: "tmux" },
+        {
+          id: "terminal",
+          slot: 1,
+          scope: "project",
+          workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+          action: "worktree-terminal",
+        },
+        {
+          id: "editor",
+          slot: 1,
+          scope: "worktree",
+          workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+          action: "open-favorite-editor",
+        },
+        {
+          id: "custom",
+          slot: 1,
+          scope: "thread",
+          workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+          action: "shell-command",
+          command: "tmux",
+        },
       ],
     }),
     [],

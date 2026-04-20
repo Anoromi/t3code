@@ -9,7 +9,7 @@ import {
   OrchestrationReadModel,
   OrchestrationShellSnapshot,
   OrchestrationThread,
-  ProjectHyprnavSettings,
+  ProjectHyprnavOverride,
   OrchestrationWorktreeGroupTitle,
   ProjectScript,
   TurnId,
@@ -62,7 +62,7 @@ const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
   Struct.assign({
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
-    hyprnav: Schema.fromJsonString(ProjectHyprnavSettings),
+    hyprnav: Schema.NullOr(Schema.fromJsonString(ProjectHyprnavOverride)),
     worktreeGroupTitles: Schema.fromJsonString(Schema.Array(OrchestrationWorktreeGroupTitle)),
   }),
 );
@@ -291,7 +291,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       ? "worktree_group_titles_json"
       : "'[]'";
     const projectHyprnavExpression = projectColumns.has("hyprnav_json")
-      ? `COALESCE(hyprnav_json, ${DEFAULT_PROJECT_HYPRNAV_SQL_LITERAL})`
+      ? "hyprnav_json"
       : DEFAULT_PROJECT_HYPRNAV_SQL_LITERAL;
 
     return SqlSchema.findAll({
@@ -577,7 +577,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
           scripts_json AS "scripts",
-          COALESCE(hyprnav_json, ${DEFAULT_PROJECT_HYPRNAV_JSON}) AS "hyprnav",
+          hyprnav_json AS "hyprnav",
           COALESCE(worktree_group_titles_json, '[]') AS "worktreeGroupTitles",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -601,7 +601,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
           scripts_json AS "scripts",
-          COALESCE(hyprnav_json, ${DEFAULT_PROJECT_HYPRNAV_JSON}) AS "hyprnav",
+          hyprnav_json AS "hyprnav",
           COALESCE(worktree_group_titles_json, '[]') AS "worktreeGroupTitles",
           created_at AS "createdAt",
           updated_at AS "updatedAt",

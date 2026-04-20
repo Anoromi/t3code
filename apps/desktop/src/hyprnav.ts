@@ -31,7 +31,8 @@ interface HyprnavEnvironmentIds {
 interface HyprnavBinding {
   readonly envId: string;
   readonly slot: number;
-  readonly command: string;
+  readonly command: string | null;
+  readonly workspaceId: number | null;
 }
 
 type HyprnavBindingResolution =
@@ -532,34 +533,41 @@ export class HyprnavEnvironmentSync {
     }
 
     for (const binding of bindingsResult.bindings) {
-      const assignResult = this.runHyprnav([
+      const assignArgs = [
         "slot",
         "assign",
         "--env",
         binding.envId,
         "--slot",
         String(binding.slot),
-        "--managed",
+        ...(binding.workspaceId === null
+          ? ["--managed"]
+          : ["--workspace", String(binding.workspaceId)]),
         "--client",
         HYPRNAV_CLIENT_ID,
-      ]);
+      ];
+      const assignResult = this.runHyprnav(assignArgs);
       if (assignResult.status !== "ok") {
         return assignResult;
       }
 
-      const commandResult = this.runHyprnav([
-        "slot",
-        "command",
-        "set",
-        "--env",
-        binding.envId,
-        "--slot",
-        String(binding.slot),
-        "--",
-        "sh",
-        "-lc",
-        binding.command,
-      ]);
+      const commandResult = this.runHyprnav(
+        binding.command === null
+          ? ["slot", "command", "clear", "--env", binding.envId, "--slot", String(binding.slot)]
+          : [
+              "slot",
+              "command",
+              "set",
+              "--env",
+              binding.envId,
+              "--slot",
+              String(binding.slot),
+              "--",
+              "sh",
+              "-lc",
+              binding.command,
+            ],
+      );
       if (commandResult.status !== "ok") {
         return commandResult;
       }
@@ -620,6 +628,8 @@ export class HyprnavEnvironmentSync {
           binding: {
             envId,
             slot,
+            workspaceId:
+              binding.workspace.mode === "absolute" ? binding.workspace.workspaceId : null,
             command: buildWorktreeTerminalCommand({
               environmentPath: targetPath,
             }),
@@ -633,7 +643,13 @@ export class HyprnavEnvironmentSync {
         return command
           ? {
               tag: "ok",
-              binding: { envId, slot, command },
+              binding: {
+                envId,
+                slot,
+                workspaceId:
+                  binding.workspace.mode === "absolute" ? binding.workspace.workspaceId : null,
+                command,
+              },
             }
           : {
               tag: "error",
@@ -643,6 +659,17 @@ export class HyprnavEnvironmentSync {
               },
             };
       }
+      case "nothing":
+        return {
+          tag: "ok",
+          binding: {
+            envId,
+            slot,
+            workspaceId:
+              binding.workspace.mode === "absolute" ? binding.workspace.workspaceId : null,
+            command: null,
+          },
+        };
       case "shell-command": {
         const command = expandHyprnavCommandTemplate(binding.command, {
           projectRoot: input.projectRoot,
@@ -662,6 +689,8 @@ export class HyprnavEnvironmentSync {
           binding: {
             envId,
             slot,
+            workspaceId:
+              binding.workspace.mode === "absolute" ? binding.workspace.workspaceId : null,
             command: command.command,
           },
         };

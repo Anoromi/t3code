@@ -27,6 +27,7 @@ import type {
   ProjectHyprnavBinding,
   ProjectHyprnavScope,
   ProjectHyprnavSettings,
+  ProjectHyprnavWorkspaceTarget,
   DesktopServerExposureMode,
   DesktopServerExposureState,
   DesktopUpdateChannel,
@@ -630,6 +631,7 @@ function getSafeHyprnavSettings(rawValue: unknown): ProjectHyprnavSettings | nul
       scope?: unknown;
       action?: unknown;
       command?: unknown;
+      workspace?: unknown;
     };
     const id = getSafeNonEmptyString(record.id);
     const slot = getSafePositiveInteger(record.slot);
@@ -637,7 +639,32 @@ function getSafeHyprnavSettings(rawValue: unknown): ProjectHyprnavSettings | nul
       record.scope === "project" || record.scope === "worktree" || record.scope === "thread"
         ? (record.scope as ProjectHyprnavScope)
         : null;
+    const workspace =
+      typeof record.workspace === "object" && record.workspace !== null
+        ? (() => {
+            const workspaceRecord = record.workspace as {
+              mode?: unknown;
+              workspaceId?: unknown;
+            };
+            if (workspaceRecord.mode === "managed") {
+              return { mode: "managed" } satisfies ProjectHyprnavWorkspaceTarget;
+            }
+            if (workspaceRecord.mode === "absolute") {
+              const workspaceId = getSafePositiveInteger(workspaceRecord.workspaceId);
+              return workspaceId === null
+                ? null
+                : ({
+                    mode: "absolute",
+                    workspaceId,
+                  } satisfies ProjectHyprnavWorkspaceTarget);
+            }
+            return null;
+          })()
+        : ({ mode: "managed" } satisfies ProjectHyprnavWorkspaceTarget);
     if (id === null || slot === null || scope === null || slots.has(`${scope}:${String(slot)}`)) {
+      return null;
+    }
+    if (workspace === null) {
       return null;
     }
 
@@ -645,14 +672,15 @@ function getSafeHyprnavSettings(rawValue: unknown): ProjectHyprnavSettings | nul
     switch (record.action) {
       case "worktree-terminal":
       case "open-favorite-editor":
-        bindings.push({ id, slot, scope, action: record.action });
+      case "nothing":
+        bindings.push({ id, slot, scope, workspace, action: record.action });
         break;
       case "shell-command": {
         const command = getSafeNonEmptyString(record.command);
         if (command === null) {
           return null;
         }
-        bindings.push({ id, slot, scope, action: "shell-command", command });
+        bindings.push({ id, slot, scope, workspace, action: "shell-command", command });
         break;
       }
       default:

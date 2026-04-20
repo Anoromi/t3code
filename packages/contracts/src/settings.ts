@@ -8,7 +8,11 @@ import {
   CodexModelOptions,
   DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER,
 } from "./model.ts";
-import { ModelSelection } from "./orchestration.ts";
+import {
+  DEFAULT_PROJECT_HYPRNAV_SETTINGS,
+  ModelSelection,
+  ProjectHyprnavSettings,
+} from "./orchestration.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -50,6 +54,9 @@ export const ClientSettingsSchema = Schema.Struct({
   defaultCodexFastMode: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   defaultCodexReasoningEffort: CodexReasoningEffort.pipe(
     Schema.withDecodingDefault(Effect.succeed("high" as const)),
+  ),
+  defaultProjectHyprnavSettings: ProjectHyprnavSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROJECT_HYPRNAV_SETTINGS)),
   ),
   diffWordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(

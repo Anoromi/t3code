@@ -1,5 +1,6 @@
 import type * as ChildProcess from "node:child_process";
 
+import { DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -132,12 +133,25 @@ describe("HyprnavEnvironmentSync", () => {
         },
         hyprnav: {
           bindings: [
-            { id: "terminal", slot: 1, scope: "worktree", action: "worktree-terminal" },
-            { id: "editor", slot: 2, scope: "project", action: "open-favorite-editor" },
+            {
+              id: "terminal",
+              slot: 1,
+              scope: "worktree",
+              workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+              action: "worktree-terminal",
+            },
+            {
+              id: "editor",
+              slot: 2,
+              scope: "project",
+              workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+              action: "open-favorite-editor",
+            },
             {
               id: "corkdiff",
               slot: 8,
               scope: "thread",
+              workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
               action: "shell-command",
               command: "{corkdiffLaunchCommand}",
             },
@@ -336,6 +350,197 @@ describe("HyprnavEnvironmentSync", () => {
     expect(corkdiffCommand).not.toContain("hyprnav spawn");
   });
 
+  it("uses absolute workspace assignment when a binding targets a fixed workspace", async () => {
+    const spawnSync = vi.fn(() => spawnSyncResult());
+    const sync = createHyprnavEnvironmentSync({
+      spawnSync: spawnSync as unknown as typeof ChildProcess.spawnSync,
+      resolvePath: (value: string) => value,
+      realpathSync: (value: string) => value,
+    });
+
+    await expect(
+      sync.sync({
+        projectRoot: "/repo",
+        worktreePath: "/repo/worktrees/feature-a",
+        threadId: "thread-1",
+        preferredEditor: "cursor",
+        corkdiffConnection: null,
+        hyprnav: {
+          bindings: [
+            {
+              id: "terminal",
+              slot: 1,
+              scope: "worktree",
+              workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+              action: "worktree-terminal",
+            },
+            {
+              id: "custom",
+              slot: 4,
+              scope: "project",
+              workspace: { mode: "absolute", workspaceId: 12 },
+              action: "shell-command",
+              command: "printf hi",
+            },
+          ],
+        },
+        lock: false,
+      }),
+    ).resolves.toEqual({ status: "ok", message: null });
+
+    const managedAssignCall = spawnSync.mock.calls.find((call) => {
+      const args = getSpawnSyncArgs(call);
+      return (
+        args?.[0] === "slot" &&
+        args[1] === "assign" &&
+        args[2] === "--env" &&
+        args[4] === "--slot" &&
+        args[5] === "1"
+      );
+    });
+    expect(getSpawnSyncArgs(managedAssignCall ?? [])).toEqual([
+      "slot",
+      "assign",
+      "--env",
+      "p.816fc349d3fa.w.7d4d8df2de1b",
+      "--slot",
+      "1",
+      "--managed",
+      "--client",
+      "t3code",
+    ]);
+
+    const absoluteAssignCall = spawnSync.mock.calls.find((call) => {
+      const args = getSpawnSyncArgs(call);
+      return (
+        args?.[0] === "slot" &&
+        args[1] === "assign" &&
+        args[2] === "--env" &&
+        args[4] === "--slot" &&
+        args[5] === "4"
+      );
+    });
+    expect(getSpawnSyncArgs(absoluteAssignCall ?? [])).toEqual([
+      "slot",
+      "assign",
+      "--env",
+      "p.816fc349d3fa",
+      "--slot",
+      "4",
+      "--workspace",
+      "12",
+      "--client",
+      "t3code",
+    ]);
+
+    const absoluteCommandSetCall = spawnSync.mock.calls.find((call) => {
+      const args = getSpawnSyncArgs(call);
+      return (
+        args?.[0] === "slot" &&
+        args[1] === "command" &&
+        args[2] === "set" &&
+        args[4] === "p.816fc349d3fa" &&
+        args[6] === "4"
+      );
+    });
+    expect(getSpawnSyncArgs(absoluteCommandSetCall ?? [])).toEqual([
+      "slot",
+      "command",
+      "set",
+      "--env",
+      "p.816fc349d3fa",
+      "--slot",
+      "4",
+      "--",
+      "sh",
+      "-lc",
+      "printf hi",
+    ]);
+  });
+
+  it("keeps slot assignment and clears the command for nothing bindings", async () => {
+    const spawnSync = vi.fn(() => spawnSyncResult());
+    const sync = createHyprnavEnvironmentSync({
+      spawnSync: spawnSync as unknown as typeof ChildProcess.spawnSync,
+      resolvePath: (value: string) => value,
+      realpathSync: (value: string) => value,
+    });
+
+    await expect(
+      sync.sync({
+        projectRoot: "/repo",
+        worktreePath: "/repo/worktrees/feature-a",
+        threadId: "thread-1",
+        preferredEditor: "cursor",
+        corkdiffConnection: null,
+        hyprnav: {
+          bindings: [
+            {
+              id: "placeholder",
+              slot: 5,
+              scope: "project",
+              workspace: { mode: "absolute", workspaceId: 7 },
+              action: "nothing",
+            },
+          ],
+        },
+        lock: false,
+      }),
+    ).resolves.toEqual({ status: "ok", message: null });
+
+    const assignCall = spawnSync.mock.calls.find((call) => {
+      const args = getSpawnSyncArgs(call);
+      return (
+        args?.[0] === "slot" && args[1] === "assign" && args[4] === "--slot" && args[5] === "5"
+      );
+    });
+    expect(getSpawnSyncArgs(assignCall ?? [])).toEqual([
+      "slot",
+      "assign",
+      "--env",
+      "p.816fc349d3fa",
+      "--slot",
+      "5",
+      "--workspace",
+      "7",
+      "--client",
+      "t3code",
+    ]);
+
+    const commandClearCall = spawnSync.mock.calls.find((call) => {
+      const args = getSpawnSyncArgs(call);
+      return (
+        args?.[0] === "slot" &&
+        args[1] === "command" &&
+        args[2] === "clear" &&
+        args[4] === "p.816fc349d3fa" &&
+        args[6] === "5"
+      );
+    });
+    expect(getSpawnSyncArgs(commandClearCall ?? [])).toEqual([
+      "slot",
+      "command",
+      "clear",
+      "--env",
+      "p.816fc349d3fa",
+      "--slot",
+      "5",
+    ]);
+
+    expect(
+      spawnSync.mock.calls.some((call) => {
+        const args = getSpawnSyncArgs(call);
+        return (
+          args?.[0] === "slot" &&
+          args[1] === "command" &&
+          args[2] === "set" &&
+          args[4] === "p.816fc349d3fa" &&
+          args[6] === "5"
+        );
+      }),
+    ).toBe(false);
+  });
+
   it("skips thread-scoped bindings when there is no active thread id", async () => {
     const spawnSync = vi.fn(() => spawnSyncResult());
     const sync = createHyprnavEnvironmentSync({
@@ -355,6 +560,7 @@ describe("HyprnavEnvironmentSync", () => {
               id: "corkdiff",
               slot: 8,
               scope: "thread",
+              workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
               action: "shell-command",
               command: "{corkdiffLaunchCommand}",
             },
@@ -391,6 +597,7 @@ describe("HyprnavEnvironmentSync", () => {
               id: "custom",
               slot: 3,
               scope: "project",
+              workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
               action: "shell-command",
               command: "echo hi",
             },
@@ -416,7 +623,15 @@ describe("HyprnavEnvironmentSync", () => {
       sync.sync({
         projectRoot: "/repo",
         hyprnav: {
-          bindings: [{ id: "editor", slot: 2, scope: "project", action: "open-favorite-editor" }],
+          bindings: [
+            {
+              id: "editor",
+              slot: 2,
+              scope: "project",
+              workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+              action: "open-favorite-editor",
+            },
+          ],
         },
         lock: false,
       }),
@@ -445,7 +660,14 @@ describe("HyprnavEnvironmentSync", () => {
       threadId: "thread-1",
       hyprnav: {
         bindings: [
-          { id: "first", slot: 1, scope: "project", action: "shell-command", command: "one" },
+          {
+            id: "first",
+            slot: 1,
+            scope: "project",
+            workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+            action: "shell-command",
+            command: "one",
+          },
         ],
       },
       clearBindings: [{ scope: "project", slot: 7 }],
@@ -457,7 +679,14 @@ describe("HyprnavEnvironmentSync", () => {
       threadId: "thread-1",
       hyprnav: {
         bindings: [
-          { id: "second", slot: 3, scope: "thread", action: "shell-command", command: "two" },
+          {
+            id: "second",
+            slot: 3,
+            scope: "thread",
+            workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+            action: "shell-command",
+            command: "two",
+          },
         ],
       },
       clearBindings: [{ scope: "thread", slot: 8 }],

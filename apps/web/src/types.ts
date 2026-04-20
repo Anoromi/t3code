@@ -4,7 +4,7 @@ import type {
   OrchestrationLatestTurn,
   OrchestrationProposedPlanId,
   RepositoryIdentity,
-  ProjectHyprnavSettings,
+  ProjectHyprnavOverride,
   OrchestrationSessionStatus,
   OrchestrationThreadActivity,
   OrchestrationWorktreeGroupTitle as ContractOrchestrationWorktreeGroupTitle,
@@ -97,7 +97,7 @@ export interface Project {
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
   scripts: ProjectScript[];
-  hyprnav: ProjectHyprnavSettings;
+  hyprnav: ProjectHyprnavOverride;
   worktreeGroupTitles?: WorktreeGroupTitle[];
 }
 

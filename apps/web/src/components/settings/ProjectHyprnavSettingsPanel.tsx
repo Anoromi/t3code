@@ -1,18 +1,21 @@
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
   DEFAULT_PROJECT_HYPRNAV_SETTINGS,
   type EnvironmentId,
   type ProjectHyprnavAction,
   type ProjectHyprnavBinding,
+  type ProjectHyprnavOverride,
   type ProjectHyprnavScope,
   type ProjectHyprnavSettings,
+  type ProjectHyprnavWorkspaceTarget,
   type ProjectId,
 } from "@t3tools/contracts";
 import type { GroupedProjectHyprnavMode, GroupedProjectHyprnavState } from "@t3tools/contracts";
 import {
   CommandIcon,
+  MinusIcon,
   PlusIcon,
   StarIcon,
   TerminalSquareIcon,
@@ -29,10 +32,14 @@ import {
   computeRemovedHyprnavBindings,
   findHyprnavActionLabel,
   findHyprnavScopeLabel,
+  findHyprnavWorkspaceLabel,
   HYPRNAV_ACTION_ROWS,
   HYPRNAV_SCOPE_ROWS,
+  HYPRNAV_WORKSPACE_ROWS,
   hyprnavScopeSlotKey,
   projectHyprnavNeedsCorkdiffConnection,
+  projectUsesDefaultHyprnav,
+  resolveProjectHyprnavSettings,
   validateProjectHyprnavSettings,
 } from "../../hyprnavSettings";
 import { resolveExternalCorkdiffConnection } from "../../lib/externalCorkdiff";
@@ -72,6 +79,8 @@ type HyprnavDraftBinding = {
   id: string;
   slot: string;
   scope: ProjectHyprnavScope;
+  workspaceMode: ProjectHyprnavWorkspaceTarget["mode"];
+  workspaceId: string;
   action: ProjectHyprnavAction;
   command: string;
 };
@@ -82,6 +91,7 @@ type DraftEvaluation = {
   parsed: {
     settings: ProjectHyprnavSettings;
     invalidSlotBindingIds: string[];
+    invalidWorkspaceBindingIds: string[];
   };
   validation: ReturnType<typeof validateProjectHyprnavSettings>;
   duplicateScopedSlotKeySet: Set<string>;
@@ -91,6 +101,7 @@ type DraftEvaluation = {
 const ACTION_ICONS = {
   "worktree-terminal": TerminalSquareIcon,
   "open-favorite-editor": StarIcon,
+  nothing: MinusIcon,
   "shell-command": CommandIcon,
 } satisfies Record<ProjectHyprnavAction, LucideIcon>;
 
@@ -111,6 +122,8 @@ function draftBindingFromSettings(binding: ProjectHyprnavBinding): HyprnavDraftB
     id: binding.id,
     slot: String(binding.slot),
     scope: binding.scope,
+    workspaceMode: binding.workspace.mode,
+    workspaceId: binding.workspace.mode === "absolute" ? String(binding.workspace.workspaceId) : "",
     action: binding.action,
     command: binding.action === "shell-command" ? binding.command : "",
   };
@@ -149,11 +162,20 @@ function restoreDraftBinding(
           id: bindingId,
           slot: binding.slot,
           scope: "worktree",
+          workspaceMode: "managed",
+          workspaceId: "",
           action: "shell-command",
           command: "",
         }
       : binding,
   );
+}
+
+function hyprnavSettingsEqual(
+  left: ProjectHyprnavSettings,
+  right: ProjectHyprnavSettings,
+): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function findNextSlot(draft: HyprnavDraft): number {
@@ -170,16 +192,27 @@ function findNextSlot(draft: HyprnavDraft): number {
   }
 }
 
-function describeManagedBinding(action: ProjectHyprnavAction, scope: ProjectHyprnavScope): string {
+function describeManagedBinding(
+  action: ProjectHyprnavAction,
+  scope: ProjectHyprnavScope,
+  workspaceMode: ProjectHyprnavWorkspaceTarget["mode"],
+  workspaceId: string,
+): string {
+  const locationDescription =
+    workspaceMode === "absolute" && workspaceId.trim().length > 0
+      ? ` on workspace ${workspaceId.trim()}`
+      : "";
   switch (action) {
     case "worktree-terminal":
       return scope === "project"
-        ? "Ghostty + tmux in the project root"
-        : "Ghostty + tmux in the target worktree";
+        ? `Ghostty + tmux in the project root${locationDescription}`
+        : `Ghostty + tmux in the target worktree${locationDescription}`;
     case "open-favorite-editor":
       return scope === "project"
-        ? "Preferred editor in the project root"
-        : "Preferred editor in the target worktree";
+        ? `Preferred editor in the project root${locationDescription}`
+        : `Preferred editor in the target worktree${locationDescription}`;
+    case "nothing":
+      return `Reserve this slot without running a command${locationDescription}`;
     case "shell-command":
       return "";
   }
@@ -188,8 +221,10 @@ function describeManagedBinding(action: ProjectHyprnavAction, scope: ProjectHypr
 function parseDraft(draft: HyprnavDraft): {
   settings: ProjectHyprnavSettings;
   invalidSlotBindingIds: string[];
+  invalidWorkspaceBindingIds: string[];
 } {
   const invalidSlotBindingIds: string[] = [];
+  const invalidWorkspaceBindingIds: string[] = [];
   const bindings: ProjectHyprnavBinding[] = [];
   for (const binding of draft) {
     const rawSlot = binding.slot.trim();
@@ -199,11 +234,31 @@ function parseDraft(draft: HyprnavDraft): {
       continue;
     }
 
+    const workspace =
+      binding.workspaceMode === "absolute"
+        ? (() => {
+            const rawWorkspaceId = binding.workspaceId.trim();
+            const workspaceId = Number(rawWorkspaceId);
+            if (rawWorkspaceId.length === 0 || !Number.isInteger(workspaceId) || workspaceId <= 0) {
+              invalidWorkspaceBindingIds.push(binding.id);
+              return null;
+            }
+            return {
+              mode: "absolute",
+              workspaceId,
+            } as const satisfies ProjectHyprnavWorkspaceTarget;
+          })()
+        : ({ mode: "managed" } as const satisfies ProjectHyprnavWorkspaceTarget);
+    if (workspace === null) {
+      continue;
+    }
+
     if (binding.action === "shell-command") {
       bindings.push({
         id: binding.id,
         slot,
         scope: binding.scope,
+        workspace,
         action: "shell-command",
         command: binding.command.trim(),
       });
@@ -214,6 +269,7 @@ function parseDraft(draft: HyprnavDraft): {
       id: binding.id,
       slot,
       scope: binding.scope,
+      workspace,
       action: binding.action,
     });
   }
@@ -221,6 +277,7 @@ function parseDraft(draft: HyprnavDraft): {
   return {
     settings: { bindings },
     invalidSlotBindingIds,
+    invalidWorkspaceBindingIds,
   };
 }
 
@@ -237,6 +294,7 @@ function evaluateDraft(draft: HyprnavDraft): DraftEvaluation {
     ),
     hasValidationError:
       parsed.invalidSlotBindingIds.length > 0 ||
+      parsed.invalidWorkspaceBindingIds.length > 0 ||
       validation.duplicateScopedSlots.length > 0 ||
       validation.emptyShellCommandBindingIds.length > 0,
   };
@@ -393,12 +451,65 @@ function HyprnavScopeAutocomplete({
   );
 }
 
+function HyprnavWorkspaceAutocomplete({
+  mode,
+  disabled,
+  onChange,
+}: {
+  mode: ProjectHyprnavWorkspaceTarget["mode"];
+  disabled: boolean;
+  onChange: (mode: ProjectHyprnavWorkspaceTarget["mode"]) => void;
+}) {
+  const selectedLabel = findHyprnavWorkspaceLabel(mode);
+  const [query, setQuery] = useState(selectedLabel);
+
+  useEffect(() => {
+    setQuery(selectedLabel);
+  }, [selectedLabel]);
+
+  return (
+    <Autocomplete
+      items={HYPRNAV_WORKSPACE_ROWS}
+      itemToStringValue={(item) => item.label}
+      mode="list"
+      openOnInputClick
+      value={query}
+      onValueChange={setQuery}
+    >
+      <AutocompleteInput
+        disabled={disabled}
+        showTrigger
+        size="sm"
+        onBlur={() => setQuery(selectedLabel)}
+      />
+      <AutocompletePopup>
+        <AutocompleteList>
+          {HYPRNAV_WORKSPACE_ROWS.map(({ key, label }, index) => (
+            <AutocompleteItem
+              key={key}
+              index={index}
+              value={{ key, label }}
+              onClick={() => {
+                onChange(key);
+                setQuery(label);
+              }}
+            >
+              {label}
+            </AutocompleteItem>
+          ))}
+        </AutocompleteList>
+      </AutocompletePopup>
+    </Autocomplete>
+  );
+}
+
 function HyprnavBindingsEditor({
   title,
   description,
   draft,
   evaluation,
   busy,
+  headerAction,
   onUpdateBinding,
   onRestoreBinding,
   onAddBinding,
@@ -409,6 +520,7 @@ function HyprnavBindingsEditor({
   draft: HyprnavDraft;
   evaluation: DraftEvaluation;
   busy: boolean;
+  headerAction?: ReactNode;
   onUpdateBinding: (
     bindingId: string,
     update: (binding: HyprnavDraftBinding) => HyprnavDraftBinding,
@@ -424,10 +536,13 @@ function HyprnavBindingsEditor({
           <h3 className="text-sm font-semibold text-foreground">{title}</h3>
           <p className="text-xs text-muted-foreground">{description}</p>
         </div>
-        <Button size="xs" variant="outline" disabled={busy} onClick={onAddBinding}>
-          <PlusIcon className="size-3.5" />
-          Add slot
-        </Button>
+        <div className="flex items-center gap-2">
+          {headerAction}
+          <Button size="xs" variant="outline" disabled={busy} onClick={onAddBinding}>
+            <PlusIcon className="size-3.5" />
+            Add slot
+          </Button>
+        </div>
       </div>
 
       {draft.map((binding) => {
@@ -436,10 +551,11 @@ function HyprnavBindingsEditor({
         const duplicate =
           Number.isInteger(parsedSlot) &&
           evaluation.duplicateScopedSlotKeySet.has(hyprnavScopeSlotKey(binding.scope, parsedSlot));
+        const workspaceInvalid = evaluation.parsed.invalidWorkspaceBindingIds.includes(binding.id);
         const shellCommandEmpty = evaluation.validation.emptyShellCommandBindingIds.includes(
           binding.id,
         );
-        const rowInvalid = slotInvalid || duplicate || shellCommandEmpty;
+        const rowInvalid = slotInvalid || duplicate || workspaceInvalid || shellCommandEmpty;
 
         return (
           <div
@@ -449,7 +565,7 @@ function HyprnavBindingsEditor({
               rowInvalid && "bg-destructive/4",
             )}
           >
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-[5.5rem_minmax(0,1fr)] lg:grid-cols-[5.5rem_minmax(12rem,1fr)_minmax(12rem,1fr)_auto] lg:items-start">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-[5.5rem_minmax(0,1fr)] lg:grid-cols-[5.5rem_minmax(11rem,1fr)_minmax(11rem,1fr)_minmax(11rem,1fr)_auto] lg:items-start">
               <div className="space-y-1 min-w-0">
                 <p className="text-[11px] font-medium text-muted-foreground">Slot</p>
                 <Input
@@ -503,6 +619,21 @@ function HyprnavBindingsEditor({
                 />
               </div>
 
+              <div className="space-y-1 min-w-0 sm:col-span-2 lg:col-span-1">
+                <p className="text-[11px] font-medium text-muted-foreground">Workspace</p>
+                <HyprnavWorkspaceAutocomplete
+                  mode={binding.workspaceMode}
+                  disabled={busy}
+                  onChange={(workspaceMode) =>
+                    onUpdateBinding(binding.id, (current) => ({
+                      ...current,
+                      workspaceMode,
+                      workspaceId: workspaceMode === "absolute" ? current.workspaceId : "",
+                    }))
+                  }
+                />
+              </div>
+
               <div className="space-y-1 sm:col-span-2 lg:col-span-1 lg:min-w-[3rem]">
                 <p className="text-[11px] font-medium text-transparent select-none" aria-hidden>
                   Actions
@@ -526,40 +657,85 @@ function HyprnavBindingsEditor({
               </div>
             </div>
 
-            <div className="mt-3 space-y-1 min-w-0">
-              <p className="text-[11px] font-medium text-muted-foreground">Command</p>
-              {binding.action === "shell-command" ? (
-                <>
-                  <Input
-                    aria-invalid={shellCommandEmpty}
-                    className="w-full"
-                    disabled={busy}
-                    placeholder="sh command"
-                    size="sm"
-                    value={binding.command}
-                    onChange={(event) =>
-                      onUpdateBinding(binding.id, (current) => ({
-                        ...current,
-                        command: event.target.value,
-                      }))
-                    }
-                  />
-                  <p className="max-w-3xl text-[11px] leading-5 text-muted-foreground">
-                    Available placeholders: {"{projectRoot}"}, {"{worktreePath}"}, {"{threadId}"},{" "}
-                    {"{corkdiffLaunchCommand}"}
-                  </p>
-                </>
-              ) : (
-                <div
-                  className="flex min-h-9 items-center rounded-md border border-border/60 bg-muted/20 px-3 text-sm leading-6 text-muted-foreground"
-                  title={describeManagedBinding(binding.action, binding.scope)}
-                >
-                  {describeManagedBinding(binding.action, binding.scope)}
-                </div>
-              )}
-              {shellCommandEmpty ? (
-                <p className="text-[11px] text-destructive">Command is required.</p>
-              ) : null}
+            <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-[minmax(12rem,14rem)_minmax(0,1fr)]">
+              <div className="space-y-1 min-w-0">
+                <p className="text-[11px] font-medium text-muted-foreground">Workspace ID</p>
+                {binding.workspaceMode === "absolute" ? (
+                  <>
+                    <Input
+                      aria-invalid={workspaceInvalid}
+                      disabled={busy}
+                      inputMode="numeric"
+                      placeholder="Workspace ID"
+                      size="sm"
+                      value={binding.workspaceId}
+                      onChange={(event) =>
+                        onUpdateBinding(binding.id, (current) => ({
+                          ...current,
+                          workspaceId: event.target.value,
+                        }))
+                      }
+                    />
+                    {workspaceInvalid ? (
+                      <p className="text-[11px] text-destructive">Use a positive whole number.</p>
+                    ) : (
+                      <p className="text-[11px] text-muted-foreground">
+                        Hyprland workspace ID for this slot.
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <div className="flex min-h-9 items-center rounded-md border border-border/60 bg-muted/20 px-3 text-sm leading-6 text-muted-foreground">
+                    Hyprnav-managed workspace
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-1 min-w-0">
+                <p className="text-[11px] font-medium text-muted-foreground">Command</p>
+                {binding.action === "shell-command" ? (
+                  <>
+                    <Input
+                      aria-invalid={shellCommandEmpty}
+                      className="w-full"
+                      disabled={busy}
+                      placeholder="sh command"
+                      size="sm"
+                      value={binding.command}
+                      onChange={(event) =>
+                        onUpdateBinding(binding.id, (current) => ({
+                          ...current,
+                          command: event.target.value,
+                        }))
+                      }
+                    />
+                    <p className="max-w-3xl text-[11px] leading-5 text-muted-foreground">
+                      Available placeholders: {"{projectRoot}"}, {"{worktreePath}"}, {"{threadId}"},{" "}
+                      {"{corkdiffLaunchCommand}"}
+                    </p>
+                  </>
+                ) : (
+                  <div
+                    className="flex min-h-9 items-center rounded-md border border-border/60 bg-muted/20 px-3 text-sm leading-6 text-muted-foreground"
+                    title={describeManagedBinding(
+                      binding.action,
+                      binding.scope,
+                      binding.workspaceMode,
+                      binding.workspaceId,
+                    )}
+                  >
+                    {describeManagedBinding(
+                      binding.action,
+                      binding.scope,
+                      binding.workspaceMode,
+                      binding.workspaceId,
+                    )}
+                  </div>
+                )}
+                {shellCommandEmpty ? (
+                  <p className="text-[11px] text-destructive">Command is required.</p>
+                ) : null}
+              </div>
             </div>
           </div>
         );
@@ -581,6 +757,7 @@ export function ProjectHyprnavSettingsPanel({
   const { updateSettings } = useUpdateSettings();
   const availableEditors = useServerAvailableEditors();
   const localEnvironmentId = usePrimaryEnvironmentId();
+  const defaultProjectHyprnavSettings = settings.defaultProjectHyprnavSettings;
 
   const projectGroupingSettings = useMemo<ProjectGroupingSettings>(
     () => ({
@@ -662,6 +839,17 @@ export function ProjectHyprnavSettingsPanel({
     [environmentId, groupedProjects, localEnvironmentId, projectId],
   );
 
+  const effectiveHyprnavByPhysicalKey = useMemo(
+    () =>
+      new Map(
+        groupedProjects.map((candidate) => [
+          derivePhysicalProjectKey(candidate),
+          resolveProjectHyprnavSettings(candidate.hyprnav, defaultProjectHyprnavSettings),
+        ]),
+      ),
+    [defaultProjectHyprnavSettings, groupedProjects],
+  );
+
   const initialPanelState = useMemo(() => {
     if (!representativeProject) {
       return null;
@@ -671,7 +859,9 @@ export function ProjectHyprnavSettingsPanel({
       ? settings.groupedProjectHyprnavStateByLogicalProjectKey[logicalProjectKey]
       : undefined;
     const representativePhysicalKey = derivePhysicalProjectKey(representativeProject);
-    const sharedDraft = draftFromSettings(representativeProject.hyprnav);
+    const representativeHyprnav =
+      effectiveHyprnavByPhysicalKey.get(representativePhysicalKey) ?? defaultProjectHyprnavSettings;
+    const sharedDraft = draftFromSettings(representativeHyprnav);
     const mode: GroupedProjectHyprnavMode =
       groupedProjects.length > 1 && groupedState?.mode === "separate" ? "separate" : "same";
 
@@ -683,7 +873,10 @@ export function ProjectHyprnavSettingsPanel({
           ? Object.fromEntries(
               groupedProjects.map((candidate) => [
                 derivePhysicalProjectKey(candidate),
-                draftFromSettings(candidate.hyprnav),
+                draftFromSettings(
+                  effectiveHyprnavByPhysicalKey.get(derivePhysicalProjectKey(candidate)) ??
+                    defaultProjectHyprnavSettings,
+                ),
               ]),
             )
           : copyDraftToProjects(groupedProjects, sharedDraft),
@@ -695,8 +888,10 @@ export function ProjectHyprnavSettingsPanel({
     };
   }, [
     groupedProjects,
+    effectiveHyprnavByPhysicalKey,
     logicalProjectKey,
     representativeProject,
+    defaultProjectHyprnavSettings,
     settings.groupedProjectHyprnavStateByLogicalProjectKey,
   ]);
 
@@ -706,6 +901,7 @@ export function ProjectHyprnavSettingsPanel({
     Record<string, HyprnavDraft>
   >({});
   const [defaultPhysicalProjectKey, setDefaultPhysicalProjectKey] = useState<string | null>(null);
+  const [resetProjectKeys, setResetProjectKeys] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
 
@@ -715,12 +911,14 @@ export function ProjectHyprnavSettingsPanel({
       setSharedDraft(null);
       setProjectDraftsByPhysicalKey({});
       setDefaultPhysicalProjectKey(null);
+      setResetProjectKeys([]);
       return;
     }
     setEditorMode(initialPanelState.mode);
     setSharedDraft(cloneDraft(initialPanelState.sharedDraft));
     setProjectDraftsByPhysicalKey(cloneDraftRecord(initialPanelState.projectDraftsByPhysicalKey));
     setDefaultPhysicalProjectKey(initialPanelState.defaultPhysicalProjectKey);
+    setResetProjectKeys([]);
   }, [initialPanelState]);
 
   const sharedEvaluation = useMemo(
@@ -744,7 +942,10 @@ export function ProjectHyprnavSettingsPanel({
       groupedProjects.map((candidate) => {
         const physicalProjectKey = derivePhysicalProjectKey(candidate);
         const draft =
-          projectDraftsByPhysicalKey[physicalProjectKey] ?? draftFromSettings(candidate.hyprnav);
+          projectDraftsByPhysicalKey[physicalProjectKey] ??
+          draftFromSettings(
+            effectiveHyprnavByPhysicalKey.get(physicalProjectKey) ?? defaultProjectHyprnavSettings,
+          );
         return {
           project: candidate,
           physicalProjectKey,
@@ -755,7 +956,13 @@ export function ProjectHyprnavSettingsPanel({
           evaluation: projectEvaluationsByPhysicalKey[physicalProjectKey] ?? evaluateDraft(draft),
         };
       }),
-    [groupedProjects, projectDraftsByPhysicalKey, projectEvaluationsByPhysicalKey],
+    [
+      defaultProjectHyprnavSettings,
+      effectiveHyprnavByPhysicalKey,
+      groupedProjects,
+      projectDraftsByPhysicalKey,
+      projectEvaluationsByPhysicalKey,
+    ],
   );
 
   const hasValidationError =
@@ -767,6 +974,7 @@ export function ProjectHyprnavSettingsPanel({
 
   const updateSharedDraft = useCallback(
     (bindingId: string, update: (binding: HyprnavDraftBinding) => HyprnavDraftBinding) => {
+      setResetProjectKeys([]);
       setSharedDraft((current) =>
         current
           ? current.map((binding) => (binding.id === bindingId ? update(binding) : binding))
@@ -782,6 +990,7 @@ export function ProjectHyprnavSettingsPanel({
       bindingId: string,
       update: (binding: HyprnavDraftBinding) => HyprnavDraftBinding,
     ) => {
+      setResetProjectKeys((current) => current.filter((key) => key !== physicalProjectKey));
       setProjectDraftsByPhysicalKey((current) => {
         const draft = current[physicalProjectKey];
         if (!draft) {
@@ -799,6 +1008,7 @@ export function ProjectHyprnavSettingsPanel({
   );
 
   const addSharedBinding = useCallback(() => {
+    setResetProjectKeys([]);
     setSharedDraft((current) => {
       const nextDraft = current ?? [];
       return [
@@ -807,6 +1017,8 @@ export function ProjectHyprnavSettingsPanel({
           id: makeCustomBindingId(),
           slot: String(findNextSlot(nextDraft)),
           scope: "worktree",
+          workspaceMode: "managed",
+          workspaceId: "",
           action: "shell-command",
           command: "",
         },
@@ -815,6 +1027,7 @@ export function ProjectHyprnavSettingsPanel({
   }, []);
 
   const addProjectBinding = useCallback((physicalProjectKey: string) => {
+    setResetProjectKeys((current) => current.filter((key) => key !== physicalProjectKey));
     setProjectDraftsByPhysicalKey((current) => {
       const nextDraft = current[physicalProjectKey] ?? [];
       return {
@@ -825,6 +1038,8 @@ export function ProjectHyprnavSettingsPanel({
             id: makeCustomBindingId(),
             slot: String(findNextSlot(nextDraft)),
             scope: "worktree",
+            workspaceMode: "managed",
+            workspaceId: "",
             action: "shell-command",
             command: "",
           },
@@ -834,12 +1049,14 @@ export function ProjectHyprnavSettingsPanel({
   }, []);
 
   const removeSharedBinding = useCallback((bindingId: string) => {
+    setResetProjectKeys([]);
     setSharedDraft((current) =>
       current ? current.filter((binding) => binding.id !== bindingId) : current,
     );
   }, []);
 
   const removeProjectBinding = useCallback((physicalProjectKey: string, bindingId: string) => {
+    setResetProjectKeys((current) => current.filter((key) => key !== physicalProjectKey));
     setProjectDraftsByPhysicalKey((current) => {
       const draft = current[physicalProjectKey];
       if (!draft) {
@@ -857,21 +1074,30 @@ export function ProjectHyprnavSettingsPanel({
       if (!representativeProject) {
         return;
       }
+      setResetProjectKeys([]);
       setSharedDraft((current) =>
-        current ? restoreDraftBinding(current, bindingId, representativeProject.hyprnav) : current,
+        current
+          ? restoreDraftBinding(
+              current,
+              bindingId,
+              effectiveHyprnavByPhysicalKey.get(derivePhysicalProjectKey(representativeProject)) ??
+                defaultProjectHyprnavSettings,
+            )
+          : current,
       );
     },
-    [representativeProject],
+    [defaultProjectHyprnavSettings, effectiveHyprnavByPhysicalKey, representativeProject],
   );
 
   const restoreProjectBinding = useCallback(
     (physicalProjectKey: string, bindingId: string) => {
-      const sourceProject = groupedProjects.find(
+      const hasSourceProject = groupedProjects.some(
         (candidate) => derivePhysicalProjectKey(candidate) === physicalProjectKey,
       );
-      if (!sourceProject) {
+      if (!hasSourceProject) {
         return;
       }
+      setResetProjectKeys((current) => current.filter((key) => key !== physicalProjectKey));
       setProjectDraftsByPhysicalKey((current) => {
         const draft = current[physicalProjectKey];
         if (!draft) {
@@ -879,11 +1105,15 @@ export function ProjectHyprnavSettingsPanel({
         }
         return {
           ...current,
-          [physicalProjectKey]: restoreDraftBinding(draft, bindingId, sourceProject.hyprnav),
+          [physicalProjectKey]: restoreDraftBinding(
+            draft,
+            bindingId,
+            effectiveHyprnavByPhysicalKey.get(physicalProjectKey) ?? defaultProjectHyprnavSettings,
+          ),
         };
       });
     },
-    [groupedProjects],
+    [defaultProjectHyprnavSettings, effectiveHyprnavByPhysicalKey, groupedProjects],
   );
 
   const separatePerProject = useCallback(() => {
@@ -900,6 +1130,7 @@ export function ProjectHyprnavSettingsPanel({
     setEditorMode("separate");
     setProjectDraftsByPhysicalKey(copyDraftToProjects(groupedProjects, sharedDraft));
     setDefaultPhysicalProjectKey(fallbackDefaultKey);
+    setResetProjectKeys([]);
   }, [defaultPhysicalProjectKey, groupedProjects, representativeProject, sharedDraft]);
 
   const makeDefaultProject = useCallback(
@@ -911,8 +1142,27 @@ export function ProjectHyprnavSettingsPanel({
       setDefaultPhysicalProjectKey(physicalProjectKey);
       setSharedDraft(cloneDraft(sourceDraft));
       setProjectDraftsByPhysicalKey(copyDraftToProjects(groupedProjects, sourceDraft));
+      setResetProjectKeys([]);
     },
     [groupedProjects, projectDraftsByPhysicalKey],
+  );
+
+  const resetSharedToDefault = useCallback(() => {
+    setSharedDraft(draftFromSettings(defaultProjectHyprnavSettings));
+    setResetProjectKeys(groupedProjects.map((candidate) => derivePhysicalProjectKey(candidate)));
+  }, [defaultProjectHyprnavSettings, groupedProjects]);
+
+  const resetProjectToDefault = useCallback(
+    (physicalProjectKey: string) => {
+      setProjectDraftsByPhysicalKey((current) => ({
+        ...current,
+        [physicalProjectKey]: draftFromSettings(defaultProjectHyprnavSettings),
+      }));
+      setResetProjectKeys((current) =>
+        current.includes(physicalProjectKey) ? current : [...current, physicalProjectKey],
+      );
+    },
+    [defaultProjectHyprnavSettings],
   );
 
   const save = useCallback(async () => {
@@ -921,19 +1171,38 @@ export function ProjectHyprnavSettingsPanel({
     }
 
     const nextSettingsByPhysicalKey = new Map<string, ProjectHyprnavSettings>();
+    const nextOverridesByPhysicalKey = new Map<string, ProjectHyprnavOverride>();
     if (editorMode === "same") {
       if (!sharedEvaluation) {
         return;
       }
       for (const candidate of groupedProjects) {
+        const physicalProjectKey = derivePhysicalProjectKey(candidate);
+        const nextOverride =
+          resetProjectKeys.includes(physicalProjectKey) ||
+          (projectUsesDefaultHyprnav(candidate.hyprnav) &&
+            hyprnavSettingsEqual(sharedEvaluation.parsed.settings, defaultProjectHyprnavSettings))
+            ? null
+            : sharedEvaluation.parsed.settings;
+        nextOverridesByPhysicalKey.set(physicalProjectKey, nextOverride);
         nextSettingsByPhysicalKey.set(
-          derivePhysicalProjectKey(candidate),
-          sharedEvaluation.parsed.settings,
+          physicalProjectKey,
+          resolveProjectHyprnavSettings(nextOverride, defaultProjectHyprnavSettings),
         );
       }
     } else {
       for (const editor of groupEditors) {
-        nextSettingsByPhysicalKey.set(editor.physicalProjectKey, editor.evaluation.parsed.settings);
+        const nextOverride =
+          resetProjectKeys.includes(editor.physicalProjectKey) ||
+          (projectUsesDefaultHyprnav(editor.project.hyprnav) &&
+            hyprnavSettingsEqual(editor.evaluation.parsed.settings, defaultProjectHyprnavSettings))
+            ? null
+            : editor.evaluation.parsed.settings;
+        nextOverridesByPhysicalKey.set(editor.physicalProjectKey, nextOverride);
+        nextSettingsByPhysicalKey.set(
+          editor.physicalProjectKey,
+          resolveProjectHyprnavSettings(nextOverride, defaultProjectHyprnavSettings),
+        );
       }
     }
 
@@ -948,7 +1217,7 @@ export function ProjectHyprnavSettingsPanel({
           type: "project.meta.update",
           commandId: newCommandId(),
           projectId: candidate.id,
-          hyprnav: nextSettingsByPhysicalKey.get(derivePhysicalProjectKey(candidate))!,
+          hyprnav: nextOverridesByPhysicalKey.get(derivePhysicalProjectKey(candidate))!,
         });
       }
 
@@ -989,7 +1258,7 @@ export function ProjectHyprnavSettingsPanel({
           localBaseProjects.map((candidate) => [
             scopedProjectKey(scopeProjectRef(candidate.environmentId, candidate.id)),
             computeRemovedHyprnavBindings(
-              candidate.hyprnav,
+              resolveProjectHyprnavSettings(candidate.hyprnav, defaultProjectHyprnavSettings),
               nextSettingsByPhysicalKey.get(derivePhysicalProjectKey(candidate))!,
             ),
           ]),
@@ -1066,11 +1335,13 @@ export function ProjectHyprnavSettingsPanel({
   }, [
     availableEditors,
     defaultPhysicalProjectKey,
+    defaultProjectHyprnavSettings,
     editorMode,
     groupEditors,
     groupedProjects,
     hasValidationError,
     localEnvironmentId,
+    resetProjectKeys,
     logicalProjectKey,
     project,
     settings.groupedProjectHyprnavStateByLogicalProjectKey,
@@ -1144,6 +1415,7 @@ export function ProjectHyprnavSettingsPanel({
             editorMode === "separate" && defaultPhysicalProjectKey === physicalProjectKey;
           const isLocalProject =
             localEnvironmentId !== null && candidate.environmentId === localEnvironmentId;
+          const usesDefault = projectUsesDefaultHyprnav(candidate.hyprnav);
 
           return (
             <SettingsRow
@@ -1164,16 +1436,25 @@ export function ProjectHyprnavSettingsPanel({
                       Default
                     </Badge>
                   ) : (
-                    <Button
-                      size="xs"
-                      variant="outline"
-                      disabled={busy}
-                      onClick={() => makeDefaultProject(physicalProjectKey)}
-                    >
-                      Make default
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Badge size="sm" variant="outline">
+                        {usesDefault ? "Inherited" : "Custom"}
+                      </Badge>
+                      <Button
+                        size="xs"
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => makeDefaultProject(physicalProjectKey)}
+                      >
+                        Make default
+                      </Button>
+                    </div>
                   )
-                ) : null
+                ) : (
+                  <Badge size="sm" variant="outline">
+                    {usesDefault ? "Inherited" : "Custom"}
+                  </Badge>
+                )
               }
             />
           );
@@ -1183,9 +1464,16 @@ export function ProjectHyprnavSettingsPanel({
       <SettingsSection
         title="Hyprnav"
         headerAction={
-          <Button size="xs" disabled={hasValidationError || busy} onClick={() => void save()}>
-            {isApplying ? "Applying..." : isSaving ? "Saving..." : "Save and apply"}
-          </Button>
+          <div className="flex items-center gap-2">
+            {editorMode === "same" ? (
+              <Button size="xs" variant="outline" disabled={busy} onClick={resetSharedToDefault}>
+                Reset to default
+              </Button>
+            ) : null}
+            <Button size="xs" disabled={hasValidationError || busy} onClick={() => void save()}>
+              {isApplying ? "Applying..." : isSaving ? "Saving..." : "Save and apply"}
+            </Button>
+          </div>
         }
       >
         {editorMode === "same" ? (
@@ -1193,12 +1481,23 @@ export function ProjectHyprnavSettingsPanel({
             title="Shared settings"
             description={
               groupedProjects.length > 1
-                ? "Changes here apply to every project in this list."
-                : "Changes here apply to this project."
+                ? "Changes here apply to every project in this list. Reset returns all of them to the global default."
+                : "Changes here apply to this project. Reset returns it to the global default."
             }
             draft={sharedDraft}
             evaluation={sharedEvaluation ?? evaluateDraft(sharedDraft)}
             busy={busy}
+            headerAction={
+              groupedProjects.length > 1 ? (
+                <Badge size="sm" variant="outline">
+                  Shared
+                </Badge>
+              ) : (
+                <Badge size="sm" variant="outline">
+                  {projectUsesDefaultHyprnav(project.hyprnav) ? "Inherited" : "Custom"}
+                </Badge>
+              )
+            }
             onUpdateBinding={updateSharedDraft}
             onRestoreBinding={restoreSharedBinding}
             onAddBinding={addSharedBinding}
@@ -1213,6 +1512,21 @@ export function ProjectHyprnavSettingsPanel({
               draft={editor.draft}
               evaluation={editor.evaluation}
               busy={busy}
+              headerAction={
+                <div className="flex items-center gap-2">
+                  <Badge size="sm" variant="outline">
+                    {projectUsesDefaultHyprnav(editor.project.hyprnav) ? "Inherited" : "Custom"}
+                  </Badge>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => resetProjectToDefault(editor.physicalProjectKey)}
+                  >
+                    Reset to default
+                  </Button>
+                </div>
+              }
               onUpdateBinding={(bindingId, update) =>
                 updateProjectDraft(editor.physicalProjectKey, bindingId, update)
               }
@@ -1226,6 +1540,103 @@ export function ProjectHyprnavSettingsPanel({
             />
           ))
         )}
+      </SettingsSection>
+    </SettingsPageContainer>
+  );
+}
+
+export function HyprnavDefaultsSettingsPanel() {
+  const settings = useSettings();
+  const { updateSettings } = useUpdateSettings();
+  const [draft, setDraft] = useState<HyprnavDraft>(() =>
+    draftFromSettings(settings.defaultProjectHyprnavSettings),
+  );
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    setDraft(draftFromSettings(settings.defaultProjectHyprnavSettings));
+  }, [settings.defaultProjectHyprnavSettings]);
+
+  const evaluation = useMemo(() => evaluateDraft(draft), [draft]);
+  const busy = isSaving;
+
+  const saveDefaults = useCallback(async () => {
+    if (evaluation.hasValidationError) {
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      updateSettings({
+        defaultProjectHyprnavSettings: evaluation.parsed.settings,
+      });
+      toastManager.add({
+        type: "success",
+        title: "Hyprnav defaults saved",
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  }, [evaluation, updateSettings]);
+
+  return (
+    <SettingsPageContainer width="wide">
+      <SettingsSection
+        title="Hyprnav defaults"
+        headerAction={
+          <div className="flex items-center gap-2">
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={busy}
+              onClick={() => setDraft(draftFromSettings(DEFAULT_PROJECT_HYPRNAV_SETTINGS))}
+            >
+              Restore built-in defaults
+            </Button>
+            <Button
+              size="xs"
+              disabled={evaluation.hasValidationError || busy}
+              onClick={() => void saveDefaults()}
+            >
+              {isSaving ? "Saving..." : "Save defaults"}
+            </Button>
+          </div>
+        }
+      >
+        <HyprnavBindingsEditor
+          title="Global defaults"
+          description="These settings apply to every project that has not been customized."
+          draft={draft}
+          evaluation={evaluation}
+          busy={busy}
+          onUpdateBinding={(bindingId, update) =>
+            setDraft((current) =>
+              current.map((binding) => (binding.id === bindingId ? update(binding) : binding)),
+            )
+          }
+          onRestoreBinding={(bindingId) =>
+            setDraft((current) =>
+              restoreDraftBinding(current, bindingId, settings.defaultProjectHyprnavSettings),
+            )
+          }
+          onAddBinding={() =>
+            setDraft((current) => [
+              ...current,
+              {
+                id: makeCustomBindingId(),
+                slot: String(findNextSlot(current)),
+                scope: "worktree",
+                workspaceMode: "managed",
+                workspaceId: "",
+                action: "shell-command",
+                command: "",
+              },
+            ])
+          }
+          onRemoveBinding={(bindingId) =>
+            setDraft((current) => current.filter((binding) => binding.id !== bindingId))
+          }
+        />
       </SettingsSection>
     </SettingsPageContainer>
   );
