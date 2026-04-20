@@ -3,6 +3,7 @@ import { Effect, Layer } from "effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { runMigrations } from "../Migrations.ts";
+import Migration024 from "./024_BackfillProjectionThreadShellSummary.ts";
 import * as NodeSqliteClient from "../NodeSqliteClient.ts";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
@@ -213,6 +214,167 @@ layer("024_BackfillProjectionThreadShellSummary", (it) => {
         {
           status: "resolved",
           resolvedAt: "2026-02-24T00:03:00.000Z",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("repairs drifted schemas when the shell summary columns are missing", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* runMigrations({ toMigrationInclusive: 22 });
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          created_at,
+          updated_at,
+          archived_at,
+          deleted_at
+        )
+        VALUES (
+          'thread-drifted',
+          'project-1',
+          'Thread Drifted',
+          'gpt-5-codex',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          'approval-required',
+          'plan',
+          NULL,
+          NULL,
+          'turn-drifted',
+          '2026-02-24T00:00:00.000Z',
+          '2026-02-24T00:00:00.000Z',
+          NULL,
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_messages (
+          message_id,
+          thread_id,
+          turn_id,
+          role,
+          text,
+          attachments_json,
+          is_streaming,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          'message-user-drifted',
+          'thread-drifted',
+          'turn-drifted',
+          'user',
+          'Need help',
+          NULL,
+          0,
+          '2026-02-24T00:01:00.000Z',
+          '2026-02-24T00:01:00.000Z'
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id,
+          thread_id,
+          turn_id,
+          tone,
+          kind,
+          summary,
+          payload_json,
+          sequence,
+          created_at
+        )
+        VALUES (
+          'activity-user-input-requested-drifted',
+          'thread-drifted',
+          'turn-drifted',
+          'info',
+          'user-input.requested',
+          'User input requested',
+          '{"requestId":"input-drifted","questions":[{"id":"area","header":"Area","question":"Which repo area should I inspect next?","options":[{"label":"Server","description":"Server orchestration."}]}]}',
+          NULL,
+          '2026-02-24T00:04:00.000Z'
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_proposed_plans (
+          plan_id,
+          thread_id,
+          turn_id,
+          plan_markdown,
+          implemented_at,
+          implementation_thread_id,
+          created_at,
+          updated_at
+        )
+        VALUES (
+          'plan-drifted',
+          'thread-drifted',
+          'turn-drifted',
+          '# Do the thing',
+          NULL,
+          NULL,
+          '2026-02-24T00:05:00.000Z',
+          '2026-02-24T00:05:00.000Z'
+        )
+      `;
+
+      yield* Migration024;
+
+      const threadColumns = yield* sql<{
+        readonly name: string;
+      }>`PRAGMA table_info(projection_threads)`;
+      const threadRows = yield* sql<{
+        readonly latestUserMessageAt: string | null;
+        readonly pendingApprovalCount: number;
+        readonly pendingUserInputCount: number;
+        readonly hasActionableProposedPlan: number;
+      }>`
+        SELECT
+          latest_user_message_at AS "latestUserMessageAt",
+          pending_approval_count AS "pendingApprovalCount",
+          pending_user_input_count AS "pendingUserInputCount",
+          has_actionable_proposed_plan AS "hasActionableProposedPlan"
+        FROM projection_threads
+        WHERE thread_id = 'thread-drifted'
+      `;
+
+      assert.equal(
+        threadColumns.some((column) => column.name === "latest_user_message_at"),
+        true,
+      );
+      assert.equal(
+        threadColumns.some((column) => column.name === "pending_approval_count"),
+        true,
+      );
+      assert.equal(
+        threadColumns.some((column) => column.name === "pending_user_input_count"),
+        true,
+      );
+      assert.equal(
+        threadColumns.some((column) => column.name === "has_actionable_proposed_plan"),
+        true,
+      );
+      assert.deepStrictEqual(threadRows, [
+        {
+          latestUserMessageAt: "2026-02-24T00:01:00.000Z",
+          pendingApprovalCount: 0,
+          pendingUserInputCount: 1,
+          hasActionableProposedPlan: 1,
         },
       ]);
     }),

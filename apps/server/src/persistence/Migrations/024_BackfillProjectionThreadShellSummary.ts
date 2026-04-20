@@ -1,8 +1,50 @@
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Effect from "effect/Effect";
 
+const getProjectionThreadColumns = (sql: SqlClient.SqlClient) =>
+  sql`PRAGMA table_info(projection_threads)`.values.pipe(
+    Effect.map(
+      (rows) => new Set(rows.flatMap((row) => (typeof row[1] === "string" ? [row[1]] : []))),
+    ),
+  );
+
+const ensureProjectionThreadShellSummaryColumns = (sql: SqlClient.SqlClient) =>
+  Effect.gen(function* () {
+    const columns = yield* getProjectionThreadColumns(sql);
+
+    if (!columns.has("latest_user_message_at")) {
+      yield* sql`
+        ALTER TABLE projection_threads
+        ADD COLUMN latest_user_message_at TEXT
+      `;
+    }
+
+    if (!columns.has("pending_approval_count")) {
+      yield* sql`
+        ALTER TABLE projection_threads
+        ADD COLUMN pending_approval_count INTEGER NOT NULL DEFAULT 0
+      `;
+    }
+
+    if (!columns.has("pending_user_input_count")) {
+      yield* sql`
+        ALTER TABLE projection_threads
+        ADD COLUMN pending_user_input_count INTEGER NOT NULL DEFAULT 0
+      `;
+    }
+
+    if (!columns.has("has_actionable_proposed_plan")) {
+      yield* sql`
+        ALTER TABLE projection_threads
+        ADD COLUMN has_actionable_proposed_plan INTEGER NOT NULL DEFAULT 0
+      `;
+    }
+  });
+
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+
+  yield* ensureProjectionThreadShellSummaryColumns(sql);
 
   yield* sql`
     INSERT OR IGNORE INTO projection_pending_approvals (
