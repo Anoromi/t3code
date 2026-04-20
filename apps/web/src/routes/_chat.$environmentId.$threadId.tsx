@@ -21,8 +21,10 @@ import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { isElectron } from "../env";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import { useMediaQuery } from "../hooks/useMediaQuery";
+import { useSettings } from "../hooks/useSettings";
 import {
   projectHyprnavNeedsCorkdiffConnection,
+  resolveProjectHyprnavSettings,
   resolveActiveHyprnavSyncTarget,
 } from "../hyprnavSettings";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
@@ -191,21 +193,27 @@ function ChatThreadRouteView() {
   const diffOpen = !isElectron && search.diff === "1";
   const shouldUseDiffSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const defaultProjectHyprnavSettings = useSettings(
+    (settings) => settings.defaultProjectHyprnavSettings,
+  );
   const localDesktopEnvironmentId = isElectron ? primaryEnvironmentId : null;
   const hyprnavSyncTarget = resolveActiveHyprnavSyncTarget({
     localEnvironmentId: localDesktopEnvironmentId,
     activeThread: serverThread,
     project: serverThreadProject,
   });
+  const effectiveProjectHyprnav = serverThreadProject
+    ? resolveProjectHyprnavSettings(serverThreadProject.hyprnav, defaultProjectHyprnavSettings)
+    : null;
   const currentThreadKey = threadRef ? `${threadRef.environmentId}:${threadRef.threadId}` : null;
   const needsPreferredEditor =
-    serverThreadProject?.hyprnav.bindings.some(
+    effectiveProjectHyprnav?.bindings.some(
       (binding) => binding.action === "open-favorite-editor",
     ) ?? false;
-  const needsCorkdiffConnection = serverThreadProject?.hyprnav
-    ? projectHyprnavNeedsCorkdiffConnection(serverThreadProject.hyprnav)
+  const needsCorkdiffConnection = effectiveProjectHyprnav
+    ? projectHyprnavNeedsCorkdiffConnection(effectiveProjectHyprnav)
     : false;
-  const hyprnavSettingsKey = serverThreadProject ? JSON.stringify(serverThreadProject.hyprnav) : "";
+  const hyprnavSettingsKey = effectiveProjectHyprnav ? JSON.stringify(effectiveProjectHyprnav) : "";
   const availableEditorKey = needsPreferredEditor ? availableEditors.join(",") : "";
   const hyprnavTargetKey = hyprnavSyncTarget
     ? `${hyprnavSyncTarget.projectRoot}:${hyprnavSyncTarget.worktreePath ?? ""}:${hyprnavSyncTarget.threadId}`
@@ -277,7 +285,7 @@ function ChatThreadRouteView() {
   }, [draftThread?.promotedTo, serverThreadStarted, threadRef]);
 
   useEffect(() => {
-    if (!isElectron || !hyprnavSyncTarget || !hyprnavSyncRequestKey || !serverThreadProject) {
+    if (!isElectron || !hyprnavSyncTarget || !hyprnavSyncRequestKey || !effectiveProjectHyprnav) {
       return;
     }
 
@@ -315,7 +323,7 @@ function ChatThreadRouteView() {
         projectRoot: hyprnavSyncTarget.projectRoot,
         worktreePath: hyprnavSyncTarget.worktreePath,
         threadId: hyprnavSyncTarget.threadId,
-        hyprnav: serverThreadProject.hyprnav,
+        hyprnav: effectiveProjectHyprnav,
         preferredEditor,
         clearBindings: [],
         corkdiffConnection,
@@ -354,7 +362,7 @@ function ChatThreadRouteView() {
     hyprnavSettingsKey,
     needsCorkdiffConnection,
     needsPreferredEditor,
-    serverThreadProject,
+    effectiveProjectHyprnav,
   ]);
 
   if (!threadRef || !bootstrapComplete || !routeThreadExists) {

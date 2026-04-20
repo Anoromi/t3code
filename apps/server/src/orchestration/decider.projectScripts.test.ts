@@ -1,6 +1,7 @@
 import {
   CommandId,
   DEFAULT_PROJECT_HYPRNAV_SETTINGS,
+  DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   MessageId,
@@ -131,8 +132,21 @@ describe("decider project scripts", () => {
 
     const hyprnav = {
       bindings: [
-        { id: "terminal", slot: 3, scope: "worktree", action: "worktree-terminal" },
-        { id: "custom", slot: 4, scope: "worktree", action: "shell-command", command: "tmux" },
+        {
+          id: "terminal",
+          slot: 3,
+          scope: "worktree",
+          workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+          action: "worktree-terminal",
+        },
+        {
+          id: "custom",
+          slot: 4,
+          scope: "worktree",
+          workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+          action: "shell-command",
+          command: "tmux",
+        },
       ],
     } as const;
 
@@ -191,8 +205,20 @@ describe("decider project scripts", () => {
             projectId: asProjectId("project-hyprnav-duplicate"),
             hyprnav: {
               bindings: [
-                { id: "terminal", slot: 1, scope: "worktree", action: "worktree-terminal" },
-                { id: "editor", slot: 1, scope: "worktree", action: "open-favorite-editor" },
+                {
+                  id: "terminal",
+                  slot: 1,
+                  scope: "worktree",
+                  workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+                  action: "worktree-terminal",
+                },
+                {
+                  id: "editor",
+                  slot: 1,
+                  scope: "worktree",
+                  workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+                  action: "open-favorite-editor",
+                },
               ],
             },
           },

@@ -1,13 +1,16 @@
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime";
 import type {
   DesktopHyprnavScopedSlot,
+  ProjectHyprnavOverride,
   EnvironmentId,
   ProjectHyprnavAction,
   ProjectHyprnavBinding,
   ProjectHyprnavScope,
   ProjectHyprnavSettings,
+  ProjectHyprnavWorkspaceTarget,
 } from "@t3tools/contracts";
 import {
+  DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
   PROJECT_HYPRNAV_CORKDIFF_COMMAND_TEMPLATE,
   PROJECT_HYPRNAV_CORKDIFF_ID,
 } from "@t3tools/contracts";
@@ -19,6 +22,7 @@ export const HYPRNAV_ACTION_ROWS: ReadonlyArray<{
 }> = [
   { key: "worktree-terminal", label: "Worktree terminal" },
   { key: "open-favorite-editor", label: "Open favorite editor" },
+  { key: "nothing", label: "Nothing" },
   { key: "shell-command", label: "Shell command" },
 ] as const;
 
@@ -31,6 +35,14 @@ export const HYPRNAV_SCOPE_ROWS: ReadonlyArray<{
   { key: "thread", label: "Once per thread" },
 ] as const;
 
+export const HYPRNAV_WORKSPACE_ROWS: ReadonlyArray<{
+  key: ProjectHyprnavWorkspaceTarget["mode"];
+  label: string;
+}> = [
+  { key: "managed", label: "Managed" },
+  { key: "absolute", label: "Absolute workspace" },
+] as const;
+
 export function findHyprnavActionLabel(action: ProjectHyprnavAction): string {
   return HYPRNAV_ACTION_ROWS.find((row) => row.key === action)?.label ?? action;
 }
@@ -41,6 +53,23 @@ export function findHyprnavScopeLabel(scope: ProjectHyprnavScope): string {
 
 export function hyprnavScopeSlotKey(scope: ProjectHyprnavScope, slot: number): string {
   return `${scope}:${String(slot)}`;
+}
+
+export function findHyprnavWorkspaceLabel(mode: ProjectHyprnavWorkspaceTarget["mode"]): string {
+  return HYPRNAV_WORKSPACE_ROWS.find((row) => row.key === mode)?.label ?? mode;
+}
+
+export function resolveProjectHyprnavSettings(
+  projectHyprnavOverride: ProjectHyprnavOverride | undefined,
+  defaultProjectHyprnavSettings: ProjectHyprnavSettings,
+): ProjectHyprnavSettings {
+  return projectHyprnavOverride ?? defaultProjectHyprnavSettings;
+}
+
+export function projectUsesDefaultHyprnav(
+  projectHyprnavOverride: ProjectHyprnavOverride | undefined,
+): boolean {
+  return projectHyprnavOverride === null || projectHyprnavOverride === undefined;
 }
 
 export function validateProjectHyprnavSettings(settings: ProjectHyprnavSettings): {
@@ -99,11 +128,13 @@ export function makeProjectHyprnavShellBinding(input: {
   readonly slot: number;
   readonly scope?: ProjectHyprnavScope;
   readonly command?: string;
+  readonly workspace?: ProjectHyprnavWorkspaceTarget;
 }): ProjectHyprnavBinding {
   return {
     id: input.id,
     slot: input.slot,
     scope: input.scope ?? "worktree",
+    workspace: input.workspace ?? DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
     action: "shell-command",
     command: input.command ?? "",
   };
@@ -200,7 +231,9 @@ export function projectHyprnavNeedsCorkdiffConnection(settings: ProjectHyprnavSe
 
 export function buildProjectHyprnavSyncJobs(input: {
   localEnvironmentId: EnvironmentId;
-  projects: readonly Project[];
+  projects: readonly (Pick<Project, "environmentId" | "id" | "cwd"> & {
+    hyprnav: ProjectHyprnavSettings;
+  })[];
   threadShells: readonly ThreadShell[];
   activeThread:
     | Pick<Thread, "id" | "environmentId" | "projectId" | "worktreePath">

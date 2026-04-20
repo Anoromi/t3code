@@ -143,8 +143,15 @@ function mapProjectScripts(scripts: ReadonlyArray<Project["scripts"][number]>): 
 }
 
 function mapProjectHyprnav(hyprnav: Project["hyprnav"]): Project["hyprnav"] {
+  if (hyprnav === null) {
+    return null;
+  }
+
   return {
-    bindings: hyprnav.bindings.map((binding) => ({ ...binding })),
+    bindings: hyprnav.bindings.map((binding) => ({
+      ...binding,
+      workspace: { ...binding.workspace },
+    })),
   };
 }
 

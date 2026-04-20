@@ -535,6 +535,7 @@ describe("wsApi", () => {
       confirmThreadDelete: false,
       defaultCodexFastMode: true,
       defaultCodexReasoningEffort: "high" as const,
+      defaultProjectHyprnavSettings: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
       diffWordWrap: true,
       sidebarProjectGroupingMode: "repository_path" as const,
       sidebarProjectGroupingOverrides: {
@@ -595,6 +596,7 @@ describe("wsApi", () => {
       confirmThreadDelete: false,
       defaultCodexFastMode: true,
       defaultCodexReasoningEffort: "high" as const,
+      defaultProjectHyprnavSettings: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
       diffWordWrap: true,
       sidebarProjectGroupingMode: "repository_path" as const,
       sidebarProjectGroupingOverrides: {

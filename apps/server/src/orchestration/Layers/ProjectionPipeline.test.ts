@@ -3,6 +3,7 @@ import {
   CommandId,
   CorrelationId,
   DEFAULT_PROJECT_HYPRNAV_SETTINGS,
+  DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
   EventId,
   MessageId,
   ProjectId,
@@ -2572,8 +2573,21 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         },
         hyprnav: {
           bindings: [
-            { id: "terminal", slot: 3, scope: "worktree", action: "worktree-terminal" },
-            { id: "custom", slot: 4, scope: "worktree", action: "shell-command", command: "tmux" },
+            {
+              id: "terminal",
+              slot: 3,
+              scope: "worktree",
+              workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+              action: "worktree-terminal",
+            },
+            {
+              id: "custom",
+              slot: 4,
+              scope: "worktree",
+              workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+              action: "shell-command",
+              command: "tmux",
+            },
           ],
         },
       });

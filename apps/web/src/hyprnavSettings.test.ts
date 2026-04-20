@@ -1,6 +1,7 @@
 import { scopeProjectRef, scopedProjectKey } from "@t3tools/client-runtime";
 import {
   DEFAULT_PROJECT_HYPRNAV_SETTINGS,
+  DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
   EnvironmentId,
   ProjectId,
   ThreadId,
@@ -10,7 +11,9 @@ import { describe, expect, it } from "vitest";
 import {
   buildProjectHyprnavSyncJobs,
   computeRemovedHyprnavBindings,
+  projectUsesDefaultHyprnav,
   projectHyprnavNeedsCorkdiffConnection,
+  resolveProjectHyprnavSettings,
   resolveActiveHyprnavLockTarget,
   resolveActiveHyprnavSyncTarget,
   validateProjectHyprnavSettings,
@@ -39,6 +42,15 @@ function makeProject(overrides: Partial<Project> = {}): Project {
   };
 }
 
+function makeResolvedProject(
+  overrides: Partial<Project> = {},
+): Project & { hyprnav: typeof DEFAULT_PROJECT_HYPRNAV_SETTINGS } {
+  return makeProject({
+    hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
+    ...overrides,
+  }) as Project & { hyprnav: typeof DEFAULT_PROJECT_HYPRNAV_SETTINGS };
+}
+
 function makeThreadShell(overrides: Partial<ThreadShell> = {}): ThreadShell {
   return {
     id: ThreadId.make("thread-1"),
@@ -65,9 +77,28 @@ describe("hyprnavSettings", () => {
     expect(
       validateProjectHyprnavSettings({
         bindings: [
-          { id: "terminal", slot: 1, scope: "worktree", action: "worktree-terminal" },
-          { id: "editor", slot: 1, scope: "worktree", action: "open-favorite-editor" },
-          { id: "custom", slot: 1, scope: "project", action: "shell-command", command: "tmux" },
+          {
+            id: "terminal",
+            slot: 1,
+            scope: "worktree",
+            workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+            action: "worktree-terminal",
+          },
+          {
+            id: "editor",
+            slot: 1,
+            scope: "worktree",
+            workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+            action: "open-favorite-editor",
+          },
+          {
+            id: "custom",
+            slot: 1,
+            scope: "project",
+            workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+            action: "shell-command",
+            command: "tmux",
+          },
         ],
       }).duplicateScopedSlots,
     ).toEqual([{ scope: "worktree", slot: 1 }]);
@@ -77,10 +108,33 @@ describe("hyprnavSettings", () => {
     expect(
       validateProjectHyprnavSettings({
         bindings: [
-          { id: "custom", slot: 3, scope: "thread", action: "shell-command", command: "" },
+          {
+            id: "custom",
+            slot: 3,
+            scope: "thread",
+            workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+            action: "shell-command",
+            command: "",
+          },
         ],
       }).emptyShellCommandBindingIds,
     ).toEqual(["custom"]);
+  });
+
+  it("does not require commands for nothing bindings", () => {
+    expect(
+      validateProjectHyprnavSettings({
+        bindings: [
+          {
+            id: "placeholder",
+            slot: 3,
+            scope: "thread",
+            workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+            action: "nothing",
+          },
+        ],
+      }).emptyShellCommandBindingIds,
+    ).toEqual([]);
   });
 
   it("emits removed bindings when slot or scope ownership changes", () => {
@@ -88,16 +142,54 @@ describe("hyprnavSettings", () => {
       computeRemovedHyprnavBindings(
         {
           bindings: [
-            { id: "terminal", slot: 1, scope: "worktree", action: "worktree-terminal" },
-            { id: "editor", slot: 2, scope: "project", action: "open-favorite-editor" },
-            { id: "custom", slot: 8, scope: "thread", action: "shell-command", command: "old" },
+            {
+              id: "terminal",
+              slot: 1,
+              scope: "worktree",
+              workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+              action: "worktree-terminal",
+            },
+            {
+              id: "editor",
+              slot: 2,
+              scope: "project",
+              workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+              action: "open-favorite-editor",
+            },
+            {
+              id: "custom",
+              slot: 8,
+              scope: "thread",
+              workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+              action: "shell-command",
+              command: "old",
+            },
           ],
         },
         {
           bindings: [
-            { id: "terminal", slot: 7, scope: "worktree", action: "worktree-terminal" },
-            { id: "editor", slot: 2, scope: "project", action: "open-favorite-editor" },
-            { id: "custom", slot: 8, scope: "project", action: "shell-command", command: "new" },
+            {
+              id: "terminal",
+              slot: 7,
+              scope: "worktree",
+              workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+              action: "worktree-terminal",
+            },
+            {
+              id: "editor",
+              slot: 2,
+              scope: "project",
+              workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+              action: "open-favorite-editor",
+            },
+            {
+              id: "custom",
+              slot: 8,
+              scope: "project",
+              workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+              action: "shell-command",
+              command: "new",
+            },
           ],
         },
       ),
@@ -112,11 +204,57 @@ describe("hyprnavSettings", () => {
       computeRemovedHyprnavBindings(
         {
           bindings: [
-            { id: "slot-1", slot: 1, scope: "worktree", action: "shell-command", command: "old" },
+            {
+              id: "slot-1",
+              slot: 1,
+              scope: "worktree",
+              workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+              action: "shell-command",
+              command: "old",
+            },
           ],
         },
         {
-          bindings: [{ id: "slot-1", slot: 1, scope: "worktree", action: "worktree-terminal" }],
+          bindings: [
+            {
+              id: "slot-1",
+              slot: 1,
+              scope: "worktree",
+              workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+              action: "worktree-terminal",
+            },
+          ],
+        },
+      ),
+    ).toEqual([]);
+  });
+
+  it("does not emit removed bindings when only workspace targeting changes", () => {
+    expect(
+      computeRemovedHyprnavBindings(
+        {
+          bindings: [
+            {
+              id: "slot-1",
+              slot: 1,
+              scope: "worktree",
+              workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+              action: "shell-command",
+              command: "old",
+            },
+          ],
+        },
+        {
+          bindings: [
+            {
+              id: "slot-1",
+              slot: 1,
+              scope: "worktree",
+              workspace: { mode: "absolute", workspaceId: 13 },
+              action: "shell-command",
+              command: "old",
+            },
+          ],
         },
       ),
     ).toEqual([]);
@@ -174,7 +312,7 @@ describe("hyprnavSettings", () => {
     expect(
       buildProjectHyprnavSyncJobs({
         localEnvironmentId,
-        projects: [makeProject()],
+        projects: [makeResolvedProject()],
         threadShells: [
           makeThreadShell({
             id: ThreadId.make("thread-1"),
@@ -217,7 +355,7 @@ describe("hyprnavSettings", () => {
     expect(
       buildProjectHyprnavSyncJobs({
         localEnvironmentId,
-        projects: [makeProject()],
+        projects: [makeResolvedProject()],
         threadShells: [],
         activeThread: null,
         clearBindingsByProjectKey: new Map([[projectKey, [{ scope: "project", slot: 2 }]]]),
@@ -239,9 +377,51 @@ describe("hyprnavSettings", () => {
     expect(
       projectHyprnavNeedsCorkdiffConnection({
         bindings: [
-          { id: "custom", slot: 5, scope: "project", action: "shell-command", command: "tmux" },
+          {
+            id: "custom",
+            slot: 5,
+            scope: "project",
+            workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+            action: "shell-command",
+            command: "tmux",
+          },
         ],
       }),
     ).toBe(false);
+  });
+
+  it("resolves project defaults when the override is null", () => {
+    expect(resolveProjectHyprnavSettings(null, DEFAULT_PROJECT_HYPRNAV_SETTINGS)).toEqual(
+      DEFAULT_PROJECT_HYPRNAV_SETTINGS,
+    );
+    expect(projectUsesDefaultHyprnav(null)).toBe(true);
+    expect(projectUsesDefaultHyprnav(DEFAULT_PROJECT_HYPRNAV_SETTINGS)).toBe(false);
+  });
+
+  it("prefers the project override over global Hyprnav defaults", () => {
+    const defaults = {
+      bindings: [
+        {
+          id: "terminal",
+          slot: 1,
+          scope: "worktree",
+          workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+          action: "worktree-terminal",
+        },
+      ],
+    } as const;
+    const override = {
+      bindings: [
+        {
+          id: "terminal",
+          slot: 1,
+          scope: "worktree",
+          workspace: { mode: "absolute", workspaceId: 21 },
+          action: "worktree-terminal",
+        },
+      ],
+    } as const;
+
+    expect(resolveProjectHyprnavSettings(override, defaults)).toEqual(override);
   });
 });

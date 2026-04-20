@@ -2,10 +2,9 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import { Effect, Layer, Schema, Struct } from "effect";
 import {
-  DEFAULT_PROJECT_HYPRNAV_SETTINGS,
   ModelSelection,
   OrchestrationWorktreeGroupTitle,
-  ProjectHyprnavSettings,
+  ProjectHyprnavOverride,
   ProjectScript,
 } from "@t3tools/contracts";
 import { toPersistenceSqlError } from "../Errors.ts";
@@ -21,12 +20,10 @@ const ProjectionProjectDbRow = ProjectionProject.mapFields(
   Struct.assign({
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
-    hyprnav: Schema.fromJsonString(ProjectHyprnavSettings),
+    hyprnav: Schema.NullOr(Schema.fromJsonString(ProjectHyprnavOverride)),
     worktreeGroupTitles: Schema.fromJsonString(Schema.Array(OrchestrationWorktreeGroupTitle)),
   }),
 );
-
-const DEFAULT_PROJECT_HYPRNAV_JSON = JSON.stringify(DEFAULT_PROJECT_HYPRNAV_SETTINGS);
 type ProjectionProjectDbRow = typeof ProjectionProjectDbRow.Type;
 
 const makeProjectionProjectRepository = Effect.gen(function* () {
@@ -88,7 +85,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
           scripts_json AS "scripts",
-          COALESCE(hyprnav_json, ${DEFAULT_PROJECT_HYPRNAV_JSON}) AS "hyprnav",
+          hyprnav_json AS "hyprnav",
           COALESCE(worktree_group_titles_json, '[]') AS "worktreeGroupTitles",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -109,7 +106,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           workspace_root AS "workspaceRoot",
           default_model_selection_json AS "defaultModelSelection",
           scripts_json AS "scripts",
-          COALESCE(hyprnav_json, ${DEFAULT_PROJECT_HYPRNAV_JSON}) AS "hyprnav",
+          hyprnav_json AS "hyprnav",
           COALESCE(worktree_group_titles_json, '[]') AS "worktreeGroupTitles",
           created_at AS "createdAt",
           updated_at AS "updatedAt",

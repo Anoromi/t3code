@@ -3,6 +3,7 @@ import {
   CheckpointRef,
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_PROJECT_HYPRNAV_SETTINGS,
+  DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
   EnvironmentId,
   EventId,
   MessageId,
@@ -492,7 +493,15 @@ describe("incremental orchestration updates", () => {
         },
         scripts: [],
         hyprnav: {
-          bindings: [{ id: "terminal", slot: 3, scope: "worktree", action: "worktree-terminal" }],
+          bindings: [
+            {
+              id: "terminal",
+              slot: 3,
+              scope: "worktree",
+              workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+              action: "worktree-terminal",
+            },
+          ],
         },
         createdAt: "2026-02-27T00:00:01.000Z",
         updatedAt: "2026-02-27T00:00:01.000Z",
@@ -504,7 +513,7 @@ describe("incremental orchestration updates", () => {
     expect(projectsOf(next)[0]?.id).toBe(recreatedProjectId);
     expect(projectsOf(next)[0]?.cwd).toBe("/tmp/project");
     expect(projectsOf(next)[0]?.name).toBe("Project Recreated");
-    expect(projectsOf(next)[0]?.hyprnav.bindings[0]?.slot).toBe(3);
+    expect(projectsOf(next)[0]?.hyprnav?.bindings[0]?.slot).toBe(3);
     expect(localEnvironmentStateOf(next).projectIds).toEqual([recreatedProjectId]);
     expect(localEnvironmentStateOf(next).projectById[originalProjectId]).toBeUndefined();
     expect(localEnvironmentStateOf(next).projectById[recreatedProjectId]?.id).toBe(

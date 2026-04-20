@@ -459,6 +459,12 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.defaultCodexFastMode !== DEFAULT_UNIFIED_SETTINGS.defaultCodexFastMode
         ? ["Codex fast mode"]
         : []),
+      ...(!Equal.equals(
+        settings.defaultProjectHyprnavSettings,
+        DEFAULT_UNIFIED_SETTINGS.defaultProjectHyprnavSettings,
+      )
+        ? ["Hyprnav defaults"]
+        : []),
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
@@ -478,6 +484,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
       settings.defaultCodexFastMode,
+      settings.defaultProjectHyprnavSettings,
       settings.defaultCodexReasoningEffort,
       settings.defaultThreadEnvMode,
       settings.diffWordWrap,
