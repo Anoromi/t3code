@@ -640,6 +640,7 @@ export const ChatComposer = memo(
       threadModelSelection: activeThreadModelSelection,
       projectModelSelection: activeProjectDefaultModelSelection,
       settings,
+      applyDefaultCodexSettings: selectedProvider === "codex",
     });
 
     const selectedProviderModels = getProviderModels(providerStatuses, selectedProvider);

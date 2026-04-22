@@ -4,15 +4,20 @@ import {
   type ScopedThreadRef,
   type ServerProviderModel,
 } from "@t3tools/contracts";
-import { isClaudeUltrathinkPrompt, resolveEffort } from "@t3tools/shared/model";
-import type { ReactNode } from "react";
-import type { DraftId } from "../../composerDraftStore";
-import { getProviderModelCapabilities } from "../../providerModels";
-import { TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
 import {
+  isClaudeUltrathinkPrompt,
   normalizeClaudeModelOptionsWithCapabilities,
   normalizeCodexModelOptionsWithCapabilities,
+  normalizeCodexModelOptionsWithoutCapabilities,
+  resolveEffort,
 } from "@t3tools/shared/model";
+import type { ReactNode } from "react";
+import type { DraftId } from "../../composerDraftStore";
+import {
+  getProviderModelCapabilities,
+  getProviderModelCapabilitiesOrNull,
+} from "../../providerModels";
+import { TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
 
 export type ComposerProviderStateInput = {
   provider: ProviderKind;
@@ -64,7 +69,8 @@ function getProviderStateFromCapabilities(
   input: ComposerProviderStateInput,
 ): ComposerProviderState {
   const { provider, model, models, prompt, modelOptions } = input;
-  const caps = getProviderModelCapabilities(models, model, provider);
+  const rawCaps = getProviderModelCapabilitiesOrNull(models, model, provider);
+  const caps = rawCaps ?? getProviderModelCapabilities(models, model, provider);
   const providerOptions = modelOptions?.[provider];
 
   // Resolve effort
@@ -81,7 +87,9 @@ function getProviderStateFromCapabilities(
   // Normalize options for dispatch
   const normalizedOptions =
     provider === "codex"
-      ? normalizeCodexModelOptionsWithCapabilities(caps, providerOptions)
+      ? rawCaps === null
+        ? normalizeCodexModelOptionsWithoutCapabilities(providerOptions)
+        : normalizeCodexModelOptionsWithCapabilities(caps, providerOptions)
       : normalizeClaudeModelOptionsWithCapabilities(caps, providerOptions);
 
   // Ultrathink styling (driven by capabilities data, not provider identity)

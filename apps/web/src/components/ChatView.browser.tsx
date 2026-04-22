@@ -78,6 +78,23 @@ const THREAD_REF = scopeThreadRef(LOCAL_ENVIRONMENT_ID, THREAD_ID);
 const THREAD_KEY = scopedThreadKey(THREAD_REF);
 const UUID_ROUTE_RE = /^\/draft\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const PROJECT_DRAFT_KEY = `${LOCAL_ENVIRONMENT_ID}:${PROJECT_ID}`;
+const CODEX_GPT5_MODEL_WITH_MEDIUM_FAST = {
+  slug: "gpt-5",
+  name: "GPT-5",
+  isCustom: false,
+  capabilities: {
+    reasoningEffortLevels: [
+      { value: "xhigh", label: "Extra High" },
+      { value: "high", label: "High", isDefault: true },
+      { value: "medium", label: "Medium" },
+      { value: "low", label: "Low" },
+    ],
+    supportsFastMode: true,
+    supportsThinkingToggle: false,
+    contextWindowOptions: [],
+    promptInjectedEffortLevels: [],
+  },
+} satisfies ServerConfig["providers"][number]["models"][number];
 const PROJECT_LOGICAL_KEY = deriveLogicalProjectKeyFromSettings(
   {
     environmentId: LOCAL_ENVIRONMENT_ID,
@@ -4151,10 +4168,12 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
-      const newThreadButton = page.getByTestId("new-thread-button");
-      await expect.element(newThreadButton).toBeInTheDocument();
+      const newThreadButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('[data-testid="new-thread-button"]'),
+        "Unable to find new thread button.",
+      );
 
-      await newThreadButton.click();
+      newThreadButton.click();
 
       const newThreadPath = await waitForURL(
         mounted.router,
@@ -4327,6 +4346,212 @@ describe("ChatView timeline estimator parity (full app)", () => {
       await mounted.cleanup();
     }
   });
+
+  it("preserves default codex traits when a new draft sends its first message", async () => {
+    localStorage.setItem(
+      "t3code:client-settings:v1",
+      JSON.stringify({
+        ...DEFAULT_CLIENT_SETTINGS,
+        defaultCodexReasoningEffort: "medium",
+        defaultCodexFastMode: true,
+      }),
+    );
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-default-codex-first-send" as MessageId,
+        targetText: "default codex first send",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "chat.new",
+              shortcut: {
+                key: "o",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: true,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      const newThreadPath = await triggerChatNewShortcutUntilPath(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID after chat.new.",
+      );
+      const draftId = draftIdFromPath(newThreadPath);
+
+      useComposerDraftStore.getState().setPrompt(draftId, "Preserve codex defaults");
+      await waitForLayout();
+
+      const sendButton = await waitForSendButton();
+      expect(sendButton.disabled).toBe(false);
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const request = findDispatchCommand("thread.turn.start");
+          expect(request).toBeTruthy();
+          const command = (
+            request?.command && typeof request.command === "object" ? request.command : request
+          ) as {
+            modelSelection?: {
+              provider?: string;
+              options?: {
+                reasoningEffort?: string;
+                fastMode?: boolean;
+              };
+            };
+            bootstrap?: {
+              createThread?: {
+                modelSelection?: {
+                  provider?: string;
+                  options?: {
+                    reasoningEffort?: string;
+                    fastMode?: boolean;
+                  };
+                };
+              };
+            };
+          };
+          expect(command.modelSelection).toMatchObject({
+            provider: "codex",
+            options: {
+              reasoningEffort: "medium",
+              fastMode: true,
+            },
+          });
+          expect(command.bootstrap?.createThread?.modelSelection).toMatchObject({
+            provider: "codex",
+            options: {
+              reasoningEffort: "medium",
+              fastMode: true,
+            },
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps default codex traits visible after a server thread completes without explicit options", async () => {
+    localStorage.setItem(
+      "t3code:client-settings:v1",
+      JSON.stringify({
+        ...DEFAULT_CLIENT_SETTINGS,
+        defaultCodexReasoningEffort: "medium",
+        defaultCodexFastMode: true,
+      }),
+    );
+
+    const snapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-default-codex-completed-thread" as MessageId,
+      targetText: "default codex completed thread",
+    });
+
+    const mounted = await mountChatView({
+      viewport: WIDE_FOOTER_VIEWPORT,
+      snapshot: {
+        ...snapshot,
+        threads: snapshot.threads.map((thread) =>
+          thread.id === THREAD_ID
+            ? Object.assign({}, thread, {
+                modelSelection: {
+                  provider: "codex",
+                  model: "gpt-5",
+                },
+                latestTurn: {
+                  turnId: "turn-default-codex-completed" as TurnId,
+                  state: "completed",
+                  requestedAt: isoAt(10_000),
+                  startedAt: isoAt(10_001),
+                  completedAt: isoAt(10_010),
+                  assistantMessageId: null,
+                },
+              })
+            : thread,
+        ),
+      },
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: nextFixture.serverConfig.providers.map((provider) =>
+            provider.provider === "codex"
+              ? {
+                  ...provider,
+                  models: [CODEX_GPT5_MODEL_WITH_MEDIUM_FAST],
+                }
+              : provider,
+          ),
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await waitForComposerEditor();
+
+      await vi.waitFor(
+        () => {
+          const buttonTexts = Array.from(document.querySelectorAll("button")).map(
+            (button) => button.textContent?.trim() ?? "",
+          );
+          const moreControls = document.querySelector<HTMLButtonElement>(
+            'button[aria-label="More composer controls"]',
+          );
+          if (moreControls) {
+            expect(buttonTexts).toContain("GPT-5");
+            return;
+          }
+          expect(buttonTexts).toContain("Medium · Fast");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      const moreControls = document.querySelector<HTMLButtonElement>(
+        'button[aria-label="More composer controls"]',
+      );
+      if (moreControls) {
+        moreControls.click();
+        await vi.waitFor(
+          () => {
+            const checkedItems = Array.from(
+              document.querySelectorAll<HTMLElement>('[role="menuitemradio"][aria-checked="true"]'),
+            ).map((item) => item.textContent?.trim() ?? "");
+            expect(checkedItems).toEqual(expect.arrayContaining(["Medium", "on"]));
+          },
+          { timeout: 8_000, interval: 16 },
+        );
+      }
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("hydrates the provider alongside a sticky claude model", async () => {
     useComposerDraftStore.setState({
       stickyModelSelectionByProvider: {

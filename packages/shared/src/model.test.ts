@@ -10,6 +10,7 @@ import {
   isClaudeUltrathinkPrompt,
   normalizeClaudeModelOptionsWithCapabilities,
   normalizeCodexModelOptionsWithCapabilities,
+  normalizeCodexModelOptionsWithoutCapabilities,
   normalizeModelSlug,
   resolveApiModelId,
   resolveContextWindow,
@@ -240,6 +241,35 @@ describe("normalize*ModelOptionsWithCapabilities", () => {
     ).toEqual({
       reasoningEffort: "high",
       fastMode: false,
+    });
+  });
+
+  it("preserves explicit codex options when capabilities are unknown", () => {
+    expect(
+      normalizeCodexModelOptionsWithoutCapabilities({
+        reasoningEffort: "medium",
+        fastMode: true,
+      }),
+    ).toEqual({
+      reasoningEffort: "medium",
+      fastMode: true,
+    });
+  });
+
+  it("preserves explicit false codex fast mode when capabilities are unknown", () => {
+    expect(normalizeCodexModelOptionsWithoutCapabilities({ fastMode: false })).toEqual({
+      fastMode: false,
+    });
+  });
+
+  it("ignores invalid codex effort when capabilities are unknown", () => {
+    expect(
+      normalizeCodexModelOptionsWithoutCapabilities({
+        reasoningEffort: "bogus",
+        fastMode: true,
+      } as never),
+    ).toEqual({
+      fastMode: true,
     });
   });
 

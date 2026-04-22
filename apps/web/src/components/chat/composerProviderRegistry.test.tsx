@@ -26,6 +26,15 @@ const CODEX_MODELS: ReadonlyArray<ServerProviderModel> = [
   },
 ];
 
+const CODEX_MODELS_WITH_NULL_CAPABILITIES: ReadonlyArray<ServerProviderModel> = [
+  {
+    slug: "gpt-5.4",
+    name: "GPT-5.4",
+    isCustom: false,
+    capabilities: null,
+  },
+];
+
 const CLAUDE_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
     slug: "claude-opus-4-6",
@@ -150,6 +159,66 @@ describe("getComposerProviderState", () => {
         reasoningEffort: "low",
         fastMode: true,
       },
+    });
+  });
+
+  it("preserves codex dispatch options when capabilities are absent", () => {
+    const state = getComposerProviderState({
+      provider: "codex",
+      model: "gpt-5.4",
+      models: CODEX_MODELS_WITH_NULL_CAPABILITIES,
+      prompt: "",
+      modelOptions: {
+        codex: {
+          reasoningEffort: "medium",
+          fastMode: true,
+        },
+      },
+    });
+
+    expect(state).toMatchObject({
+      provider: "codex",
+      modelOptionsForDispatch: {
+        reasoningEffort: "medium",
+        fastMode: true,
+      },
+    });
+  });
+
+  it("preserves explicit false codex fast mode when capabilities are absent", () => {
+    const state = getComposerProviderState({
+      provider: "codex",
+      model: "gpt-5.4",
+      models: CODEX_MODELS_WITH_NULL_CAPABILITIES,
+      prompt: "",
+      modelOptions: {
+        codex: {
+          fastMode: false,
+        },
+      },
+    });
+
+    expect(state.modelOptionsForDispatch).toEqual({
+      fastMode: false,
+    });
+  });
+
+  it("ignores invalid codex effort when capabilities are absent", () => {
+    const state = getComposerProviderState({
+      provider: "codex",
+      model: "gpt-5.4",
+      models: CODEX_MODELS_WITH_NULL_CAPABILITIES,
+      prompt: "",
+      modelOptions: {
+        codex: {
+          reasoningEffort: "bogus",
+          fastMode: true,
+        } as never,
+      },
+    });
+
+    expect(state.modelOptionsForDispatch).toEqual({
+      fastMode: true,
     });
   });
 
