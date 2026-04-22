@@ -742,6 +742,28 @@ function createSnapshotWithRecentThreads(): OrchestrationReadModel {
   };
 }
 
+function createSnapshotWithCompletedRecentThreads(): OrchestrationReadModel {
+  const snapshot = createSnapshotWithRecentThreads();
+  return {
+    ...snapshot,
+    threads: snapshot.threads.map((thread) => {
+      if (thread.id !== MIDDLE_THREAD_ID && thread.id !== OLDER_THREAD_ID) {
+        return thread;
+      }
+      return Object.assign({}, thread, {
+        latestTurn: {
+          turnId: `turn-${thread.id}` as TurnId,
+          state: "completed",
+          requestedAt: isoAt(1_000),
+          startedAt: isoAt(1_001),
+          completedAt: isoAt(1_010),
+          assistantMessageId: null,
+        },
+      });
+    }),
+  };
+}
+
 function withProjectScripts(
   snapshot: OrchestrationReadModel,
   scripts: OrchestrationReadModel["projects"][number]["scripts"],
@@ -6102,6 +6124,35 @@ describe("ChatView timeline estimator parity (full app)", () => {
         (path) => path.endsWith(selectedThreadPath),
         "Enter should open the searched keyboard-selected thread.",
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows completed status in the navigation command menu only for unseen completed threads", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithCompletedRecentThreads(),
+      configureFixture: configureNavigationCommandMenuShortcut,
+    });
+
+    try {
+      await waitForServerConfigToApply();
+
+      useUiStateStore.setState({
+        threadLastVisitedAtById: {
+          [threadKeyFor(MIDDLE_THREAD_ID)]: isoAt(1_009),
+          [threadKeyFor(OLDER_THREAD_ID)]: isoAt(1_011),
+        },
+      });
+
+      await openNavigationCommandMenu();
+
+      const unseenCompletedItem = await waitForCommandItem(MIDDLE_THREAD_TITLE);
+      expect(unseenCompletedItem.textContent).toContain("Completed");
+
+      const visitedCompletedItem = await waitForCommandItem(OLDER_THREAD_TITLE);
+      expect(visitedCompletedItem.textContent).not.toContain("Completed");
     } finally {
       await mounted.cleanup();
     }

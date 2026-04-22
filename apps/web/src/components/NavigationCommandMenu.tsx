@@ -9,6 +9,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime";
 import type { ProjectId, ThreadId } from "@t3tools/contracts";
 import { cn } from "~/lib/utils";
 import { formatRelativeTime } from "~/relativeTime";
@@ -19,7 +20,7 @@ import {
   buildNavigationCommandResults,
   getProjectCommandActionLabel,
 } from "./NavigationCommandMenu.logic";
-import { isActionableThreadStatus, resolveThreadStatusPill } from "./Sidebar.logic";
+import { resolveThreadStatusPill } from "./Sidebar.logic";
 import {
   CommandDialog,
   CommandDialogPopup,
@@ -212,15 +213,16 @@ export function NavigationCommandMenu(props: {
                       : resolveThreadStatusPill({
                           thread: {
                             ...thread,
-                            lastVisitedAt: threadLastVisitedAtById[thread.id],
+                            lastVisitedAt:
+                              threadLastVisitedAtById[
+                                scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
+                              ],
                           },
                           hasPendingApprovals: derivePendingApprovals(thread.activities).length > 0,
                           hasPendingUserInput:
                             derivePendingUserInputs(thread.activities).length > 0,
                         });
-                  const threadStatus = isActionableThreadStatus(resolvedThreadStatus)
-                    ? resolvedThreadStatus
-                    : null;
+                  const threadStatus = resolvedThreadStatus;
                   const isHighlighted = index === highlightedIndex;
 
                   return (
