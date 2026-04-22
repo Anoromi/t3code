@@ -142,6 +142,23 @@ export function normalizeCodexModelOptionsWithCapabilities(
   return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
 }
 
+export function normalizeCodexModelOptionsWithoutCapabilities(
+  modelOptions: CodexModelOptions | null | undefined,
+): CodexModelOptions | undefined {
+  const reasoningEffort = modelOptions?.reasoningEffort;
+  const nextOptions: {
+    reasoningEffort?: CodexModelOptions["reasoningEffort"];
+    fastMode?: CodexModelOptions["fastMode"];
+  } = {};
+  if (reasoningEffort && CODEX_REASONING_EFFORT_OPTIONS.includes(reasoningEffort)) {
+    nextOptions.reasoningEffort = reasoningEffort;
+  }
+  if (typeof modelOptions?.fastMode === "boolean") {
+    nextOptions.fastMode = modelOptions.fastMode;
+  }
+  return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
+}
+
 export function normalizeClaudeModelOptionsWithCapabilities(
   caps: ModelCapabilities,
   modelOptions: ClaudeModelOptions | null | undefined,

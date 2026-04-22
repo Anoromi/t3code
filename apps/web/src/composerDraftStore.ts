@@ -391,7 +391,7 @@ interface ComposerDraftModelState {
 function providerModelOptionsFromSelection(
   modelSelection: ModelSelection | null | undefined,
 ): ProviderModelOptions | null {
-  if (!modelSelection?.options) {
+  if (!modelSelection?.options || Object.keys(modelSelection.options).length === 0) {
     return null;
   }
 
@@ -406,7 +406,7 @@ function modelSelectionByProviderToOptions(
   if (!map) return null;
   const result: Record<string, unknown> = {};
   for (const [provider, selection] of Object.entries(map)) {
-    if (selection?.options) {
+    if (selection?.options && Object.keys(selection.options).length > 0) {
       result[provider] = selection.options;
     }
   }
@@ -739,6 +739,7 @@ export function deriveEffectiveComposerModelState(input: {
   threadModelSelection: ModelSelection | null | undefined;
   projectModelSelection: ModelSelection | null | undefined;
   settings: UnifiedSettings;
+  applyDefaultCodexSettings?: boolean;
 }): EffectiveComposerModelState {
   const baseModel =
     normalizeModelSlug(
@@ -758,6 +759,14 @@ export function deriveEffectiveComposerModelState(input: {
     modelSelectionByProviderToOptions(input.draft?.modelSelectionByProvider) ??
     providerModelOptionsFromSelection(input.threadModelSelection) ??
     providerModelOptionsFromSelection(input.projectModelSelection) ??
+    (input.applyDefaultCodexSettings === true && input.selectedProvider === "codex"
+      ? {
+          codex: {
+            reasoningEffort: input.settings.defaultCodexReasoningEffort,
+            ...(input.settings.defaultCodexFastMode === true ? { fastMode: true } : {}),
+          },
+        }
+      : null) ??
     null;
 
   return {
@@ -2861,6 +2870,7 @@ export function useEffectiveComposerModelState(input: {
   threadModelSelection: ModelSelection | null | undefined;
   projectModelSelection: ModelSelection | null | undefined;
   settings: UnifiedSettings;
+  applyDefaultCodexSettings?: boolean;
 }): EffectiveComposerModelState {
   const draft = useComposerDraftModelState(input.threadRef ?? input.draftId ?? DraftId.make(""));
 
@@ -2873,6 +2883,7 @@ export function useEffectiveComposerModelState(input: {
         threadModelSelection: input.threadModelSelection,
         projectModelSelection: input.projectModelSelection,
         settings: input.settings,
+        applyDefaultCodexSettings: input.applyDefaultCodexSettings === true,
       }),
     [
       draft,
@@ -2881,6 +2892,7 @@ export function useEffectiveComposerModelState(input: {
       input.projectModelSelection,
       input.selectedProvider,
       input.threadModelSelection,
+      input.applyDefaultCodexSettings,
     ],
   );
 }

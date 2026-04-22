@@ -16,6 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   COMPOSER_DRAFT_STORAGE_KEY,
+  deriveEffectiveComposerModelState,
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThread,
   markPromotedDraftThreadByRef,
@@ -32,6 +33,7 @@ import {
   type TerminalContextDraft,
 } from "./lib/terminalContext";
 import { createDebouncedStorage } from "./lib/storage";
+import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
 
 function makeImage(input: {
   id: string;
@@ -1118,6 +1120,80 @@ describe("composerDraftStore modelSelection", () => {
     expect(useComposerDraftStore.getState().stickyModelSelectionByProvider.claudeAgent).toEqual(
       modelSelection("claudeAgent", "claude-opus-4-6", { effort: "max" }),
     );
+  });
+});
+
+describe("deriveEffectiveComposerModelState", () => {
+  it("applies default codex settings when a server thread has no explicit options", () => {
+    const state = deriveEffectiveComposerModelState({
+      draft: null,
+      providers: [],
+      selectedProvider: "codex",
+      threadModelSelection: modelSelection("codex", "gpt-5.4"),
+      projectModelSelection: null,
+      settings: {
+        ...DEFAULT_UNIFIED_SETTINGS,
+        defaultCodexReasoningEffort: "medium",
+        defaultCodexFastMode: true,
+      },
+      applyDefaultCodexSettings: true,
+    });
+
+    expect(state.modelOptions).toEqual({
+      codex: {
+        reasoningEffort: "medium",
+        fastMode: true,
+      },
+    });
+  });
+
+  it("applies default codex settings when a server thread has empty options", () => {
+    const state = deriveEffectiveComposerModelState({
+      draft: null,
+      providers: [],
+      selectedProvider: "codex",
+      threadModelSelection: modelSelection("codex", "gpt-5.4", {}),
+      projectModelSelection: null,
+      settings: {
+        ...DEFAULT_UNIFIED_SETTINGS,
+        defaultCodexReasoningEffort: "medium",
+        defaultCodexFastMode: true,
+      },
+      applyDefaultCodexSettings: true,
+    });
+
+    expect(state.modelOptions).toEqual({
+      codex: {
+        reasoningEffort: "medium",
+        fastMode: true,
+      },
+    });
+  });
+
+  it("keeps explicit server thread codex options ahead of defaults", () => {
+    const state = deriveEffectiveComposerModelState({
+      draft: null,
+      providers: [],
+      selectedProvider: "codex",
+      threadModelSelection: modelSelection("codex", "gpt-5.4", {
+        reasoningEffort: "low",
+        fastMode: false,
+      }),
+      projectModelSelection: null,
+      settings: {
+        ...DEFAULT_UNIFIED_SETTINGS,
+        defaultCodexReasoningEffort: "medium",
+        defaultCodexFastMode: true,
+      },
+      applyDefaultCodexSettings: true,
+    });
+
+    expect(state.modelOptions).toEqual({
+      codex: {
+        reasoningEffort: "low",
+        fastMode: false,
+      },
+    });
   });
 });
 
