@@ -455,6 +455,53 @@ describe("deriveRecoverableUserInputPrompt", () => {
     });
   });
 
+  it("derives a recoverable prompt from a no-active-session user-input failure", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "user-input-open-no-active-session",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        tone: "info",
+        payload: {
+          requestId: "req-user-input-no-active-session",
+          questions: [
+            {
+              id: "sandbox_mode",
+              header: "Sandbox",
+              question: "Which mode should be used?",
+              options: [
+                {
+                  label: "workspace-write",
+                  description: "Allow workspace writes only",
+                },
+              ],
+            },
+          ],
+        },
+      }),
+      makeActivity({
+        id: "user-input-failed-no-active-session",
+        createdAt: "2026-02-23T00:00:02.000Z",
+        kind: "provider.user-input.respond.failed",
+        summary: "Provider user input response failed",
+        tone: "error",
+        payload: {
+          requestId: "req-user-input-no-active-session",
+          detail: "No active provider session is bound to this thread.",
+        },
+      }),
+    ];
+
+    expect(derivePendingUserInputs(activities)).toEqual([]);
+    expect(deriveRecoverableUserInputPrompt(activities, [], makeThreadSession())).toMatchObject({
+      requestId: "req-user-input-no-active-session",
+      createdAt: "2026-02-23T00:00:01.000Z",
+      failedAt: "2026-02-23T00:00:02.000Z",
+      failureDetail: "No active provider session is bound to this thread.",
+    });
+  });
+
   it("accepts both unknown-pending detail variants", () => {
     const hyphenated = deriveRecoverableUserInputPrompt(
       [

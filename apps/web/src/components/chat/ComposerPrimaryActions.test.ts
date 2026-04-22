@@ -36,6 +36,18 @@ describe("formatPendingPrimaryActionLabel", () => {
     ).toBe("Submit");
   });
 
+  it("keeps the recovery action explicit in compact mode", () => {
+    expect(
+      formatPendingPrimaryActionLabel({
+        compact: true,
+        isLastQuestion: true,
+        isResponding: false,
+        questionIndex: 0,
+        isRecoveryMode: true,
+      }),
+    ).toBe("Restart from this prompt");
+  });
+
   it("returns 'Next' in compact mode when not the last question", () => {
     expect(
       formatPendingPrimaryActionLabel({

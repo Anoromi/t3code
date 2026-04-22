@@ -3600,7 +3600,8 @@ export default function ChatView(props: ChatViewProps) {
     const isStaleFailure =
       normalizedDetail.includes("stale pending user-input request") ||
       normalizedDetail.includes("unknown pending user-input request") ||
-      normalizedDetail.includes("unknown pending user input request");
+      normalizedDetail.includes("unknown pending user input request") ||
+      normalizedDetail.includes("no active provider session is bound to this thread");
     if (!isStaleFailure) {
       return;
     }
