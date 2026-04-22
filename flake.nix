@@ -39,7 +39,7 @@
           };
         in
         {
-          inherit desktop;
+          inherit desktop nodeModules;
           default = desktop;
         };
       mkDevShell =
