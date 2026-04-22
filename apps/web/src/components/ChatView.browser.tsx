@@ -3915,7 +3915,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
         () => {
           const request = findDispatchCommand("thread.turn.start");
           expect(request).toBeTruthy();
-          const command = request?.command as {
+          const command = (
+            request?.command && typeof request.command === "object" ? request.command : request
+          ) as {
             message?: { text?: string };
           };
           expect(command.message?.text).toContain(
@@ -3927,6 +3929,66 @@ describe("ChatView timeline estimator parity (full app)", () => {
         },
         { timeout: 8_000, interval: 16 },
       );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("renders a no-active-session recovered prompt after restart", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-no-active-session-submit" as MessageId,
+        targetText: "no active session submit",
+        activities: [
+          makeThreadActivity({
+            id: "activity-user-input-requested-no-active-session",
+            createdAt: isoAt(10_000),
+            kind: "user-input.requested",
+            summary: "User input requested",
+            tone: "info",
+            payload: {
+              requestId: "req-no-active-session",
+              questions: [
+                {
+                  id: "sandbox_mode",
+                  header: "Sandbox",
+                  question: "Which mode should be used?",
+                  options: [
+                    {
+                      label: "workspace-write",
+                      description: "Allow workspace writes only",
+                    },
+                  ],
+                },
+              ],
+            },
+          }),
+          makeThreadActivity({
+            id: "activity-user-input-failed-no-active-session",
+            createdAt: isoAt(10_001),
+            kind: "provider.user-input.respond.failed",
+            summary: "Provider user input response failed",
+            tone: "error",
+            payload: {
+              requestId: "req-no-active-session",
+              detail: "No active provider session is bound to this thread.",
+            },
+          }),
+        ],
+      }),
+    });
+
+    try {
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).toContain("Recovered Prompt");
+          expect(document.body.textContent).toContain("Restart from this prompt");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      expect(findDispatchCommand("thread.user-input.respond")).toBeUndefined();
     } finally {
       await mounted.cleanup();
     }

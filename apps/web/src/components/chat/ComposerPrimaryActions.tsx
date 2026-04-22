@@ -40,7 +40,7 @@ export const formatPendingPrimaryActionLabel = (input: {
   }
   if (input.compact) {
     if (input.isLastQuestion) {
-      return input.isRecoveryMode === true ? "Restart" : "Submit";
+      return input.isRecoveryMode === true ? "Restart from this prompt" : "Submit";
     }
     return "Next";
   }
