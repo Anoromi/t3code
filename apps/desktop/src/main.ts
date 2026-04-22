@@ -546,19 +546,24 @@ async function waitForBackendWindowReady(baseUrl: string): Promise<"listening" |
 }
 
 function ensureInitialBackendWindowOpen(): void {
+  if (isDevelopment) {
+    return;
+  }
+
   const existingWindow = mainWindow ?? BrowserWindow.getAllWindows()[0] ?? null;
-  if (isDevelopment || existingWindow !== null || backendInitialWindowOpenInFlight !== null) {
+  if (existingWindow === null) {
+    mainWindow = createWindow();
+    writeDesktopLogHeader("bootstrap main window created");
+    revealWindow(mainWindow);
+  }
+
+  if (backendInitialWindowOpenInFlight !== null) {
     return;
   }
 
   const nextOpen = waitForBackendWindowReady(backendHttpUrl)
     .then((source) => {
       writeDesktopLogHeader(`bootstrap backend ready source=${source}`);
-      if (mainWindow ?? BrowserWindow.getAllWindows()[0]) {
-        return;
-      }
-      mainWindow = createWindow();
-      writeDesktopLogHeader("bootstrap main window created");
       void writeDesktopDaemonStatus("ready");
     })
     .catch((error) => {
@@ -2438,6 +2443,7 @@ function createWindow(): BrowserWindow {
   if (isDevelopment) {
     void window.loadURL(resolveDesktopDevServerUrl());
     window.webContents.openDevTools({ mode: "detach" });
+    revealInitialWindow();
   } else {
     void window.loadURL(backendHttpUrl);
   }

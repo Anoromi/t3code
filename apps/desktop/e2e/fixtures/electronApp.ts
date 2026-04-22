@@ -21,11 +21,27 @@ export interface DesktopE2eApp {
   readonly cleanup: () => Promise<void>;
 }
 
+export interface DesktopE2eProcess {
+  readonly app: ElectronApplication;
+  readonly repoDir: string;
+  readonly t3Home: string;
+  readonly port: number;
+  readonly logs: () => string;
+  readonly expectNoFatalLogs: () => void;
+  readonly cleanup: () => Promise<void>;
+}
+
 export interface DesktopE2eLaunchOptions {
   readonly fixtureFiles?: Readonly<Record<string, string>>;
   readonly extraEnv?: NodeJS.ProcessEnv;
   readonly fakeExecutables?: ReadonlyArray<"ghostty" | "hyprctl" | "hyprnav">;
 }
+
+export type DesktopE2eProcessLaunchOptions = DesktopE2eLaunchOptions & {
+  readonly repoDir?: string;
+  readonly t3Home?: string;
+  readonly port?: number;
+};
 
 export interface LoggedProcessInvocation {
   readonly name: string;
@@ -232,9 +248,13 @@ async function readLoggedProcessInvocations(
     .map((line) => JSON.parse(line) as LoggedProcessInvocation);
 }
 
-export async function launchDesktopE2eApp(
-  options: DesktopE2eLaunchOptions = {},
-): Promise<DesktopE2eApp> {
+export async function launchDesktopE2eProcess(
+  options: DesktopE2eProcessLaunchOptions = {},
+): Promise<
+  DesktopE2eProcess & {
+    readonly readLoggedProcessInvocations: () => Promise<ReadonlyArray<LoggedProcessInvocation>>;
+  }
+> {
   const mainPath = resolveMainPath();
   await fs.access(mainPath).catch(() => {
     throw new Error(
@@ -242,13 +262,16 @@ export async function launchDesktopE2eApp(
     );
   });
 
-  const repoDir = await createGitFixture(options.fixtureFiles);
-  const t3Home = await fs.mkdtemp(path.join(os.tmpdir(), "t3code-desktop-e2e-home-"));
+  const repoDir = options.repoDir ?? (await createGitFixture(options.fixtureFiles));
+  const ownsRepoDir = options.repoDir === undefined;
+  const t3Home =
+    options.t3Home ?? (await fs.mkdtemp(path.join(os.tmpdir(), "t3code-desktop-e2e-home-")));
+  const ownsT3Home = options.t3Home === undefined;
   const fakeExecutables =
     options.fakeExecutables && options.fakeExecutables.length > 0
       ? await installFakeExecutables(options.fakeExecutables)
       : null;
-  const port = await findFreePort();
+  const port = options.port ?? (await findFreePort());
   const env = { ...process.env };
   delete env.ELECTRON_RUN_AS_NODE;
   let output = "";
@@ -282,26 +305,11 @@ export async function launchDesktopE2eApp(
     output += chunk.toString();
   });
 
-  let page: Page;
-  try {
-    page = await app.firstWindow();
-  } catch (error) {
-    app.process().kill("SIGKILL");
-    await removeFixtureWorktrees(repoDir);
-    await fs.rm(repoDir, { recursive: true, force: true });
-    await fs.rm(t3Home, { recursive: true, force: true });
-    throw new Error(`Desktop Electron window did not open.\n\nCaptured logs:\n${output}`, {
-      cause: error,
-    });
-  }
-
   return {
     app,
-    page,
     repoDir,
     t3Home,
-    execGit: (args) => execGit(repoDir, args),
-    readWorktreePath: (branch) => readWorktreePath(repoDir, branch),
+    port,
     readLoggedProcessInvocations: () =>
       readLoggedProcessInvocations(fakeExecutables?.logPath ?? null),
     expectNoFatalLogs: () => {
@@ -315,12 +323,46 @@ export async function launchDesktopE2eApp(
     logs: () => output,
     cleanup: async () => {
       await app.close().catch(() => undefined);
-      await removeFixtureWorktrees(repoDir);
-      await fs.rm(repoDir, { recursive: true, force: true });
-      await fs.rm(t3Home, { recursive: true, force: true });
+      if (ownsRepoDir) {
+        await removeFixtureWorktrees(repoDir);
+        await fs.rm(repoDir, { recursive: true, force: true });
+      }
+      if (ownsT3Home) {
+        await fs.rm(t3Home, { recursive: true, force: true });
+      }
       if (fakeExecutables) {
         await fs.rm(fakeExecutables.binDir, { recursive: true, force: true });
       }
     },
+  };
+}
+
+export async function launchDesktopE2eApp(
+  options: DesktopE2eLaunchOptions = {},
+): Promise<DesktopE2eApp> {
+  const process = await launchDesktopE2eProcess(options);
+
+  let page: Page;
+  try {
+    page = await process.app.firstWindow();
+  } catch (error) {
+    process.app.process().kill("SIGKILL");
+    await process.cleanup();
+    throw new Error(`Desktop Electron window did not open.\n\nCaptured logs:\n${process.logs()}`, {
+      cause: error,
+    });
+  }
+
+  return {
+    app: process.app,
+    page,
+    repoDir: process.repoDir,
+    t3Home: process.t3Home,
+    execGit: (args) => execGit(process.repoDir, args),
+    readWorktreePath: (branch) => readWorktreePath(process.repoDir, branch),
+    readLoggedProcessInvocations: process.readLoggedProcessInvocations,
+    expectNoFatalLogs: process.expectNoFatalLogs,
+    logs: process.logs,
+    cleanup: process.cleanup,
   };
 }
