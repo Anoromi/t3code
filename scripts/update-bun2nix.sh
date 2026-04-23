@@ -11,6 +11,7 @@ usage() {
 Usage: update-bun2nix.sh [--verify]
 
 Updates nix/bun.nix with the fixed-output hash for the nodeModules package.
+Computes the hash locally first so Nix only needs to build nodeModules once.
 
 Options:
   --verify  Build .#desktop after updating the nodeModules hash.
@@ -48,15 +49,21 @@ PY
 cd "${REPO_ROOT}"
 
 BUN_NIX="${REPO_ROOT}/nix/bun.nix"
-original_bun_nix="$(mktemp)"
-cp "${BUN_NIX}" "${original_bun_nix}"
-restore_original_bun_nix=1
+workspace_dirs=(
+  "apps/server"
+  "packages/shared"
+  "scripts"
+)
+
+scratch_root="$(mktemp -d)"
+source_root="${scratch_root}/source"
+hash_root="${scratch_root}/hash-root"
+cache_root="${XDG_CACHE_HOME:-${HOME}/.cache}/t3code/update-bun2nix"
+bun_home="${cache_root}/home"
+bun_cache_dir="${cache_root}/bun-install-cache"
 
 cleanup() {
-  if [[ "${restore_original_bun_nix}" -eq 1 ]]; then
-    cp "${original_bun_nix}" "${BUN_NIX}"
-  fi
-  rm -f "${original_bun_nix}"
+  rm -rf "${scratch_root}"
 }
 
 trap cleanup EXIT
@@ -71,27 +78,61 @@ write_bun_nix() {
 EOF
 }
 
-write_bun_nix "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+mkdir -p "${source_root}"
+mkdir -p "${bun_home}" "${bun_cache_dir}"
 
-output_file="$(mktemp)"
-if nix build .#nodeModules --no-link >"${output_file}" 2>&1; then
-  rm -f "${output_file}"
-  if [[ "${VERIFY_DESKTOP}" -eq 1 ]]; then
-    nix build .#desktop --no-link
+rsync -a \
+  --exclude '.git/' \
+  --exclude '.direnv/' \
+  --exclude '.turbo/' \
+  --exclude 'node_modules/' \
+  --exclude 'apps/*/node_modules/' \
+  --exclude 'packages/*/node_modules/' \
+  --exclude 'dist/' \
+  --exclude 'dist-electron/' \
+  --exclude 'result' \
+  --exclude 'flake.lock' \
+  --exclude '*.tsbuildinfo' \
+  --exclude '*.log' \
+  "${REPO_ROOT}/" "${source_root}/"
+
+(
+  cd "${source_root}"
+  export HOME="${bun_home}"
+  export BUN_INSTALL_CACHE_DIR="${bun_cache_dir}"
+
+  bun install --frozen-lockfile --linker=hoisted --ignore-scripts
+
+  top_level_effect="node_modules/effect"
+  if [[ -d "${top_level_effect}" ]]; then
+    while IFS= read -r nested_effect; do
+      [[ "${nested_effect}" == "${top_level_effect}" ]] && continue
+      rm -rf "${nested_effect}"
+      ln -s "$(realpath --relative-to="$(dirname "${nested_effect}")" "${top_level_effect}")" "${nested_effect}"
+    done < <(find node_modules -path '*/node_modules/effect' -type d | sort)
+
+    for workspace_dir in "${workspace_dirs[@]}"; do
+      mkdir -p "${workspace_dir}/node_modules"
+      ln -sfn \
+        "$(realpath --relative-to="${workspace_dir}/node_modules" "${top_level_effect}")" \
+        "${workspace_dir}/node_modules/effect"
+    done
   fi
-  exit 0
-fi
 
-actual_hash="$(sed -n 's/.*got:[[:space:]]*//p' "${output_file}" | tail -n 1)"
-rm -f "${output_file}"
+  mkdir -p "${hash_root}"
+  cp -a node_modules "${hash_root}/node_modules"
 
-if [[ -z "${actual_hash}" ]]; then
-  echo "Could not determine node_modules hash from nix build output." >&2
-  exit 1
-fi
+  for workspace_dir in "${workspace_dirs[@]}"; do
+    if [[ -d "${workspace_dir}/node_modules" ]]; then
+      mkdir -p "${hash_root}/${workspace_dir}"
+      cp -a "${workspace_dir}/node_modules" "${hash_root}/${workspace_dir}/node_modules"
+    fi
+  done
+)
 
+actual_hash="$(nix hash path --type sha256 --sri "${hash_root}")"
 write_bun_nix "${actual_hash}"
-restore_original_bun_nix=0
+
 nix build .#nodeModules --no-link
 
 if [[ "${VERIFY_DESKTOP}" -eq 1 ]]; then

@@ -60,6 +60,11 @@ describe("WorktreeTerminalLauncher", () => {
     const spawn = vi.fn(() => child);
     const launcher = new WorktreeTerminalLauncher({
       spawn: spawn as typeof ChildProcess.spawn,
+      bunExecutable: "/nix/store/bun/bin/bun",
+      runtimeEnv: {
+        PATH: "/home/user/.cargo/bin:/usr/bin",
+        PKG_CONFIG_PATH: "/home/user/.local/lib/pkgconfig",
+      },
     });
 
     const openPromise = launcher.open({
@@ -75,10 +80,14 @@ describe("WorktreeTerminalLauncher", () => {
     });
 
     expect(spawn).toHaveBeenCalledWith(
-      "bun",
+      "/nix/store/bun/bin/bun",
       ["/repo/scripts/ghostty-worktree.ts", "--exec", "exec tmux"],
       expect.objectContaining({
         cwd: "/tmp/project/worktrees/feature-a",
+        env: {
+          PATH: "/home/user/.cargo/bin:/usr/bin",
+          PKG_CONFIG_PATH: "/home/user/.local/lib/pkgconfig",
+        },
       }),
     );
   });
@@ -88,6 +97,10 @@ describe("WorktreeTerminalLauncher", () => {
     const spawn = vi.fn(() => child);
     const launcher = new WorktreeTerminalLauncher({
       spawn: spawn as typeof ChildProcess.spawn,
+      bunExecutable: "/nix/store/bun/bin/bun",
+      runtimeEnv: {
+        PATH: "/home/user/.cargo/bin:/usr/bin",
+      },
     });
 
     const listPromise = launcher.listOpen({
@@ -103,10 +116,13 @@ describe("WorktreeTerminalLauncher", () => {
       { worktreePath: "/tmp/project/worktrees/feature-a" },
     ]);
     expect(spawn).toHaveBeenCalledWith(
-      "bun",
+      "/nix/store/bun/bin/bun",
       ["/repo/scripts/ghostty-worktree.ts", "list-open"],
       expect.objectContaining({
         cwd: "/repo",
+        env: {
+          PATH: "/home/user/.cargo/bin:/usr/bin",
+        },
       }),
     );
   });
@@ -114,6 +130,8 @@ describe("WorktreeTerminalLauncher", () => {
   it("rejects invalid cwd values", async () => {
     const launcher = new WorktreeTerminalLauncher({
       spawn: vi.fn() as typeof ChildProcess.spawn,
+      bunExecutable: "/nix/store/bun/bin/bun",
+      runtimeEnv: {},
     });
 
     await expect(
@@ -128,6 +146,8 @@ describe("WorktreeTerminalLauncher", () => {
     const child = createChildProcess();
     const launcher = new WorktreeTerminalLauncher({
       spawn: vi.fn(() => child) as typeof ChildProcess.spawn,
+      bunExecutable: "/nix/store/bun/bin/bun",
+      runtimeEnv: {},
     });
 
     const openPromise = launcher.open({
@@ -147,6 +167,8 @@ describe("WorktreeTerminalLauncher", () => {
     const child = createChildProcess();
     const launcher = new WorktreeTerminalLauncher({
       spawn: vi.fn(() => child) as typeof ChildProcess.spawn,
+      bunExecutable: "/nix/store/bun/bin/bun",
+      runtimeEnv: {},
     });
 
     const openPromise = launcher.open({

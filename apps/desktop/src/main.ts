@@ -46,6 +46,11 @@ import {
   writeDesktopDaemonRecord,
 } from "@t3tools/shared/desktopDaemon";
 import { RotatingFileSink } from "@t3tools/shared/logging";
+import {
+  mergeAppRuntimeEnv,
+  parseNullDelimitedEnvSnapshot,
+  T3CODE_LOCAL_LAUNCH_ENV_FILE,
+} from "@t3tools/shared/launchEnvironment";
 import { parsePersistedServerObservabilitySettings } from "@t3tools/shared/serverSettings";
 import { DEFAULT_DESKTOP_BACKEND_PORT, resolveDesktopBackendPort } from "./backendPort.ts";
 import {
@@ -96,6 +101,22 @@ import { createWorktreeTerminalLauncher } from "./worktreeTerminal.ts";
 import { createHyprnavEnvironmentSync } from "./hyprnav.ts";
 
 syncShellEnvironment();
+
+function readCapturedLaunchEnvSync(
+  filePath: string | undefined,
+  fileSystem: Pick<typeof FS, "readFileSync"> = FS,
+): NodeJS.ProcessEnv | null {
+  const normalizedPath = filePath?.trim();
+  if (!normalizedPath) {
+    return null;
+  }
+
+  try {
+    return parseNullDelimitedEnvSnapshot(fileSystem.readFileSync(normalizedPath));
+  } catch {
+    return null;
+  }
+}
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
@@ -159,6 +180,24 @@ const SERVER_SETTINGS_PATH = Path.join(STATE_DIR, "settings.json");
 const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000;
 const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const desktopE2eMode = isDesktopE2eMode(process.env);
+const capturedLaunchEnv = readCapturedLaunchEnvSync(process.env[T3CODE_LOCAL_LAUNCH_ENV_FILE]);
+
+function userRuntimeEnv(): NodeJS.ProcessEnv {
+  if (!capturedLaunchEnv) {
+    return process.env;
+  }
+
+  return mergeAppRuntimeEnv({
+    launchEnv: capturedLaunchEnv,
+    currentEnv: process.env,
+    preserveKeys: [
+      T3CODE_LOCAL_LAUNCH_ENV_FILE,
+      "T3CODE_HOME",
+      "T3CODE_STATE_DIR",
+      "T3CODE_BUN_EXECUTABLE",
+    ],
+  });
+}
 
 function resolvePickFolderDefaultPath(rawOptions: unknown): string | undefined {
   if (typeof rawOptions !== "object" || rawOptions === null) {
@@ -261,8 +300,12 @@ let desktopDaemonCleanupPromise: Promise<void> | null = null;
 let pendingMainWindowFocus = false;
 const externalCorkdiffManager = createExternalCorkdiffManager({
   getMainWindow: () => mainWindow,
+  runtimeEnv: userRuntimeEnv(),
 });
-const worktreeTerminalLauncher = createWorktreeTerminalLauncher();
+const worktreeTerminalLauncher = createWorktreeTerminalLauncher({
+  bunExecutable: process.env.T3CODE_BUN_EXECUTABLE?.trim() || "bun",
+  runtimeEnv: userRuntimeEnv(),
+});
 const hyprnavEnvironmentSync = createHyprnavEnvironmentSync();
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
@@ -329,7 +372,13 @@ function resolveDesktopDevServerUrl(): string {
 }
 
 function backendChildEnv(): NodeJS.ProcessEnv {
-  return sanitizeBackendChildEnv(process.env);
+  return sanitizeBackendChildEnv({
+    ...userRuntimeEnv(),
+    [T3CODE_LOCAL_LAUNCH_ENV_FILE]: process.env[T3CODE_LOCAL_LAUNCH_ENV_FILE],
+    T3CODE_HOME: process.env.T3CODE_HOME,
+    T3CODE_STATE_DIR: process.env.T3CODE_STATE_DIR,
+    T3CODE_BUN_EXECUTABLE: process.env.T3CODE_BUN_EXECUTABLE,
+  });
 }
 
 function getDesktopServerExposureState(): DesktopServerExposureState {

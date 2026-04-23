@@ -971,7 +971,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
     }),
   );
 
-  it.effect("filters app runtime env variables from terminal sessions", () =>
+  it.effect("preserves launch env values for terminal sessions", () =>
     Effect.gen(function* () {
       const originalValues = new Map<string, string | undefined>();
       const setEnv = (key: string, value: string | undefined) => {
@@ -994,13 +994,14 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
         }
       };
 
-      setEnv("PORT", "5173");
-      setEnv("T3CODE_PORT", "3773");
-      setEnv("VITE_DEV_SERVER_URL", "http://localhost:5173");
+      setEnv("PATH", "/home/user/.cargo/bin:/usr/bin");
+      setEnv("PKG_CONFIG_PATH", "/home/user/.local/lib/pkgconfig");
+      setEnv("PKG_CONFIG_PATH_x86_64_unknown_linux_gnu", "/home/user/.local/target-pkgconfig");
+      setEnv("HOST_PKG_CONFIG_PATH", "/home/user/.local/host-pkgconfig");
+      setEnv("OPENSSL_DIR", "/opt/openssl");
+      setEnv("OPENSSL_LIB_DIR", "/opt/openssl/lib");
+      setEnv("OPENSSL_INCLUDE_DIR", "/opt/openssl/include");
       setEnv("TEST_TERMINAL_KEEP", "keep-me");
-      setEnv("PS1", "\\[\\e[32m\\]broken\\[\\e[0m\\] ");
-      setEnv("PROMPT_COMMAND", "history -a");
-      setEnv("RPROMPT", "%~");
       setEnv("TERM", "dumb");
 
       try {
@@ -1010,12 +1011,15 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
         expect(spawnInput).toBeDefined();
         if (!spawnInput) return;
 
-        expect(spawnInput.env.PORT).toBeUndefined();
-        expect(spawnInput.env.T3CODE_PORT).toBeUndefined();
-        expect(spawnInput.env.VITE_DEV_SERVER_URL).toBeUndefined();
-        expect(spawnInput.env.PS1).toBeUndefined();
-        expect(spawnInput.env.PROMPT_COMMAND).toBeUndefined();
-        expect(spawnInput.env.RPROMPT).toBeUndefined();
+        expect(spawnInput.env.PATH).toBe("/home/user/.cargo/bin:/usr/bin");
+        expect(spawnInput.env.PKG_CONFIG_PATH).toBe("/home/user/.local/lib/pkgconfig");
+        expect(spawnInput.env.PKG_CONFIG_PATH_x86_64_unknown_linux_gnu).toBe(
+          "/home/user/.local/target-pkgconfig",
+        );
+        expect(spawnInput.env.HOST_PKG_CONFIG_PATH).toBe("/home/user/.local/host-pkgconfig");
+        expect(spawnInput.env.OPENSSL_DIR).toBe("/opt/openssl");
+        expect(spawnInput.env.OPENSSL_LIB_DIR).toBe("/opt/openssl/lib");
+        expect(spawnInput.env.OPENSSL_INCLUDE_DIR).toBe("/opt/openssl/include");
         expect(spawnInput.env.TEST_TERMINAL_KEEP).toBe("keep-me");
         expect(spawnInput.env.TERM).toBe(
           process.platform === "win32" ? "xterm-color" : "xterm-256color",
@@ -1063,7 +1067,24 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
     }),
   );
 
-  it.effect("prefers PATH bash over a non-interactive SHELL bash path", () =>
+  it.effect("uses absolute bash shells before PATH bash", () =>
+    Effect.gen(function* () {
+      if (process.platform === "win32") return;
+
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellResolver: () => "/bin/bash",
+        env: { SHELL: "/bin/bash" },
+      });
+      yield* manager.open(openInput());
+      const spawnInput = ptyAdapter.spawnInputs[0];
+      expect(spawnInput).toBeDefined();
+      if (!spawnInput) return;
+
+      expect(spawnInput.file).toBe("/bin/bash");
+    }),
+  );
+
+  it.effect("normalizes non-interactive nix bash shells before spawning terminals", () =>
     Effect.gen(function* () {
       if (process.platform === "win32") return;
 
@@ -1076,7 +1097,7 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("TerminalManager", (
       expect(spawnInput).toBeDefined();
       if (!spawnInput) return;
 
-      expect(spawnInput.file).toBe("bash");
+      expect(spawnInput.file).toBe("/run/current-system/sw/bin/bash");
     }),
   );
 

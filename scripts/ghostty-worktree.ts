@@ -5,7 +5,6 @@ import * as FS from "node:fs";
 import { homedir } from "node:os";
 import * as Path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
-
 import {
   createAssignmentKey,
   normalizePath,
@@ -494,6 +493,7 @@ function createNodeDeps(): CliDeps {
         ["spawn", "--print-workspace-id", "rand", "--", "sh", "-lc", command],
         {
           encoding: "utf8",
+          env: process.env,
           stdio: ["ignore", "pipe", "pipe"],
         },
       );

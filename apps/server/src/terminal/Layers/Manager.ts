@@ -1,5 +1,6 @@
 import path from "node:path";
 
+import { resolveLoginShell } from "@t3tools/shared/shell";
 import {
   DEFAULT_TERMINAL_ID,
   type TerminalEvent,
@@ -56,15 +57,6 @@ const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS = 128;
 const DEFAULT_OPEN_COLS = 120;
 const DEFAULT_OPEN_ROWS = 30;
-const TERMINAL_ENV_BLOCKLIST = new Set(["PORT", "ELECTRON_RENDERER_PORT", "ELECTRON_RUN_AS_NODE"]);
-const TERMINAL_PROMPT_ENV_BLOCKLIST = new Set([
-  "PROMPT",
-  "PROMPT_COMMAND",
-  "PROMPT_DIRTRIM",
-  "RPS1",
-  "RPROMPT",
-  "SPROMPT",
-]);
 
 class TerminalSubprocessCheckError extends Schema.TaggedErrorClass<TerminalSubprocessCheckError>()(
   "TerminalSubprocessCheckError",
@@ -215,7 +207,33 @@ function defaultShellResolver(
   if (platform === "win32") {
     return "pwsh.exe";
   }
-  return env.SHELL ?? "bash";
+  if (env.SHELL) {
+    return env.SHELL;
+  }
+  if (platform === "darwin") {
+    return "/bin/zsh";
+  }
+  if (platform === "linux") {
+    return "/bin/bash";
+  }
+  return "bash";
+}
+
+function createTerminalSpawnEnv(
+  baseEnv: NodeJS.ProcessEnv,
+  runtimeEnv?: Record<string, string> | null,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  const spawnEnv: NodeJS.ProcessEnv = {
+    ...baseEnv,
+    ...(runtimeEnv ?? {}),
+  };
+
+  if (!spawnEnv.TERM || spawnEnv.TERM === "dumb") {
+    spawnEnv.TERM = platform === "win32" ? "xterm-color" : "xterm-256color";
+  }
+
+  return spawnEnv;
 }
 
 function normalizeShellCommand(
@@ -263,6 +281,14 @@ function shellCandidateFromCommand(
   return { file: command };
 }
 
+function normalizeInteractiveShellCommand(
+  command: string | null,
+  platform: NodeJS.Platform = process.platform,
+): string | null {
+  if (!command) return null;
+  return resolveLoginShell(platform, command) ?? command;
+}
+
 function windowsSystemRoot(env: NodeJS.ProcessEnv): string {
   return env.SystemRoot?.trim() || env.windir?.trim() || "C:\\Windows";
 }
@@ -304,9 +330,11 @@ function resolveShellCandidates(
   platform: NodeJS.Platform = process.platform,
   env: NodeJS.ProcessEnv = process.env,
 ): ShellCandidate[] {
-  const requestedCommand = normalizeShellCommand(shellResolver(), platform);
+  const rawRequestedCommand = normalizeShellCommand(shellResolver(), platform);
+  const requestedCommand = normalizeInteractiveShellCommand(rawRequestedCommand, platform);
   const requested = shellCandidateFromCommand(requestedCommand, platform);
-  const envShellCommand = normalizeShellCommand(env.SHELL, platform);
+  const rawEnvShellCommand = normalizeShellCommand(env.SHELL, platform);
+  const envShellCommand = normalizeInteractiveShellCommand(rawEnvShellCommand, platform);
   const envShell = shellCandidateFromCommand(envShellCommand, platform);
 
   if (platform === "win32") {
@@ -321,12 +349,9 @@ function resolveShellCandidates(
     ]);
   }
 
-  const preferPathBash = shellName(requestedCommand, platform) === "bash";
-
   return uniqueShellCandidates([
-    ...(preferPathBash
-      ? [shellCandidateFromCommand("bash", platform), requested, envShell]
-      : [requested, envShell]),
+    requested,
+    envShell,
     shellCandidateFromCommand("/bin/zsh", platform),
     shellCandidateFromCommand("/bin/bash", platform),
     shellCandidateFromCommand("/bin/sh", platform),
@@ -724,44 +749,6 @@ function toSafeTerminalId(terminalId: string): string {
 
 function toSessionKey(threadId: string, terminalId: string): string {
   return `${threadId}\u0000${terminalId}`;
-}
-
-function shouldExcludeTerminalEnvKey(key: string): boolean {
-  const normalizedKey = key.toUpperCase();
-  if (/^PS[0-4]$/.test(normalizedKey)) {
-    return true;
-  }
-  if (TERMINAL_PROMPT_ENV_BLOCKLIST.has(normalizedKey)) {
-    return true;
-  }
-  if (normalizedKey.startsWith("T3CODE_")) {
-    return true;
-  }
-  if (normalizedKey.startsWith("VITE_")) {
-    return true;
-  }
-  return TERMINAL_ENV_BLOCKLIST.has(normalizedKey);
-}
-
-function createTerminalSpawnEnv(
-  baseEnv: NodeJS.ProcessEnv,
-  runtimeEnv?: Record<string, string> | null,
-): NodeJS.ProcessEnv {
-  const spawnEnv: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(baseEnv)) {
-    if (value === undefined) continue;
-    if (shouldExcludeTerminalEnvKey(key)) continue;
-    spawnEnv[key] = value;
-  }
-  if (runtimeEnv) {
-    for (const [key, value] of Object.entries(runtimeEnv)) {
-      spawnEnv[key] = value;
-    }
-  }
-  if (!spawnEnv.TERM || spawnEnv.TERM === "dumb") {
-    spawnEnv.TERM = process.platform === "win32" ? "xterm-color" : "xterm-256color";
-  }
-  return spawnEnv;
 }
 
 function normalizedRuntimeEnv(
@@ -1469,7 +1456,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
         increment(terminalSessionsTotal, { lifecycle: eventType }).pipe(
           Effect.andThen(
             Effect.gen(function* () {
-              const terminalEnv = createTerminalSpawnEnv(baseEnv, session.runtimeEnv);
+              const terminalEnv = createTerminalSpawnEnv(baseEnv, session.runtimeEnv, platform);
               const directCommand = normalizeLaunchCommand(input.command);
               const spawnResult = directCommand
                 ? yield* Effect.map(

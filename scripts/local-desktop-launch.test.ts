@@ -1,11 +1,17 @@
 import { mkdir, mkdtemp, readFile, rm, stat, unlink, utimes, writeFile } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import {
+  serializeEnvSnapshot,
+  T3CODE_LOCAL_LAUNCH_ENV_FILE,
+} from "@t3tools/shared/launchEnvironment";
 
 import {
   evaluateLayerFreshness,
   hashRepoRoot,
+  resolveExecutableFromPath,
   resolveLayerDefinitions,
   resolveStateDir,
   runLocalDesktopLaunch,
@@ -15,6 +21,16 @@ import {
 } from "./local-desktop-launch.ts";
 
 const createdTempDirs: string[] = [];
+const ORIGINAL_ENV = {
+  T3CODE_BUN_EXECUTABLE: process.env.T3CODE_BUN_EXECUTABLE,
+  T3CODE_HOME: process.env.T3CODE_HOME,
+  PATH: process.env.PATH,
+  PKG_CONFIG_PATH: process.env.PKG_CONFIG_PATH,
+  OPENSSL_DIR: process.env.OPENSSL_DIR,
+  SSL_CERT_FILE: process.env.SSL_CERT_FILE,
+  IN_NIX_SHELL: process.env.IN_NIX_SHELL,
+  [T3CODE_LOCAL_LAUNCH_ENV_FILE]: process.env[T3CODE_LOCAL_LAUNCH_ENV_FILE],
+};
 
 async function createTempDir(prefix: string): Promise<string> {
   const directory = await mkdtemp(path.join(os.tmpdir(), prefix));
@@ -111,12 +127,21 @@ async function seedFreshAllLayers(repoRoot: string, t3Home: string): Promise<voi
 function createCommandRunner(
   repoRoot: string,
   failCommandPrefix?: string,
-): { readonly commands: string[]; readonly runner: CommandRunner } {
+): {
+  readonly commands: string[];
+  readonly invocations: Array<{ command: string; env?: NodeJS.ProcessEnv }>;
+  readonly runner: CommandRunner;
+} {
   const commands: string[] = [];
+  const invocations: Array<{ command: string; env?: NodeJS.ProcessEnv }> = [];
 
-  const runner: CommandRunner = async (command) => {
+  const runner: CommandRunner = async (command, options) => {
     const rendered = command.join(" ");
     commands.push(rendered);
+    invocations.push({
+      command: rendered,
+      ...(options.env ? { env: options.env } : {}),
+    });
 
     if (failCommandPrefix && rendered.startsWith(failCommandPrefix)) {
       const error = new Error(`Simulated failure for ${rendered}`) as Error & { exitCode?: number };
@@ -147,15 +172,28 @@ function createCommandRunner(
       return;
     }
 
-    if (rendered.startsWith("bun run --cwd apps/desktop start --")) {
+    if (
+      rendered.endsWith(" run --cwd apps/desktop start --") ||
+      rendered.includes(" run --cwd apps/desktop start -- ")
+    ) {
       return;
     }
 
     throw new Error(`Unexpected command: ${rendered}`);
   };
 
-  return { commands, runner };
+  return { commands, invocations, runner };
 }
+
+beforeEach(() => {
+  process.env.T3CODE_BUN_EXECUTABLE = "/nix/store/test-bun/bin/bun";
+  delete process.env[T3CODE_LOCAL_LAUNCH_ENV_FILE];
+  delete process.env.T3CODE_HOME;
+  delete process.env.PKG_CONFIG_PATH;
+  delete process.env.OPENSSL_DIR;
+  delete process.env.SSL_CERT_FILE;
+  delete process.env.IN_NIX_SHELL;
+});
 
 afterEach(async () => {
   await Promise.all(
@@ -163,6 +201,14 @@ afterEach(async () => {
       await rm(directory, { recursive: true, force: true });
     }),
   );
+
+  for (const [key, value] of Object.entries(ORIGINAL_ENV)) {
+    if (value === undefined) {
+      delete process.env[key];
+      continue;
+    }
+    process.env[key] = value;
+  }
 });
 
 describe("local-desktop-launch freshness", () => {
@@ -331,7 +377,7 @@ describe("runLocalDesktopLaunch", () => {
       "bun run --cwd apps/web build",
       "bun run --cwd apps/server build",
       "bun run --cwd apps/desktop build",
-      "bun run --cwd apps/desktop start -- --inspect",
+      "/nix/store/test-bun/bin/bun run --cwd apps/desktop start -- --inspect",
     ]);
 
     const stateDir = resolveStateDir(repoRoot, t3Home);
@@ -360,7 +406,7 @@ describe("runLocalDesktopLaunch", () => {
     });
 
     expect(exitCode).toBe(0);
-    expect(commands).toEqual(["bun run --cwd apps/desktop start --"]);
+    expect(commands).toEqual(["/nix/store/test-bun/bin/bun run --cwd apps/desktop start --"]);
   });
 
   it("rebuilds web and server when a web source file changes", async () => {
@@ -384,7 +430,7 @@ describe("runLocalDesktopLaunch", () => {
     expect(commands).toEqual([
       "bun run --cwd apps/web build",
       "bun run --cwd apps/server build",
-      "bun run --cwd apps/desktop start --",
+      "/nix/store/test-bun/bin/bun run --cwd apps/desktop start --",
     ]);
   });
 
@@ -408,7 +454,7 @@ describe("runLocalDesktopLaunch", () => {
     expect(exitCode).toBe(0);
     expect(commands).toEqual([
       "bun run --cwd apps/desktop build",
-      "bun run --cwd apps/desktop start --",
+      "/nix/store/test-bun/bin/bun run --cwd apps/desktop start --",
     ]);
   });
 
@@ -435,7 +481,7 @@ describe("runLocalDesktopLaunch", () => {
       "bun run --cwd apps/web build",
       "bun run --cwd apps/server build",
       "bun run --cwd apps/desktop build",
-      "bun run --cwd apps/desktop start --",
+      "/nix/store/test-bun/bin/bun run --cwd apps/desktop start --",
     ]);
   });
 
@@ -476,7 +522,82 @@ describe("runLocalDesktopLaunch", () => {
     expect(exitCode).toBe(0);
     expect(commands).toEqual([
       "bun run --cwd apps/desktop build",
-      "bun run --cwd apps/desktop start --",
+      "/nix/store/test-bun/bin/bun run --cwd apps/desktop start --",
     ]);
+  });
+
+  it("launches the desktop with the captured env plus the active nix runtime keys", async () => {
+    const repoRoot = await createFixtureRepo();
+    const t3Home = await createTempDir("local-desktop-launch-home-");
+    const launchEnvPath = path.join(await createTempDir("launch-env-"), "captured.env");
+    await writeFile(
+      launchEnvPath,
+      serializeEnvSnapshot({
+        PATH: "/home/user/.cargo/bin:/usr/bin",
+        PKG_CONFIG_PATH: "/home/user/.local/lib/pkgconfig",
+        HOME: "/home/user",
+      }),
+    );
+    process.env[T3CODE_LOCAL_LAUNCH_ENV_FILE] = launchEnvPath;
+    process.env.T3CODE_HOME = "/home/user/.t3";
+    process.env.PKG_CONFIG_PATH = "/nix/store/t3code-dev/lib/pkgconfig";
+    process.env.OPENSSL_DIR = "/nix/store/t3code-dev";
+    process.env.SSL_CERT_FILE = "/nix/store/cacert/etc/ssl/certs/ca-bundle.crt";
+    process.env.IN_NIX_SHELL = "impure";
+
+    const { invocations, runner } = createCommandRunner(repoRoot);
+    const exitCode = await runLocalDesktopLaunch({
+      repoRoot,
+      t3Home,
+      commandRunner: runner,
+      log: () => undefined,
+    });
+
+    expect(exitCode).toBe(0);
+    const desktopStart = invocations.at(-1);
+    expect(desktopStart?.command).toBe(
+      "/nix/store/test-bun/bin/bun run --cwd apps/desktop start --",
+    );
+    expect(desktopStart?.env).toMatchObject({
+      PATH: "/home/user/.cargo/bin:/usr/bin",
+      PKG_CONFIG_PATH: "/nix/store/t3code-dev/lib/pkgconfig",
+      HOME: "/home/user",
+      OPENSSL_DIR: "/nix/store/t3code-dev",
+      SSL_CERT_FILE: "/nix/store/cacert/etc/ssl/certs/ca-bundle.crt",
+      IN_NIX_SHELL: "impure",
+      T3CODE_HOME: "/home/user/.t3",
+      [T3CODE_LOCAL_LAUNCH_ENV_FILE]: launchEnvPath,
+      T3CODE_BUN_EXECUTABLE: "/nix/store/test-bun/bin/bun",
+    });
+  });
+
+  it("falls back to the current env when the launch snapshot is unavailable", async () => {
+    const repoRoot = await createFixtureRepo();
+    const t3Home = await createTempDir("local-desktop-launch-home-");
+    process.env[T3CODE_LOCAL_LAUNCH_ENV_FILE] = "/tmp/missing-launch-env";
+    process.env.PATH = "/current/path";
+
+    const logs: string[] = [];
+    const { invocations, runner } = createCommandRunner(repoRoot);
+    const exitCode = await runLocalDesktopLaunch({
+      repoRoot,
+      t3Home,
+      commandRunner: runner,
+      log: (line) => logs.push(line),
+    });
+
+    expect(exitCode).toBe(0);
+    expect(logs).toContain(
+      "[local-launch] launch env snapshot unavailable; falling back to current process env",
+    );
+    expect(invocations.at(-1)?.env?.PATH).toBe("/current/path");
+  });
+});
+
+describe("resolveExecutableFromPath", () => {
+  it("returns an absolute path when the command exists in PATH", () => {
+    const resolved = resolveExecutableFromPath("sh", { PATH: "/bin:/usr/bin" });
+    expect(path.isAbsolute(resolved)).toBe(true);
+    expect(resolved.endsWith("/sh")).toBe(true);
   });
 });

@@ -41,6 +41,7 @@ interface ExternalCorkdiffManagerDeps {
   readonly spawnSync: typeof ChildProcess.spawnSync;
   readonly now: () => number;
   readonly getMainWindow: () => BrowserWindow | null;
+  readonly runtimeEnv: NodeJS.ProcessEnv;
 }
 
 function quoteShellArg(value: string): string {
@@ -353,7 +354,7 @@ export class ExternalCorkdiffManager {
       ],
       {
         cwd: input.cwd,
-        env: { ...process.env },
+        env: this.deps.runtimeEnv,
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
@@ -486,11 +487,13 @@ export class ExternalCorkdiffManager {
 
 export function createExternalCorkdiffManager(input: {
   readonly getMainWindow: () => BrowserWindow | null;
+  readonly runtimeEnv: NodeJS.ProcessEnv;
 }): ExternalCorkdiffManager {
   return new ExternalCorkdiffManager({
     spawn: ChildProcess.spawn,
     spawnSync: ChildProcess.spawnSync,
     now: Date.now,
     getMainWindow: input.getMainWindow,
+    runtimeEnv: input.runtimeEnv,
   });
 }

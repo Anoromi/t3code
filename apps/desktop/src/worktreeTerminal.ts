@@ -23,6 +23,8 @@ export interface OpenWorktreeTerminalEntry {
 
 interface WorktreeTerminalLauncherDeps {
   readonly spawn: typeof ChildProcess.spawn;
+  readonly bunExecutable: string;
+  readonly runtimeEnv: NodeJS.ProcessEnv;
 }
 
 function formatExitFailure(input: {
@@ -105,11 +107,11 @@ export class WorktreeTerminalLauncher {
     }
 
     const child = this.deps.spawn(
-      "bun",
+      this.deps.bunExecutable,
       [Path.join(input.rootDir, "scripts", "ghostty-worktree.ts"), "--exec", TMUX_EXEC_COMMAND],
       {
         cwd,
-        env: { ...process.env },
+        env: { ...this.deps.runtimeEnv },
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
@@ -193,11 +195,11 @@ export class WorktreeTerminalLauncher {
     input: ListOpenWorktreeTerminalsInput,
   ): Promise<ReadonlyArray<OpenWorktreeTerminalEntry>> {
     const child = this.deps.spawn(
-      "bun",
+      this.deps.bunExecutable,
       [Path.join(input.rootDir, "scripts", "ghostty-worktree.ts"), "list-open"],
       {
         cwd: input.rootDir,
-        env: { ...process.env },
+        env: { ...this.deps.runtimeEnv },
         stdio: ["ignore", "pipe", "pipe"],
       },
     );
@@ -249,8 +251,13 @@ export class WorktreeTerminalLauncher {
   }
 }
 
-export function createWorktreeTerminalLauncher(): WorktreeTerminalLauncher {
+export function createWorktreeTerminalLauncher(input: {
+  readonly bunExecutable: string;
+  readonly runtimeEnv: NodeJS.ProcessEnv;
+}): WorktreeTerminalLauncher {
   return new WorktreeTerminalLauncher({
     spawn: ChildProcess.spawn,
+    bunExecutable: input.bunExecutable,
+    runtimeEnv: input.runtimeEnv,
   });
 }

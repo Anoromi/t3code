@@ -3,6 +3,7 @@ import {
   type OrchestrationGetFullThreadDiffInput,
   type OrchestrationGetFullThreadDiffResult,
   type OrchestrationGetTurnDiffResult as OrchestrationGetTurnDiffResultType,
+  type ThreadId,
 } from "@t3tools/contracts";
 import { Effect, Layer, Option, Schema } from "effect";
 
@@ -20,6 +21,41 @@ const isTurnDiffResult = Schema.is(OrchestrationGetTurnDiffResult);
 const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const checkpointStore = yield* CheckpointStore;
+
+  const resolveTurnZeroCheckpointRef = Effect.fn("resolveTurnZeroCheckpointRef")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly forkSourceThreadId: ThreadId | null;
+    readonly workspaceCwd: string;
+  }) {
+    const canonicalCheckpointRef = checkpointRefForThreadTurn(input.threadId, 0);
+    const canonicalExists = yield* checkpointStore.hasCheckpointRef({
+      cwd: input.workspaceCwd,
+      checkpointRef: canonicalCheckpointRef,
+    });
+    if (canonicalExists) {
+      return {
+        checkpointRef: canonicalCheckpointRef,
+        exists: true,
+      } as const;
+    }
+
+    if (input.forkSourceThreadId === null) {
+      return {
+        checkpointRef: canonicalCheckpointRef,
+        exists: false,
+      } as const;
+    }
+
+    const forkSourceCheckpointRef = checkpointRefForThreadTurn(input.forkSourceThreadId, 0);
+    const forkSourceExists = yield* checkpointStore.hasCheckpointRef({
+      cwd: input.workspaceCwd,
+      checkpointRef: forkSourceCheckpointRef,
+    });
+    return {
+      checkpointRef: forkSourceCheckpointRef,
+      exists: forkSourceExists,
+    } as const;
+  });
 
   const getTurnDiff: CheckpointDiffQueryShape["getTurnDiff"] = Effect.fn("getTurnDiff")(
     function* (input) {
@@ -96,21 +132,29 @@ const make = Effect.gen(function* () {
         });
       }
 
-      const [fromExists, toExists] = yield* Effect.all(
-        [
-          checkpointStore.hasCheckpointRef({
-            cwd: workspaceCwd,
-            checkpointRef: fromCheckpointRef,
-          }),
-          checkpointStore.hasCheckpointRef({
-            cwd: workspaceCwd,
-            checkpointRef: toCheckpointRef,
-          }),
-        ],
-        { concurrency: "unbounded" },
-      );
+      const toExists = yield* checkpointStore.hasCheckpointRef({
+        cwd: workspaceCwd,
+        checkpointRef: toCheckpointRef,
+      });
 
-      if (!fromExists) {
+      const resolvedFromCheckpoint =
+        input.fromTurnCount === 0
+          ? yield* resolveTurnZeroCheckpointRef({
+              threadId: input.threadId,
+              forkSourceThreadId: threadContext.value.forkSourceThreadId,
+              workspaceCwd,
+            })
+          : {
+              checkpointRef: fromCheckpointRef,
+              exists: yield* checkpointStore.hasCheckpointRef({
+                cwd: workspaceCwd,
+                checkpointRef: fromCheckpointRef,
+              }),
+            };
+
+      const resolvedFromCheckpointRef = resolvedFromCheckpoint.checkpointRef;
+
+      if (!resolvedFromCheckpoint.exists) {
         return yield* new CheckpointUnavailableError({
           threadId: input.threadId,
           turnCount: input.fromTurnCount,
@@ -128,7 +172,7 @@ const make = Effect.gen(function* () {
 
       const diff = yield* checkpointStore.diffCheckpoints({
         cwd: workspaceCwd,
-        fromCheckpointRef,
+        fromCheckpointRef: resolvedFromCheckpointRef,
         toCheckpointRef,
         fallbackFromToHead: false,
       });

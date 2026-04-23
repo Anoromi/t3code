@@ -145,6 +145,10 @@ describe("ExternalCorkdiffManager", () => {
           focus,
           webContents: { getOSProcessId: () => 1234 },
         }) as unknown as BrowserWindow,
+      runtimeEnv: {
+        PATH: "/home/user/.cargo/bin:/usr/bin",
+        PKG_CONFIG_PATH: "/home/user/.local/lib/pkgconfig",
+      },
     });
 
     const firstTogglePromise = manager.toggle({
@@ -156,6 +160,16 @@ describe("ExternalCorkdiffManager", () => {
 
     (child.stdout as PassThrough).write("101\n");
     await expect(firstTogglePromise).resolves.toEqual({ workspaceId: 101, reused: false });
+    expect(spawn).toHaveBeenCalledWith(
+      "hyprnav",
+      expect.any(Array),
+      expect.objectContaining({
+        env: {
+          PATH: "/home/user/.cargo/bin:/usr/bin",
+          PKG_CONFIG_PATH: "/home/user/.local/lib/pkgconfig",
+        },
+      }),
+    );
 
     await expect(
       manager.toggle({
@@ -185,6 +199,7 @@ describe("ExternalCorkdiffManager", () => {
       spawnSync: spawnSync as unknown as typeof ChildProcess.spawnSync,
       now: () => 1,
       getMainWindow: () => null,
+      runtimeEnv: {},
     });
 
     const togglePromise = manager.toggle({
@@ -232,6 +247,7 @@ describe("ExternalCorkdiffManager", () => {
           focus,
           webContents: { getOSProcessId: () => 1234 },
         }) as unknown as BrowserWindow,
+      runtimeEnv: {},
     });
 
     manager.focusAppWindow();

@@ -43,14 +43,18 @@ pkgs.stdenv.mkDerivation (finalAttrs: {
     copyDesktopItems
     git
     nodejs_24
+    openssl
     pkg-config
     python3
   ];
 
-  buildInputs = runtimeLibraries;
+  buildInputs = runtimeLibraries ++ [ pkgs.openssl ];
 
   env = {
     npm_config_nodedir = pkgs.nodejs_24;
+    OPENSSL_DIR = "${pkgs.openssl.dev}";
+    OPENSSL_INCLUDE_DIR = "${pkgs.openssl.dev}/include";
+    OPENSSL_LIB_DIR = "${pkgs.openssl.out}/lib";
   };
 
   desktopItems = [
