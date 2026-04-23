@@ -6,6 +6,13 @@ import type { Dirent } from "node:fs";
 import { mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { accessSync, constants, statSync } from "node:fs";
+
+import {
+  mergeAppRuntimeEnv,
+  readLaunchEnvSnapshotFromFile,
+  T3CODE_LOCAL_LAUNCH_ENV_FILE,
+} from "../packages/shared/src/launchEnvironment.ts";
 
 export const LAUNCHER_VERSION = 1;
 
@@ -69,6 +76,7 @@ export interface CliArgs {
 
 export interface CommandRunnerOptions {
   readonly cwd: string;
+  readonly env?: NodeJS.ProcessEnv;
 }
 
 export type CommandRunner = (
@@ -392,6 +400,41 @@ function getExitCode(error: unknown): number {
   return 1;
 }
 
+export function resolveExecutableFromPath(
+  command: string,
+  env: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (path.isAbsolute(command)) {
+    return command;
+  }
+
+  const pathValue = env.PATH ?? "";
+  const pathDelimiter = platform === "win32" ? ";" : ":";
+  const pathEntries = pathValue.split(pathDelimiter).filter((entry) => entry.trim().length > 0);
+  const extensions =
+    platform === "win32"
+      ? (env.PATHEXT ?? ".EXE;.CMD;.BAT;.COM").split(";").filter((entry) => entry.trim().length > 0)
+      : [""];
+
+  for (const entry of pathEntries) {
+    for (const extension of extensions) {
+      const candidate = path.join(entry, `${command}${extension}`);
+      try {
+        accessSync(candidate, constants.X_OK);
+        if (!statSync(candidate).isFile()) {
+          continue;
+        }
+        return candidate;
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  throw new Error(`Unable to resolve executable '${command}' from PATH.`);
+}
+
 export const defaultCommandRunner: CommandRunner = async (command, options) => {
   const [file, ...args] = command;
   if (!file) {
@@ -399,6 +442,7 @@ export const defaultCommandRunner: CommandRunner = async (command, options) => {
   }
   const result = spawnSync(file, args, {
     cwd: options.cwd,
+    env: options.env,
     stdio: "inherit",
   });
 
@@ -453,8 +497,36 @@ export async function runLocalDesktopLaunch(options: LocalDesktopLaunchOptions):
     await writeLayerStamp(repoRoot, stateDir, layer);
   }
 
+  const launchEnv =
+    (await readLaunchEnvSnapshotFromFile(process.env[T3CODE_LOCAL_LAUNCH_ENV_FILE])) ?? process.env;
+  if (process.env[T3CODE_LOCAL_LAUNCH_ENV_FILE]?.trim() && launchEnv === process.env) {
+    logWithPrefix(log, "launch env snapshot unavailable; falling back to current process env");
+  }
+  const desktopRuntimeEnv = mergeAppRuntimeEnv({
+    launchEnv,
+    currentEnv: process.env,
+    preserveKeys: [
+      T3CODE_LOCAL_LAUNCH_ENV_FILE,
+      "T3CODE_HOME",
+      "T3CODE_STATE_DIR",
+      "T3CODE_DESKTOP_OZONE_PLATFORM",
+      "T3CODE_DESKTOP_MOCK_UPDATES",
+      "T3CODE_DESKTOP_MOCK_UPDATE_SERVER_PORT",
+      "T3CODE_DESKTOP_PACKAGE_CHANNEL",
+      "T3CODE_DISABLE_AUTO_UPDATE",
+      "T3CODE_DESKTOP_LAN_HOST",
+      "T3CODE_PORT",
+      "T3CODE_OTLP_TRACES_URL",
+      "T3CODE_OTLP_METRICS_URL",
+      "T3CODE_OTLP_SERVICE_NAME",
+      "T3CODE_BUN_EXECUTABLE",
+    ],
+  });
+  const bunExecutable =
+    process.env.T3CODE_BUN_EXECUTABLE?.trim() || resolveExecutableFromPath("bun", process.env);
+  desktopRuntimeEnv.T3CODE_BUN_EXECUTABLE = bunExecutable;
   const desktopStartCommand = [
-    "bun",
+    bunExecutable,
     "run",
     "--cwd",
     "apps/desktop",
@@ -465,7 +537,7 @@ export async function runLocalDesktopLaunch(options: LocalDesktopLaunchOptions):
   logWithPrefix(log, "launching desktop");
 
   try {
-    await commandRunner(desktopStartCommand, { cwd: repoRoot });
+    await commandRunner(desktopStartCommand, { cwd: repoRoot, env: desktopRuntimeEnv });
     return 0;
   } catch (error) {
     logWithPrefix(log, `desktop start command failed: ${formatCommand(desktopStartCommand)}`);

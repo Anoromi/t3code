@@ -60,6 +60,7 @@ let
 
     jq_bin=${lib.escapeShellArg (lib.getExe pkgs.jq)}
     nix_bin=${lib.escapeShellArg (lib.getExe pkgs.nix)}
+    bash_bin=${lib.escapeShellArg (lib.getExe pkgs.bashInteractive)}
     ${localConfigPathHelpers}
     config_file="$(resolve_config_file)"
 
@@ -97,8 +98,12 @@ let
       exit 1
     fi
 
+    launch_env_file="$(mktemp "''${XDG_RUNTIME_DIR:-/tmp}/t3code-local-env.XXXXXX")"
+    env -0 > "$launch_env_file"
+    export T3CODE_LOCAL_LAUNCH_ENV_FILE="$launch_env_file"
+
     exec "$nix_bin" develop --impure "$repo_root" \
-      --command bash "$repo_root/scripts/run-local-desktop.sh" "$repo_root" "$@"
+      --command "$bash_bin" "$repo_root/scripts/run-local-desktop.sh" "$repo_root" "$@"
   '';
 
   localPackage =

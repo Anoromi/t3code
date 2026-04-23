@@ -24,6 +24,10 @@
       "types": "./src/shell.ts",
       "import": "./src/shell.ts"
     },
+    "./launchEnvironment": {
+      "types": "./src/launchEnvironment.ts",
+      "import": "./src/launchEnvironment.ts"
+    },
     "./Net": {
       "types": "./src/Net.ts",
       "import": "./src/Net.ts"
