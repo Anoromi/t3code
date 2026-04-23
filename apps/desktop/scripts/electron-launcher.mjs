@@ -2,6 +2,8 @@
 
 import { spawnSync } from "node:child_process";
 import {
+  accessSync,
+  constants,
   copyFileSync,
   cpSync,
   existsSync,
@@ -14,7 +16,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
@@ -32,6 +34,29 @@ const require = createRequire(import.meta.url);
 function resolveElectronPackageDir() {
   const packageJsonPath = require.resolve("electron/package.json");
   return dirname(packageJsonPath);
+}
+
+function resolveCommandFromPath(command, env = process.env) {
+  const pathValue = env.PATH;
+  if (!pathValue) {
+    return null;
+  }
+
+  for (const entry of pathValue.split(delimiter)) {
+    if (!entry) {
+      continue;
+    }
+
+    const candidate = join(entry, command);
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // Keep searching PATH.
+    }
+  }
+
+  return null;
 }
 
 function resolveElectronExecutableFromPackageDir(packageDir) {
@@ -242,4 +267,30 @@ export function resolveElectronPath() {
   }
 
   return buildMacLauncher(electronBinaryPath);
+}
+
+export function resolveElectronLaunchCommand(env = process.env) {
+  const electronPath = resolveElectronPath();
+  const nixGlMode = env.T3CODE_DESKTOP_NIXGL?.trim().toLowerCase();
+  const nixGlDisabled = nixGlMode === "0" || nixGlMode === "false" || nixGlMode === "off";
+  const nixGlRequired = nixGlMode === "1" || nixGlMode === "true" || nixGlMode === "on";
+  const shouldTryNixGl =
+    process.platform === "linux" &&
+    !nixGlDisabled &&
+    (nixGlRequired || !existsSync("/run/current-system"));
+
+  if (!shouldTryNixGl) {
+    return { command: electronPath, argsPrefix: [] };
+  }
+
+  const nixGlPath = resolveCommandFromPath("nixGL", env);
+  if (nixGlPath) {
+    return { command: nixGlPath, argsPrefix: [electronPath] };
+  }
+
+  if (nixGlRequired) {
+    throw new Error("T3CODE_DESKTOP_NIXGL is enabled, but nixGL was not found in PATH.");
+  }
+
+  return { command: electronPath, argsPrefix: [] };
 }

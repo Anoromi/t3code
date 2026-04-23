@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { watch } from "node:fs";
 import { join } from "node:path";
 
-import { desktopDir, resolveElectronPath } from "./electron-launcher.mjs";
+import { desktopDir, resolveElectronLaunchCommand } from "./electron-launcher.mjs";
 import { movePidToHyprWorkspace, parseHyprWorkspaceEnv } from "./hypr-workspace.mjs";
 import { resolveDesktopOzoneArgs } from "./runtime-args.mjs";
 import { waitForResources } from "./wait-for-resources.mjs";
@@ -70,10 +70,12 @@ function startApp() {
   if (shuttingDown || currentApp !== null) {
     return;
   }
+  const electronCommand = resolveElectronLaunchCommand(childEnv);
 
   const app = spawn(
-    resolveElectronPath(),
+    electronCommand.command,
     [
+      ...electronCommand.argsPrefix,
       ...resolveDesktopOzoneArgs(childEnv),
       `--t3code-dev-root=${desktopDir}`,
       "dist-electron/main.cjs",

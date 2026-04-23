@@ -1,3 +1,5 @@
+import { accessSync, constants } from "node:fs";
+
 import {
   listLoginShellCandidates,
   mergePathEntries,
@@ -16,6 +18,8 @@ type WindowsCommandAvailabilityChecker = (
   options?: CommandAvailabilityOptions,
 ) => boolean;
 
+type LoginShellUsabilityChecker = (shell: string, platform: NodeJS.Platform) => boolean;
+
 const LOGIN_SHELL_ENV_NAMES = [
   "PATH",
   "SSH_AUTH_SOCK",
@@ -30,6 +34,19 @@ function logShellEnvironmentWarning(message: string, error?: unknown): void {
   console.warn(`[desktop] ${message}`, error instanceof Error ? error.message : (error ?? ""));
 }
 
+function isUsableLoginShell(shell: string, platform: NodeJS.Platform): boolean {
+  if (platform !== "linux") {
+    return true;
+  }
+
+  try {
+    accessSync(shell, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function syncShellEnvironment(
   env: NodeJS.ProcessEnv = process.env,
   options: {
@@ -38,6 +55,7 @@ export function syncShellEnvironment(
     readWindowsEnvironment?: WindowsShellEnvironmentReader;
     isWindowsCommandAvailable?: WindowsCommandAvailabilityChecker;
     readLaunchctlPath?: typeof readPathFromLaunchctl;
+    isLoginShellUsable?: LoginShellUsabilityChecker;
     userShell?: string;
     logWarning?: (message: string, error?: unknown) => void;
   } = {},
@@ -68,10 +86,14 @@ export function syncShellEnvironment(
 
     if (platform !== "darwin" && platform !== "linux") return;
 
+    const isCandidateUsable = options.isLoginShellUsable ?? isUsableLoginShell;
     for (const shell of listLoginShellCandidates(platform, env.SHELL, options.userShell)) {
-      env.SHELL = shell;
+      if (!isCandidateUsable(shell, platform)) {
+        continue;
+      }
       try {
         Object.assign(shellEnvironment, readEnvironment(shell, LOGIN_SHELL_ENV_NAMES));
+        env.SHELL = shell;
         if (shellEnvironment.PATH) {
           break;
         }

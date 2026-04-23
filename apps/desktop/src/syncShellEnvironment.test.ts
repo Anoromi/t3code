@@ -85,6 +85,7 @@ describe("syncShellEnvironment", () => {
     syncShellEnvironment(env, {
       platform: "linux",
       readEnvironment,
+      isLoginShellUsable: () => true,
     });
 
     expect(readEnvironment).toHaveBeenCalledWith("/run/current-system/sw/bin/bash", [
@@ -99,6 +100,35 @@ describe("syncShellEnvironment", () => {
     expect(env.SHELL).toBe("/run/current-system/sw/bin/bash");
     expect(env.PATH).toBe("/home/linuxbrew/.linuxbrew/bin:/usr/bin");
     expect(env.SSH_AUTH_SOCK).toBe("/tmp/secretive.sock");
+  });
+
+  it("skips nonexistent normalized linux login shells", () => {
+    const env: NodeJS.ProcessEnv = {
+      SHELL: "/nix/store/hash-bash-5.3/bin/bash",
+      PATH: "/usr/bin",
+    };
+    const readEnvironment = vi.fn(() => ({
+      PATH: "/bin:/usr/bin",
+    }));
+
+    syncShellEnvironment(env, {
+      platform: "linux",
+      readEnvironment,
+      isLoginShellUsable: (shell) => shell === "/bin/bash",
+    });
+
+    expect(readEnvironment).toHaveBeenCalledOnce();
+    expect(readEnvironment).toHaveBeenCalledWith("/bin/bash", [
+      "PATH",
+      "SSH_AUTH_SOCK",
+      "HOMEBREW_PREFIX",
+      "HOMEBREW_CELLAR",
+      "HOMEBREW_REPOSITORY",
+      "XDG_CONFIG_HOME",
+      "XDG_DATA_HOME",
+    ]);
+    expect(env.SHELL).toBe("/bin/bash");
+    expect(env.PATH).toBe("/bin:/usr/bin");
   });
 
   it("falls back to launchctl PATH on macOS when shell probing does not return one", () => {

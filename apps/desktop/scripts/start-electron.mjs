@@ -1,14 +1,16 @@
 import { spawn } from "node:child_process";
 
-import { desktopDir, resolveElectronPath } from "./electron-launcher.mjs";
+import { desktopDir, resolveElectronLaunchCommand } from "./electron-launcher.mjs";
 import { resolveDesktopOzoneArgs, resolveDesktopProfileArgs } from "./runtime-args.mjs";
 
 const childEnv = { ...process.env };
 delete childEnv.ELECTRON_RUN_AS_NODE;
+const electronCommand = resolveElectronLaunchCommand(childEnv);
 
 const child = spawn(
-  resolveElectronPath(),
+  electronCommand.command,
   [
+    ...electronCommand.argsPrefix,
     ...resolveDesktopOzoneArgs(childEnv),
     ...resolveDesktopProfileArgs(childEnv),
     "dist-electron/main.cjs",
