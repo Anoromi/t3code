@@ -550,13 +550,6 @@ function ensureInitialBackendWindowOpen(): void {
     return;
   }
 
-  const existingWindow = mainWindow ?? BrowserWindow.getAllWindows()[0] ?? null;
-  if (existingWindow === null) {
-    mainWindow = createWindow();
-    writeDesktopLogHeader("bootstrap main window created");
-    revealWindow(mainWindow);
-  }
-
   if (backendInitialWindowOpenInFlight !== null) {
     return;
   }
@@ -565,6 +558,12 @@ function ensureInitialBackendWindowOpen(): void {
     .then((source) => {
       writeDesktopLogHeader(`bootstrap backend ready source=${source}`);
       void writeDesktopDaemonStatus("ready");
+      const existingWindow = mainWindow ?? BrowserWindow.getAllWindows()[0] ?? null;
+      if (existingWindow === null) {
+        mainWindow = createWindow();
+        writeDesktopLogHeader("bootstrap main window created");
+        revealWindow(mainWindow);
+      }
     })
     .catch((error) => {
       if (isBackendReadinessAborted(error)) {
@@ -2427,6 +2426,37 @@ function createWindow(): BrowserWindow {
   window.webContents.on("did-finish-load", () => {
     window.setTitle(APP_DISPLAY_NAME);
     emitUpdateState();
+  });
+  let packagedBackendReloadInFlight = false;
+  window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL) => {
+    if (isDevelopment || validatedURL !== backendHttpUrl || errorCode !== -102) {
+      return;
+    }
+    if (packagedBackendReloadInFlight || window.isDestroyed()) {
+      return;
+    }
+    packagedBackendReloadInFlight = true;
+    writeDesktopLogHeader(
+      `packaged window load failed before backend readiness error=${errorDescription}`,
+    );
+    void waitForBackendWindowReady(backendHttpUrl)
+      .then((source) => {
+        writeDesktopLogHeader(`packaged window retrying backend load source=${source}`);
+        if (!window.isDestroyed()) {
+          void window.loadURL(backendHttpUrl);
+        }
+      })
+      .catch((error) => {
+        if (isBackendReadinessAborted(error)) {
+          return;
+        }
+        writeDesktopLogHeader(
+          `packaged window backend reload skipped message=${formatErrorMessage(error)}`,
+        );
+      })
+      .finally(() => {
+        packagedBackendReloadInFlight = false;
+      });
   });
   let initialRevealScheduled = false;
   const revealInitialWindow = () => {
