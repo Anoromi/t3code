@@ -121,7 +121,31 @@ const DEFAULT_BINDINGS = compile([
   },
   { shortcut: modShortcut("o", { shiftKey: true }), command: "chat.new" },
   { shortcut: modShortcut("n", { shiftKey: true }), command: "chat.newLocal" },
+  {
+    shortcut: {
+      key: "s",
+      metaKey: false,
+      ctrlKey: true,
+      shiftKey: false,
+      altKey: false,
+      modKey: false,
+    },
+    command: "chat.composer.focus",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
   { shortcut: modShortcut("o"), command: "editor.openFavorite" },
+  {
+    shortcut: {
+      key: "c",
+      metaKey: false,
+      ctrlKey: true,
+      shiftKey: true,
+      altKey: false,
+      modKey: false,
+    },
+    command: "thread.interrupt",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
   { shortcut: modShortcut("[", { shiftKey: true }), command: "thread.previous" },
   { shortcut: modShortcut("]", { shiftKey: true }), command: "thread.next" },
   { shortcut: modShortcut("1"), command: "thread.jump.1" },
@@ -517,6 +541,46 @@ describe("chat/editor shortcuts", () => {
         platform: "Linux",
         context: { terminalFocus: true },
       }),
+    );
+  });
+
+  it("matches chat.composer.focus shortcut outside terminal focus", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "s", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+      "chat.composer.focus",
+    );
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "s", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+
+  it("matches thread.interrupt shortcut outside terminal focus", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "C", code: "KeyC", ctrlKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        {
+          platform: "Linux",
+          context: { terminalFocus: false },
+        },
+      ),
+      "thread.interrupt",
+    );
+    assert.isNull(
+      resolveShortcutCommand(
+        event({ key: "C", code: "KeyC", ctrlKey: true, shiftKey: true }),
+        DEFAULT_BINDINGS,
+        {
+          platform: "Linux",
+          context: { terminalFocus: true },
+        },
+      ),
     );
   });
 });

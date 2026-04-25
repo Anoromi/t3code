@@ -2110,7 +2110,17 @@ export default function ChatView(props: ChatViewProps) {
 
   const focusComposer = useCallback(() => {
     composerRef.current?.focusAtEnd();
-  }, []);
+  }, [composerRef]);
+  const onInterrupt = useCallback(async () => {
+    const api = readEnvironmentApi(environmentId);
+    if (!api || !activeThread) return;
+    await api.orchestration.dispatchCommand({
+      type: "thread.turn.interrupt",
+      commandId: newCommandId(),
+      threadId: activeThread.id,
+      createdAt: new Date().toISOString(),
+    });
+  }, [activeThread, environmentId]);
   const scheduleComposerFocus = useCallback(() => {
     window.requestAnimationFrame(() => {
       focusComposer();
@@ -2849,6 +2859,8 @@ export default function ChatView(props: ChatViewProps) {
           command === "terminal.close" ||
           command === "terminal.new" ||
           command === "diff.toggle" ||
+          command === "thread.interrupt" ||
+          command === "chat.composer.focus" ||
           projectScriptIdFromCommand(command) !== null,
       );
       if (!couldMatchHandledShortcut) {
@@ -2921,6 +2933,23 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      if (command === "thread.interrupt") {
+        if (phase !== "running") {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        void onInterrupt();
+        return;
+      }
+
+      if (command === "chat.composer.focus") {
+        event.preventDefault();
+        event.stopPropagation();
+        focusComposer();
+        return;
+      }
+
       const scriptId = projectScriptIdFromCommand(command);
       if (!scriptId || !activeProject) return;
       const script = activeProject.scripts.find((entry) => entry.id === scriptId);
@@ -2943,7 +2972,10 @@ export default function ChatView(props: ChatViewProps) {
     runProjectScript,
     splitTerminal,
     keybindings,
+    focusComposer,
+    onInterrupt,
     onToggleDiff,
+    phase,
     toggleTerminalVisibility,
   ]);
 
@@ -3422,17 +3454,6 @@ export default function ChatView(props: ChatViewProps) {
     if (!turnStartSucceeded) {
       resetLocalDispatch();
     }
-  };
-
-  const onInterrupt = async () => {
-    const api = readEnvironmentApi(environmentId);
-    if (!api || !activeThread) return;
-    await api.orchestration.dispatchCommand({
-      type: "thread.turn.interrupt",
-      commandId: newCommandId(),
-      threadId: activeThread.id,
-      createdAt: new Date().toISOString(),
-    });
   };
 
   const onRespondToApproval = useCallback(

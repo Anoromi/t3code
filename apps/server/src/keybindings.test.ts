@@ -99,6 +99,27 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }),
   );
 
+  it.effect("includes chat-scoped composer focus and interrupt defaults", () =>
+    Effect.sync(() => {
+      assert.isTrue(
+        DEFAULT_KEYBINDINGS.some(
+          (rule) =>
+            rule.command === "chat.composer.focus" &&
+            rule.key === "ctrl+s" &&
+            rule.when === "!terminalFocus",
+        ),
+      );
+      assert.isTrue(
+        DEFAULT_KEYBINDINGS.some(
+          (rule) =>
+            rule.command === "thread.interrupt" &&
+            rule.key === "ctrl+shift+c" &&
+            rule.when === "!terminalFocus",
+        ),
+      );
+    }),
+  );
+
   it.effect("compiles valid rule with parsed when AST", () =>
     Effect.sync(() => {
       const compiled = compileResolvedKeybindingRule({
@@ -214,6 +235,8 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         DEFAULT_KEYBINDINGS.map((binding) => [binding.command, binding.key] as const),
       );
 
+      assert.equal(defaultsByCommand.get("chat.composer.focus"), "ctrl+s");
+      assert.equal(defaultsByCommand.get("thread.interrupt"), "ctrl+shift+c");
       assert.equal(defaultsByCommand.get("thread.previous"), "mod+shift+[");
       assert.equal(defaultsByCommand.get("thread.next"), "mod+shift+]");
       assert.equal(defaultsByCommand.get("thread.jump.1"), "mod+1");

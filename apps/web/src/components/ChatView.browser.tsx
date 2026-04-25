@@ -674,6 +674,38 @@ function createDraftOnlySnapshot(): OrchestrationReadModel {
   };
 }
 
+function createRunningSnapshotForTargetUser(options: {
+  targetMessageId: MessageId;
+  targetText: string;
+}): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser(options);
+  return {
+    ...snapshot,
+    threads: snapshot.threads.map((thread) =>
+      thread.id !== THREAD_ID
+        ? thread
+        : Object.assign({}, thread, {
+            latestTurn: {
+              turnId: "turn-running-shortcut" as TurnId,
+              state: "running",
+              requestedAt: isoAt(1_000),
+              startedAt: isoAt(1_001),
+              completedAt: null,
+              assistantMessageId: null,
+            },
+            session: thread.session
+              ? {
+                  ...thread.session,
+                  status: "running",
+                  activeTurnId: "turn-running-shortcut" as TurnId,
+                  updatedAt: isoAt(1_001),
+                }
+              : thread.session,
+          }),
+    ),
+  };
+}
+
 function createProjectlessSnapshot(): OrchestrationReadModel {
   const snapshot = createSnapshotForTargetUser({
     targetMessageId: "msg-user-projectless-target" as MessageId,
@@ -1691,6 +1723,31 @@ function dispatchChatNewShortcut(): void {
   );
 }
 
+function dispatchThreadInterruptShortcut(): void {
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "C",
+      code: "KeyC",
+      ctrlKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
+function dispatchComposerFocusShortcut(): void {
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "s",
+      code: "KeyS",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
 function dispatchNavigationCommandMenuShortcut(): void {
   const useMetaForMod = isMacPlatform(navigator.platform);
   window.dispatchEvent(
@@ -1730,6 +1787,44 @@ function configureNavigationCommandMenuShortcut(nextFixture: TestFixture): void 
           shiftKey: false,
           altKey: false,
           modKey: true,
+        },
+      },
+    ],
+  };
+}
+
+function configureChatScopedShortcuts(nextFixture: TestFixture): void {
+  nextFixture.serverConfig = {
+    ...nextFixture.serverConfig,
+    keybindings: [
+      {
+        command: "thread.interrupt",
+        shortcut: {
+          key: "c",
+          metaKey: false,
+          ctrlKey: true,
+          shiftKey: true,
+          altKey: false,
+          modKey: false,
+        },
+        whenAst: {
+          type: "not",
+          node: { type: "identifier", name: "terminalFocus" },
+        },
+      },
+      {
+        command: "chat.composer.focus",
+        shortcut: {
+          key: "s",
+          metaKey: false,
+          ctrlKey: true,
+          shiftKey: false,
+          altKey: false,
+          modKey: false,
+        },
+        whenAst: {
+          type: "not",
+          node: { type: "identifier", name: "terminalFocus" },
         },
       },
     ],
@@ -5076,6 +5171,235 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       expect(mounted.router.state.location.pathname).toBe(serverThreadPath(THREAD_ID));
       expect(Object.keys(useComposerDraftStore.getState().draftThreadsByThreadKey)).toHaveLength(0);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("interrupts a running thread from the chat view via Ctrl+Shift+C", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshotForTargetUser({
+        targetMessageId: "msg-user-interrupt-shortcut-running" as MessageId,
+        targetText: "interrupt shortcut running",
+      }),
+      configureFixture: configureChatScopedShortcuts,
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      dispatchThreadInterruptShortcut();
+
+      await vi.waitFor(
+        () => {
+          const request = findDispatchCommand("thread.turn.interrupt");
+          expect(request).toBeTruthy();
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not interrupt when Ctrl+Shift+C is pressed outside a running thread", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-interrupt-shortcut-idle" as MessageId,
+        targetText: "interrupt shortcut idle",
+      }),
+      configureFixture: configureChatScopedShortcuts,
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      dispatchThreadInterruptShortcut();
+      await waitForLayout();
+
+      expect(findDispatchCommand("thread.turn.interrupt")).toBeUndefined();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("focuses the composer from a server thread via Ctrl+S", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-composer-focus-server" as MessageId,
+        targetText: "composer focus server",
+      }),
+      configureFixture: configureChatScopedShortcuts,
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      const composerEditor = await waitForComposerEditor();
+      const outsideButton = document.createElement("button");
+      document.body.append(outsideButton);
+      outsideButton.focus();
+      await waitForLayout();
+
+      dispatchComposerFocusShortcut();
+
+      await vi.waitFor(
+        () => {
+          const activeElement = document.activeElement;
+          expect(
+            activeElement instanceof Element &&
+              (activeElement === composerEditor || composerEditor.contains(activeElement)),
+          ).toBe(true);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      outsideButton.remove();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("focuses the composer from a draft thread via Ctrl+S", async () => {
+    const draftId = DraftId.make("draft-browser-composer-focus-shortcut");
+    useComposerDraftStore.setState({
+      draftThreadsByThreadKey: {
+        [draftId]: {
+          threadId: THREAD_ID,
+          environmentId: LOCAL_ENVIRONMENT_ID,
+          projectId: PROJECT_ID,
+          logicalProjectKey: PROJECT_DRAFT_KEY,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+          pendingWorktreeBranch: null,
+        },
+      },
+      logicalProjectDraftThreadKeyByLogicalProjectKey: {
+        [PROJECT_DRAFT_KEY]: draftId,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      configureFixture: configureChatScopedShortcuts,
+      initialPath: `/draft/${draftId}`,
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      const composerEditor = await waitForComposerEditor();
+      const outsideButton = document.createElement("button");
+      document.body.append(outsideButton);
+      outsideButton.focus();
+      await waitForLayout();
+
+      dispatchComposerFocusShortcut();
+
+      await vi.waitFor(
+        () => {
+          const activeElement = document.activeElement;
+          expect(
+            activeElement instanceof Element &&
+              (activeElement === composerEditor || composerEditor.contains(activeElement)),
+          ).toBe(true);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      outsideButton.remove();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("does not fire the chat-scoped shortcuts while the command palette is open", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshotForTargetUser({
+        targetMessageId: "msg-user-shortcuts-command-palette-open" as MessageId,
+        targetText: "shortcuts command palette open",
+      }),
+      configureFixture: configureChatScopedShortcuts,
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      const composerEditor = await waitForComposerEditor();
+      const outsideButton = document.createElement("button");
+      document.body.append(outsideButton);
+      outsideButton.focus();
+      useCommandPaletteStore.setState({
+        open: true,
+        openIntent: null,
+      });
+      await waitForLayout();
+      const paletteFocusedElement = document.activeElement;
+
+      dispatchComposerFocusShortcut();
+      dispatchThreadInterruptShortcut();
+      await waitForLayout();
+
+      expect(document.activeElement).toBe(paletteFocusedElement);
+      expect(
+        document.activeElement instanceof Element &&
+          (document.activeElement === composerEditor ||
+            composerEditor.contains(document.activeElement)),
+      ).toBe(false);
+      expect(findDispatchCommand("thread.turn.interrupt")).toBeUndefined();
+      outsideButton.remove();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it.each([
+    {
+      name: "the app terminal has focus",
+      terminalSurface: "app",
+    },
+    {
+      name: "global terminal shortcut bypass is active",
+      terminalSurface: "corkdiff",
+    },
+  ])("does not fire the chat-scoped shortcuts while $name", async ({ terminalSurface }) => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createRunningSnapshotForTargetUser({
+        targetMessageId: `msg-user-shortcuts-${terminalSurface}-guard` as MessageId,
+        targetText: `shortcuts ${terminalSurface} guard`,
+      }),
+      configureFixture: configureChatScopedShortcuts,
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      const terminalContainer = document.createElement("div");
+      terminalContainer.dataset.terminalSurface = terminalSurface;
+      const terminalButton = document.createElement("button");
+      terminalButton.dataset.terminalFocusRoot = "true";
+      terminalContainer.append(terminalButton);
+      document.body.append(terminalContainer);
+      terminalButton.focus();
+      await waitForLayout();
+
+      dispatchComposerFocusShortcut();
+      dispatchThreadInterruptShortcut();
+      await waitForLayout();
+
+      expect(document.activeElement).toBe(terminalButton);
+      expect(findDispatchCommand("thread.turn.interrupt")).toBeUndefined();
+      terminalContainer.remove();
     } finally {
       await mounted.cleanup();
     }
