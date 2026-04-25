@@ -643,6 +643,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
       });
       let metricProvider = "unknown";
       return yield* Effect.gen(function* () {
+        const persistedBinding = Option.getOrUndefined(yield* directory.getBinding(input.threadId));
         const routed = yield* resolveRoutableSession({
           threadId: input.threadId,
           operation: "ProviderService.stopSession",
@@ -657,7 +658,22 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         if (routed.isActive) {
           yield* routed.adapter.stopSession(routed.threadId);
         }
-        yield* directory.remove(input.threadId);
+        yield* directory.upsert({
+          threadId: input.threadId,
+          provider: routed.adapter.provider,
+          status: "stopped",
+          ...(persistedBinding?.runtimeMode !== undefined
+            ? { runtimeMode: persistedBinding.runtimeMode }
+            : {}),
+          ...(persistedBinding?.resumeCursor !== undefined
+            ? { resumeCursor: persistedBinding.resumeCursor }
+            : {}),
+          runtimePayload: {
+            activeTurnId: null,
+            lastRuntimeEvent: "provider.stopSession",
+            lastRuntimeEventAt: new Date().toISOString(),
+          },
+        });
         yield* analytics.record("provider.session.stopped", {
           provider: routed.adapter.provider,
         });
