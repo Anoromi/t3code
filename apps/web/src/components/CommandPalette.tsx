@@ -7,6 +7,7 @@ import {
   type FilesystemBrowseResult,
   type ProjectId,
 } from "@t3tools/contracts";
+import type { SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import {
@@ -108,6 +109,7 @@ import type { ChatComposerHandle } from "./chat/ChatComposer";
 
 const EMPTY_BROWSE_ENTRIES: FilesystemBrowseResult["entries"] = [];
 const BROWSE_STALE_TIME_MS = 30_000;
+const COMMAND_PALETTE_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
 
 function getLocalFileManagerName(platform: string): string {
   if (isMacPlatform(platform)) {
@@ -421,7 +423,7 @@ function OpenCommandPaletteDialog() {
       const latestThread = getLatestThreadForProject(
         threads.filter((thread) => thread.environmentId === project.environmentId),
         project.id,
-        settings.sidebarThreadSortOrder,
+        COMMAND_PALETTE_THREAD_SORT_ORDER,
       );
       if (latestThread) {
         await navigate({
@@ -437,13 +439,7 @@ function OpenCommandPaletteDialog() {
         envMode: settings.defaultThreadEnvMode,
       });
     },
-    [
-      handleNewThread,
-      navigate,
-      settings.defaultThreadEnvMode,
-      settings.sidebarThreadSortOrder,
-      threads,
-    ],
+    [handleNewThread, navigate, settings.defaultThreadEnvMode, threads],
   );
 
   const projectSearchItems = useMemo(
@@ -504,7 +500,7 @@ function OpenCommandPaletteDialog() {
         threads,
         ...(activeThreadId ? { activeThreadId } : {}),
         projectTitleById,
-        sortOrder: settings.sidebarThreadSortOrder,
+        sortOrder: COMMAND_PALETTE_THREAD_SORT_ORDER,
         icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
         renderLeadingContent: (thread) => <ThreadRowLeadingStatus thread={thread} />,
         renderTrailingContent: (thread) => <ThreadRowTrailingStatus thread={thread} />,
@@ -515,7 +511,7 @@ function OpenCommandPaletteDialog() {
           });
         },
       }),
-    [activeThreadId, navigate, projectTitleById, settings.sidebarThreadSortOrder, threads],
+    [activeThreadId, navigate, projectTitleById, threads],
   );
   const recentThreadItems = allThreadItems.slice(0, RECENT_THREAD_LIMIT);
 
@@ -753,7 +749,7 @@ function OpenCommandPaletteDialog() {
         const latestThread = getLatestThreadForProject(
           threads.filter((thread) => thread.environmentId === existing.environmentId),
           existing.id,
-          settings.sidebarThreadSortOrder,
+          COMMAND_PALETTE_THREAD_SORT_ORDER,
         );
         if (latestThread) {
           await navigate({
@@ -807,7 +803,6 @@ function OpenCommandPaletteDialog() {
       projects,
       setOpen,
       settings.defaultThreadEnvMode,
-      settings.sidebarThreadSortOrder,
       threads,
     ],
   );

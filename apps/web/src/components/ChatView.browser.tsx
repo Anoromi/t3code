@@ -114,6 +114,12 @@ const ADD_PROJECT_SUBMENU_PLACEHOLDER = "Enter path (e.g. ~/projects/my-app)";
 const NEWEST_THREAD_TITLE = "Newest browser thread";
 const MIDDLE_THREAD_TITLE = "Middle browser thread";
 const OLDER_THREAD_TITLE = "Older browser thread";
+const PALETTE_CREATED_RECENT_THREAD_ID = "thread-palette-created-recent" as ThreadId;
+const PALETTE_CREATED_RECENT_THREAD_TITLE = "Palette recency created thread";
+const PALETTE_USER_RECENT_THREAD_TITLE = "Palette recency user thread";
+const SECONDARY_PROJECT_CREATED_RECENT_THREAD_ID =
+  "thread-secondary-project-created-recent" as ThreadId;
+const SECONDARY_PROJECT_USER_RECENT_THREAD_ID = "thread-secondary-project-user-recent" as ThreadId;
 
 interface TestFixture {
   snapshot: OrchestrationReadModel;
@@ -764,6 +770,66 @@ function createSnapshotWithCompletedRecentThreads(): OrchestrationReadModel {
   };
 }
 
+function createSnapshotWithCommandPaletteRecencyConflict(): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-command-palette-recency-target" as MessageId,
+    targetText: "command palette recency target",
+  });
+  const baseThread = snapshot.threads[0];
+  if (!baseThread) {
+    throw new Error("Expected the base snapshot to include a thread.");
+  }
+  const baseSession = baseThread.session;
+  if (!baseSession) {
+    throw new Error("Expected the base snapshot thread to include a session.");
+  }
+
+  return {
+    ...snapshot,
+    threads: [
+      {
+        ...baseThread,
+        id: PALETTE_CREATED_RECENT_THREAD_ID,
+        title: PALETTE_CREATED_RECENT_THREAD_TITLE,
+        createdAt: "2026-03-04T11:45:00.000Z",
+        updatedAt: "2026-03-04T11:46:00.000Z",
+        messages: [],
+        activities: [],
+        proposedPlans: [],
+        checkpoints: [],
+        session: {
+          ...baseSession,
+          threadId: PALETTE_CREATED_RECENT_THREAD_ID,
+          updatedAt: "2026-03-04T11:46:00.000Z",
+        },
+      },
+      {
+        ...baseThread,
+        id: THREAD_ID,
+        title: PALETTE_USER_RECENT_THREAD_TITLE,
+        createdAt: "2026-03-04T09:30:00.000Z",
+        updatedAt: "2026-03-04T09:35:00.000Z",
+        messages: [
+          createUserMessage({
+            id: "msg-user-command-palette-recency" as MessageId,
+            text: "palette recency",
+            offsetSeconds: -300,
+          }),
+        ],
+        activities: [],
+        proposedPlans: [],
+        checkpoints: [],
+        session: {
+          ...baseSession,
+          threadId: THREAD_ID,
+          updatedAt: "2026-03-04T09:35:00.000Z",
+        },
+      },
+    ],
+    updatedAt: "2026-03-04T11:46:00.000Z",
+  };
+}
+
 function withProjectScripts(
   snapshot: OrchestrationReadModel,
   scripts: OrchestrationReadModel["projects"][number]["scripts"],
@@ -950,6 +1016,86 @@ function createSnapshotWithSecondaryProject(options?: {
       },
     ],
     threads: [...snapshot.threads, ...secondaryThreads, ...archivedSecondaryThreads],
+  };
+}
+
+function createSnapshotWithSecondaryProjectRecencyConflict(): OrchestrationReadModel {
+  const snapshot = createSnapshotForTargetUser({
+    targetMessageId: "msg-user-secondary-project-recency-target" as MessageId,
+    targetText: "secondary project recency",
+  });
+  const baseThread = snapshot.threads[0];
+  if (!baseThread) {
+    throw new Error("Expected the base snapshot to include a thread.");
+  }
+  const baseSession = baseThread.session;
+  if (!baseSession) {
+    throw new Error("Expected the base snapshot thread to include a session.");
+  }
+
+  return {
+    ...snapshot,
+    projects: [
+      ...snapshot.projects,
+      {
+        id: SECOND_PROJECT_ID,
+        title: "Docs Portal",
+        workspaceRoot: "/repo/clients/docs-portal",
+        defaultModelSelection: { provider: "codex", model: "gpt-5" },
+        scripts: [],
+        hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
+        createdAt: NOW_ISO,
+        updatedAt: NOW_ISO,
+        deletedAt: null,
+      },
+    ],
+    threads: [
+      ...snapshot.threads,
+      {
+        ...baseThread,
+        id: SECONDARY_PROJECT_CREATED_RECENT_THREAD_ID,
+        projectId: SECOND_PROJECT_ID,
+        title: "Docs created-at newer",
+        branch: "release/docs-created",
+        createdAt: "2026-03-04T11:40:00.000Z",
+        updatedAt: "2026-03-04T11:41:00.000Z",
+        messages: [],
+        activities: [],
+        proposedPlans: [],
+        checkpoints: [],
+        session: {
+          ...baseSession,
+          threadId: SECONDARY_PROJECT_CREATED_RECENT_THREAD_ID,
+          updatedAt: "2026-03-04T11:41:00.000Z",
+        },
+        archivedAt: null,
+      },
+      {
+        ...baseThread,
+        id: SECONDARY_PROJECT_USER_RECENT_THREAD_ID,
+        projectId: SECOND_PROJECT_ID,
+        title: "Docs user-recency newer",
+        branch: "release/docs-user-recency",
+        createdAt: "2026-03-04T10:00:00.000Z",
+        updatedAt: "2026-03-04T10:01:00.000Z",
+        messages: [
+          createUserMessage({
+            id: "msg-user-secondary-project-recency" as MessageId,
+            text: "docs portal recency",
+            offsetSeconds: -120,
+          }),
+        ],
+        activities: [],
+        proposedPlans: [],
+        checkpoints: [],
+        session: {
+          ...baseSession,
+          threadId: SECONDARY_PROJECT_USER_RECENT_THREAD_ID,
+          updatedAt: "2026-03-04T10:01:00.000Z",
+        },
+        archivedAt: null,
+      },
+    ],
   };
 }
 
@@ -1558,6 +1704,19 @@ function dispatchNavigationCommandMenuShortcut(): void {
   );
 }
 
+function dispatchCommandPaletteShortcut(): void {
+  const useMetaForMod = isMacPlatform(navigator.platform);
+  window.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "k",
+      metaKey: useMetaForMod,
+      ctrlKey: !useMetaForMod,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+}
+
 function configureNavigationCommandMenuShortcut(nextFixture: TestFixture): void {
   nextFixture.serverConfig = {
     ...nextFixture.serverConfig,
@@ -1619,12 +1778,20 @@ async function triggerChatNewShortcutUntilPath(
 }
 
 async function openCommandPaletteFromTrigger(): Promise<void> {
-  const trigger = page.getByTestId("command-palette-trigger");
+  const trigger = page.getByTestId("command-palette-trigger").first();
   await expect.element(trigger).toBeInTheDocument();
   await trigger.click();
   await waitForElement(
     () => document.querySelector('[data-testid="command-palette"]'),
     "Command palette should have opened from the sidebar trigger.",
+  );
+}
+
+async function openCommandPaletteWithShortcut(): Promise<void> {
+  dispatchCommandPaletteShortcut();
+  await waitForElement(
+    () => document.querySelector('[data-testid="command-palette"]'),
+    "Command palette should have opened from the keyboard shortcut.",
   );
 }
 
@@ -1753,6 +1920,33 @@ async function waitForCommandItem(expectedText: string): Promise<HTMLElement> {
         (item) => item.textContent?.includes(expectedText),
       ) ?? null,
     `Unable to find command item containing "${expectedText}".`,
+  );
+}
+
+async function waitForCommandItemOrder(expectedTexts: readonly string[]): Promise<void> {
+  const deadline = Date.now() + 8_000;
+  let orderedMatches: string[] = [];
+
+  while (Date.now() < deadline) {
+    orderedMatches = getCommandItems()
+      .map(
+        (item) =>
+          expectedTexts.find((expectedText) => item.textContent?.includes(expectedText)) ?? null,
+      )
+      .filter((value): value is string => value !== null);
+
+    if (
+      orderedMatches.length >= expectedTexts.length &&
+      expectedTexts.every((expectedText, index) => orderedMatches[index] === expectedText)
+    ) {
+      return;
+    }
+
+    await waitForLayout();
+  }
+
+  throw new Error(
+    `Expected command item order ${expectedTexts.join(" -> ")}, got ${orderedMatches.join(" -> ")}`,
   );
 }
 
@@ -4988,6 +5182,108 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("orders recent command palette threads by last user message recency regardless of sidebar sort", async () => {
+    localStorage.setItem(
+      "t3code:client-settings:v1",
+      JSON.stringify({
+        ...DEFAULT_CLIENT_SETTINGS,
+        sidebarThreadSortOrder: "created_at",
+      }),
+    );
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithCommandPaletteRecencyConflict(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "commandPalette.toggle",
+              shortcut: {
+                key: "k",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await waitForCommandPaletteShortcutLabel();
+      await openCommandPaletteWithShortcut();
+
+      await waitForCommandItemOrder([
+        PALETTE_USER_RECENT_THREAD_TITLE,
+        PALETTE_CREATED_RECENT_THREAD_TITLE,
+      ]);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("keeps recency order for equal-relevance command palette thread matches", async () => {
+    localStorage.setItem(
+      "t3code:client-settings:v1",
+      JSON.stringify({
+        ...DEFAULT_CLIENT_SETTINGS,
+        sidebarThreadSortOrder: "created_at",
+      }),
+    );
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithCommandPaletteRecencyConflict(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "commandPalette.toggle",
+              shortcut: {
+                key: "k",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await waitForCommandPaletteShortcutLabel();
+      await openCommandPaletteWithShortcut();
+
+      const searchInput = page.getByPlaceholder("Search commands, projects, and threads...");
+      await searchInput.fill("palette recency");
+      await waitForCommandItemOrder([
+        PALETTE_USER_RECENT_THREAD_TITLE,
+        PALETTE_CREATED_RECENT_THREAD_TITLE,
+      ]);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("adds a project from browse mode with Enter when no directory is highlighted", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -5830,6 +6126,62 @@ describe("ChatView timeline estimator parity (full app)", () => {
           .getState()
           .getDraftThread(threadRefFor("thread-secondary-project" as ThreadId)),
       ).toBeNull();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens the project thread with the newest user-message recency from command palette search", async () => {
+    localStorage.setItem(
+      "t3code:client-settings:v1",
+      JSON.stringify({
+        ...DEFAULT_CLIENT_SETTINGS,
+        sidebarThreadSortOrder: "created_at",
+      }),
+    );
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithSecondaryProjectRecencyConflict(),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "commandPalette.toggle",
+              shortcut: {
+                key: "k",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await waitForCommandPaletteShortcutLabel();
+      await openCommandPaletteWithShortcut();
+
+      await page.getByPlaceholder("Search commands, projects, and threads...").fill("docs portal");
+      const projectItem = await waitForCommandItem("Docs Portal");
+      projectItem.click();
+
+      const nextPath = await waitForURL(
+        mounted.router,
+        (path) => path === serverThreadPath(SECONDARY_PROJECT_USER_RECENT_THREAD_ID),
+        "Route should have changed to the project thread with the newest user-message recency.",
+      );
+      expect(nextPath).toBe(serverThreadPath(SECONDARY_PROJECT_USER_RECENT_THREAD_ID));
     } finally {
       await mounted.cleanup();
     }
