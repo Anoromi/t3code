@@ -2,6 +2,7 @@ import {
   type KeybindingCommand,
   type EnvironmentId,
   type GitBranch,
+  type OrchestrationThreadActivity,
   type ResolvedKeybindingsConfig,
   ProjectId,
   type ModelSelection,
@@ -473,8 +474,26 @@ export interface LocalDispatchSnapshot {
   latestTurnRequestedAt: string | null;
   latestTurnStartedAt: string | null;
   latestTurnCompletedAt: string | null;
+  latestActivityId: string | null;
+  latestActivityCreatedAt: string | null;
   sessionOrchestrationStatus: ThreadSession["orchestrationStatus"] | null;
   sessionUpdatedAt: string | null;
+}
+
+function pickLatestActivity(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): OrchestrationThreadActivity | null {
+  let latest: OrchestrationThreadActivity | null = null;
+  for (const activity of activities) {
+    if (
+      latest === null ||
+      activity.createdAt > latest.createdAt ||
+      (activity.createdAt === latest.createdAt && activity.id > latest.id)
+    ) {
+      latest = activity;
+    }
+  }
+  return latest;
 }
 
 export function createLocalDispatchSnapshot(
@@ -483,6 +502,7 @@ export function createLocalDispatchSnapshot(
 ): LocalDispatchSnapshot {
   const latestTurn = activeThread?.latestTurn ?? null;
   const session = activeThread?.session ?? null;
+  const latestActivity = pickLatestActivity(activeThread?.activities ?? []);
   return {
     startedAt: new Date().toISOString(),
     preparingWorktree: Boolean(options?.preparingWorktree),
@@ -490,6 +510,8 @@ export function createLocalDispatchSnapshot(
     latestTurnRequestedAt: latestTurn?.requestedAt ?? null,
     latestTurnStartedAt: latestTurn?.startedAt ?? null,
     latestTurnCompletedAt: latestTurn?.completedAt ?? null,
+    latestActivityId: latestActivity?.id ?? null,
+    latestActivityCreatedAt: latestActivity?.createdAt ?? null,
     sessionOrchestrationStatus: session?.orchestrationStatus ?? null,
     sessionUpdatedAt: session?.updatedAt ?? null,
   };
@@ -500,6 +522,7 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   phase: SessionPhase;
   latestTurn: Thread["latestTurn"] | null;
   session: Thread["session"] | null;
+  activities: ReadonlyArray<OrchestrationThreadActivity>;
   hasPendingApproval: boolean;
   hasPendingUserInput: boolean;
   threadError: string | null | undefined;
@@ -513,11 +536,23 @@ export function hasServerAcknowledgedLocalDispatch(input: {
 
   const latestTurn = input.latestTurn ?? null;
   const session = input.session ?? null;
+  const latestActivity = pickLatestActivity(input.activities);
   const latestTurnChanged =
     input.localDispatch.latestTurnTurnId !== (latestTurn?.turnId ?? null) ||
     input.localDispatch.latestTurnRequestedAt !== (latestTurn?.requestedAt ?? null) ||
     input.localDispatch.latestTurnStartedAt !== (latestTurn?.startedAt ?? null) ||
     input.localDispatch.latestTurnCompletedAt !== (latestTurn?.completedAt ?? null);
+  const latestActivityChanged =
+    input.localDispatch.latestActivityId !== (latestActivity?.id ?? null) ||
+    input.localDispatch.latestActivityCreatedAt !== (latestActivity?.createdAt ?? null);
+
+  if (
+    latestActivityChanged &&
+    latestActivity?.tone === "error" &&
+    latestActivity.createdAt >= input.localDispatch.startedAt
+  ) {
+    return true;
+  }
 
   if (input.phase === "running") {
     if (!latestTurnChanged) {

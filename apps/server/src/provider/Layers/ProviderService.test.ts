@@ -603,6 +603,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
       });
 
       yield* provider.stopSession({ threadId: session.threadId });
+      routing.codex.startSession.mockClear();
       const sendAfterStop = yield* Effect.result(
         provider.sendTurn({
           threadId: session.threadId,
@@ -610,13 +611,23 @@ routing.layer("ProviderServiceLive routing", (it) => {
           attachments: [],
         }),
       );
-      assertFailure(
-        sendAfterStop,
-        new ProviderValidationError({
-          operation: "ProviderService.sendTurn",
-          issue: `Cannot route thread '${session.threadId}' because no persisted provider binding exists.`,
-        }),
-      );
+      assert.equal(sendAfterStop._tag, "Success");
+      assert.equal(routing.codex.startSession.mock.calls.length, 1);
+      const resumedStartInput = routing.codex.startSession.mock.calls[0]?.[0];
+      assert.equal(typeof resumedStartInput === "object" && resumedStartInput !== null, true);
+      if (resumedStartInput && typeof resumedStartInput === "object") {
+        const startPayload = resumedStartInput as {
+          provider?: string;
+          cwd?: string;
+          resumeCursor?: unknown;
+          threadId?: string;
+        };
+        assert.equal(startPayload.provider, "codex");
+        assert.equal(startPayload.cwd, session.cwd);
+        assert.deepEqual(startPayload.resumeCursor, session.resumeCursor);
+        assert.equal(startPayload.threadId, session.threadId);
+      }
+      assert.equal(routing.codex.sendTurn.mock.calls.length, 2);
     }),
   );
 
