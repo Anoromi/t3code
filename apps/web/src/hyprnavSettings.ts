@@ -123,11 +123,47 @@ export function computeRemovedHyprnavBindings(
   );
 }
 
+export function computeClearedHyprnavBindingNames(
+  previous: ProjectHyprnavSettings | null | undefined,
+  next: ProjectHyprnavSettings,
+): DesktopHyprnavScopedSlot[] {
+  if (!previous) {
+    return [];
+  }
+
+  const nextByKey = new Map(
+    next.bindings.map(
+      (binding) => [hyprnavScopeSlotKey(binding.scope, binding.slot), binding] as const,
+    ),
+  );
+  const cleared = new Map<string, DesktopHyprnavScopedSlot>();
+  for (const binding of previous.bindings) {
+    const previousName = binding.name?.trim() ?? "";
+    if (previousName.length === 0) {
+      continue;
+    }
+    const key = hyprnavScopeSlotKey(binding.scope, binding.slot);
+    const nextBinding = nextByKey.get(key);
+    if (!nextBinding) {
+      continue;
+    }
+    const nextName = nextBinding.name?.trim() ?? "";
+    if (nextName.length === 0) {
+      cleared.set(key, { scope: binding.scope, slot: binding.slot });
+    }
+  }
+
+  return [...cleared.values()].toSorted((left, right) =>
+    left.scope === right.scope ? left.slot - right.slot : left.scope.localeCompare(right.scope),
+  );
+}
+
 export function makeProjectHyprnavShellBinding(input: {
   readonly id: string;
   readonly slot: number;
   readonly scope?: ProjectHyprnavScope;
   readonly command?: string;
+  readonly name?: string;
   readonly workspace?: ProjectHyprnavWorkspaceTarget;
 }): ProjectHyprnavBinding {
   return {
@@ -135,6 +171,7 @@ export function makeProjectHyprnavShellBinding(input: {
     slot: input.slot,
     scope: input.scope ?? "worktree",
     workspace: input.workspace ?? DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+    ...(input.name && input.name.trim().length > 0 ? { name: input.name.trim() } : {}),
     action: "shell-command",
     command: input.command ?? "",
   };
@@ -153,8 +190,10 @@ export interface ProjectHyprnavSyncJob {
   projectRoot: string;
   worktreePath: string | null;
   threadId: string | null;
+  threadTitle: string | null;
   hyprnav: ProjectHyprnavSettings;
   clearBindings: DesktopHyprnavScopedSlot[];
+  clearNames: DesktopHyprnavScopedSlot[];
   lock: boolean;
 }
 
@@ -162,12 +201,13 @@ export interface ActiveHyprnavSyncTarget {
   projectRoot: string;
   worktreePath: string | null;
   threadId: string;
+  threadTitle: string;
 }
 
 export function resolveActiveHyprnavSyncTarget(input: {
   localEnvironmentId: EnvironmentId | null | undefined;
   activeThread:
-    | Pick<Thread, "id" | "environmentId" | "projectId" | "worktreePath">
+    | Pick<Thread, "id" | "environmentId" | "projectId" | "worktreePath" | "title">
     | null
     | undefined;
   project: Pick<Project, "environmentId" | "id" | "cwd"> | null | undefined;
@@ -192,6 +232,7 @@ export function resolveActiveHyprnavSyncTarget(input: {
     projectRoot: input.project.cwd,
     worktreePath: input.activeThread.worktreePath ?? null,
     threadId: input.activeThread.id,
+    threadTitle: input.activeThread.title,
   };
 }
 
@@ -236,10 +277,11 @@ export function buildProjectHyprnavSyncJobs(input: {
   })[];
   threadShells: readonly ThreadShell[];
   activeThread:
-    | Pick<Thread, "id" | "environmentId" | "projectId" | "worktreePath">
+    | Pick<Thread, "id" | "environmentId" | "projectId" | "worktreePath" | "title">
     | null
     | undefined;
   clearBindingsByProjectKey: ReadonlyMap<string, readonly DesktopHyprnavScopedSlot[]>;
+  clearNamesByProjectKey: ReadonlyMap<string, readonly DesktopHyprnavScopedSlot[]>;
 }): ProjectHyprnavSyncJob[] {
   const localProjectsByKey = new Map(
     input.projects
@@ -258,18 +300,31 @@ export function buildProjectHyprnavSyncJobs(input: {
     projectRoot: string;
     worktreePath: string | null;
     threadId: string | null;
+    threadTitle: string | null;
     hyprnav: ProjectHyprnavSettings;
     lock: boolean;
   }) => {
     const key = `${jobInput.projectRoot}\u0000${jobInput.worktreePath ?? ""}\u0000${jobInput.threadId ?? ""}`;
     const clearBindings = [...(input.clearBindingsByProjectKey.get(jobInput.projectKey) ?? [])];
+    const clearNames = [...(input.clearNamesByProjectKey.get(jobInput.projectKey) ?? [])];
     const existing = jobsByKey.get(key);
     if (existing) {
       existing.lock = existing.lock || jobInput.lock;
       existing.hyprnav = jobInput.hyprnav;
+      existing.threadTitle = jobInput.threadTitle ?? existing.threadTitle;
       existing.clearBindings = [
         ...new Map(
           [...existing.clearBindings, ...clearBindings].map((binding) => [
+            hyprnavScopeSlotKey(binding.scope, binding.slot),
+            binding,
+          ]),
+        ).values(),
+      ].toSorted((left, right) =>
+        left.scope === right.scope ? left.slot - right.slot : left.scope.localeCompare(right.scope),
+      );
+      existing.clearNames = [
+        ...new Map(
+          [...existing.clearNames, ...clearNames].map((binding) => [
             hyprnavScopeSlotKey(binding.scope, binding.slot),
             binding,
           ]),
@@ -284,8 +339,10 @@ export function buildProjectHyprnavSyncJobs(input: {
       projectRoot: jobInput.projectRoot,
       worktreePath: jobInput.worktreePath,
       threadId: jobInput.threadId,
+      threadTitle: jobInput.threadTitle,
       hyprnav: jobInput.hyprnav,
       clearBindings,
+      clearNames,
       lock: jobInput.lock,
     });
   };
@@ -307,6 +364,7 @@ export function buildProjectHyprnavSyncJobs(input: {
       projectRoot: project.cwd,
       worktreePath: thread.worktreePath ?? null,
       threadId: thread.id,
+      threadTitle: thread.title,
       hyprnav: project.hyprnav,
       lock: false,
     });
@@ -325,6 +383,7 @@ export function buildProjectHyprnavSyncJobs(input: {
         projectRoot: project.cwd,
         worktreePath: activeThread.worktreePath ?? null,
         threadId: activeThread.id,
+        threadTitle: activeThread.title,
         hyprnav: project.hyprnav,
         lock: true,
       });
@@ -341,6 +400,7 @@ export function buildProjectHyprnavSyncJobs(input: {
       projectRoot: project.cwd,
       worktreePath: null,
       threadId: null,
+      threadTitle: null,
       hyprnav: project.hyprnav,
       lock: false,
     });

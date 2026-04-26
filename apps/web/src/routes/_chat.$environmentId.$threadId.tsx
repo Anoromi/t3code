@@ -216,7 +216,7 @@ function ChatThreadRouteView() {
   const hyprnavSettingsKey = effectiveProjectHyprnav ? JSON.stringify(effectiveProjectHyprnav) : "";
   const availableEditorKey = needsPreferredEditor ? availableEditors.join(",") : "";
   const hyprnavTargetKey = hyprnavSyncTarget
-    ? `${hyprnavSyncTarget.projectRoot}:${hyprnavSyncTarget.worktreePath ?? ""}:${hyprnavSyncTarget.threadId}`
+    ? `${hyprnavSyncTarget.projectRoot}:${hyprnavSyncTarget.worktreePath ?? ""}:${hyprnavSyncTarget.threadId}:${hyprnavSyncTarget.threadTitle}`
     : null;
   const hyprnavSyncRequestKey =
     currentThreadKey && hyprnavTargetKey
@@ -323,9 +323,11 @@ function ChatThreadRouteView() {
         projectRoot: hyprnavSyncTarget.projectRoot,
         worktreePath: hyprnavSyncTarget.worktreePath,
         threadId: hyprnavSyncTarget.threadId,
+        threadTitle: hyprnavSyncTarget.threadTitle,
         hyprnav: effectiveProjectHyprnav,
         preferredEditor,
         clearBindings: [],
+        clearNames: [],
         corkdiffConnection,
         lock: true,
       });

@@ -162,9 +162,11 @@ export interface DesktopHyprnavSyncInput {
   projectRoot: string;
   worktreePath?: string | null | undefined;
   threadId?: string | null | undefined;
+  threadTitle?: string | null | undefined;
   hyprnav: ProjectHyprnavSettings;
   preferredEditor?: EditorId | null | undefined;
   clearBindings?: readonly DesktopHyprnavScopedSlot[] | undefined;
+  clearNames?: readonly DesktopHyprnavScopedSlot[] | undefined;
   corkdiffConnection?: DesktopHyprnavCorkdiffConnectionInput | null | undefined;
   lock: boolean;
 }

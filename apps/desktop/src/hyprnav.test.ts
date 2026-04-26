@@ -126,6 +126,7 @@ describe("HyprnavEnvironmentSync", () => {
         projectRoot: "/repo",
         worktreePath: "/repo/worktrees/feature-a",
         threadId: "thread-1",
+        threadTitle: "Thread Alpha",
         preferredEditor: "cursor",
         corkdiffConnection: {
           serverUrl: "ws://127.0.0.1:1234/ws?wsToken=abc",
@@ -203,6 +204,8 @@ describe("HyprnavEnvironmentSync", () => {
           "p.81cede1a43fc.w.9430f831f299.t.thread-1",
           "--cwd",
           "/real/resolved/repo/worktrees/feature-a",
+          "--title",
+          "Thread Alpha",
           "--client",
           "t3code",
         ],
@@ -378,6 +381,7 @@ describe("HyprnavEnvironmentSync", () => {
               id: "custom",
               slot: 4,
               scope: "project",
+              name: "API",
               workspace: { mode: "absolute", workspaceId: 12 },
               action: "shell-command",
               command: "printf hi",
@@ -429,6 +433,8 @@ describe("HyprnavEnvironmentSync", () => {
       "4",
       "--workspace",
       "12",
+      "--name",
+      "API",
       "--client",
       "t3code",
     ]);
@@ -451,6 +457,8 @@ describe("HyprnavEnvironmentSync", () => {
       "p.816fc349d3fa",
       "--slot",
       "4",
+      "--name",
+      "API",
       "--",
       "sh",
       "-lc",
@@ -479,6 +487,7 @@ describe("HyprnavEnvironmentSync", () => {
               id: "placeholder",
               slot: 5,
               scope: "project",
+              name: "Docs",
               workspace: { mode: "absolute", workspaceId: 7 },
               action: "nothing",
             },
@@ -503,6 +512,8 @@ describe("HyprnavEnvironmentSync", () => {
       "5",
       "--workspace",
       "7",
+      "--name",
+      "Docs",
       "--client",
       "t3code",
     ]);
@@ -576,6 +587,32 @@ describe("HyprnavEnvironmentSync", () => {
         return !args?.includes("t.null");
       }),
     ).toBe(true);
+  });
+
+  it("clears stored slot names explicitly when requested", async () => {
+    const spawnSync = vi.fn(() => spawnSyncResult());
+    const sync = createHyprnavEnvironmentSync({
+      spawnSync: spawnSync as unknown as typeof ChildProcess.spawnSync,
+      resolvePath: (value: string) => value,
+      realpathSync: (value: string) => value,
+    });
+
+    await expect(
+      sync.sync({
+        projectRoot: "/repo",
+        hyprnav: {
+          bindings: [],
+        },
+        clearNames: [{ scope: "project", slot: 3 }],
+        lock: false,
+      }),
+    ).resolves.toEqual({ status: "ok", message: null });
+
+    expect(spawnSync.mock.calls).toContainEqual([
+      "hyprnav",
+      ["slot", "name", "clear", "--env", "p.816fc349d3fa", "--slot", "3"],
+      expect.any(Object),
+    ]);
   });
 
   it("returns unavailable when hyprnav is missing", async () => {

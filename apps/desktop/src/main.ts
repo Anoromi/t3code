@@ -2186,9 +2186,11 @@ function registerIpcHandlers(): void {
       projectRoot?: unknown;
       worktreePath?: unknown;
       threadId?: unknown;
+      threadTitle?: unknown;
       hyprnav?: unknown;
       preferredEditor?: unknown;
       clearBindings?: unknown;
+      clearNames?: unknown;
       corkdiffConnection?: unknown;
       lock?: unknown;
     };
@@ -2205,10 +2207,27 @@ function registerIpcHandlers(): void {
       projectRoot: getSafeNonEmptyString(record.projectRoot) ?? "",
       worktreePath: getSafeNullableString(record.worktreePath),
       threadId: getSafeNullableString(record.threadId),
+      threadTitle: getSafeNullableString(record.threadTitle),
       hyprnav,
       preferredEditor: getSafeEditorId(record.preferredEditor),
       clearBindings: Array.isArray(record.clearBindings)
         ? record.clearBindings.flatMap((binding) => {
+            if (typeof binding !== "object" || binding === null) {
+              return [];
+            }
+            const scopedBinding = binding as { slot?: unknown; scope?: unknown };
+            const slot = getSafePositiveInteger(scopedBinding.slot);
+            const scope =
+              scopedBinding.scope === "project" ||
+              scopedBinding.scope === "worktree" ||
+              scopedBinding.scope === "thread"
+                ? scopedBinding.scope
+                : null;
+            return slot === null || scope === null ? [] : [{ slot, scope }];
+          })
+        : undefined,
+      clearNames: Array.isArray(record.clearNames)
+        ? record.clearNames.flatMap((binding) => {
             if (typeof binding !== "object" || binding === null) {
               return [];
             }

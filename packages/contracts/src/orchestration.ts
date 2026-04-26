@@ -199,6 +199,7 @@ export const ProjectHyprnavBuiltinBinding = Schema.Struct({
   slot: PositiveInt,
   scope: ProjectHyprnavScope,
   workspace: ProjectHyprnavWorkspaceTarget,
+  name: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(255))),
   action: ProjectHyprnavBuiltinAction,
 });
 export type ProjectHyprnavBuiltinBinding = typeof ProjectHyprnavBuiltinBinding.Type;
@@ -208,6 +209,7 @@ export const ProjectHyprnavShellCommandBinding = Schema.Struct({
   slot: PositiveInt,
   scope: ProjectHyprnavScope,
   workspace: ProjectHyprnavWorkspaceTarget,
+  name: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(255))),
   action: Schema.Literal("shell-command"),
   command: TrimmedNonEmptyString,
 });
@@ -220,6 +222,7 @@ const ProjectHyprnavBuiltinBindingInput = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("worktree")),
   ),
   workspace: ProjectHyprnavWorkspaceTargetInput,
+  name: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(255))),
   action: ProjectHyprnavBuiltinAction,
 });
 type ProjectHyprnavBuiltinBindingInput = typeof ProjectHyprnavBuiltinBindingInput.Type;
@@ -231,6 +234,7 @@ const ProjectHyprnavShellCommandBindingInput = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed("worktree")),
   ),
   workspace: ProjectHyprnavWorkspaceTargetInput,
+  name: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(255))),
   action: Schema.Literal("shell-command"),
   command: TrimmedNonEmptyString,
 });

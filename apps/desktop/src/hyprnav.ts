@@ -31,6 +31,7 @@ interface HyprnavEnvironmentIds {
 interface HyprnavBinding {
   readonly envId: string;
   readonly slot: number;
+  readonly name: string | null;
   readonly command: string | null;
   readonly workspaceId: number | null;
 }
@@ -59,7 +60,9 @@ interface CanonicalHyprnavSyncInput extends Omit<DesktopHyprnavSyncInput, "proje
   readonly projectRoot: string;
   readonly worktreePath: string | null;
   readonly threadId: string | null;
+  readonly threadTitle: string | null;
   readonly clearBindings: readonly DesktopHyprnavScopedSlot[];
+  readonly clearNames: readonly DesktopHyprnavScopedSlot[];
   readonly corkdiffConnection: DesktopHyprnavCorkdiffConnectionInput | null;
 }
 
@@ -370,7 +373,12 @@ export class HyprnavEnvironmentSync {
         typeof input.threadId === "string" && input.threadId.trim().length > 0
           ? input.threadId.trim()
           : null,
+      threadTitle:
+        typeof input.threadTitle === "string" && input.threadTitle.trim().length > 0
+          ? input.threadTitle.trim()
+          : null,
       clearBindings: normalizeClearBindings(input.clearBindings),
+      clearNames: normalizeClearBindings(input.clearNames),
       corkdiffConnection:
         input.corkdiffConnection && input.corkdiffConnection.serverUrl.trim().length > 0
           ? {
@@ -493,6 +501,9 @@ export class HyprnavEnvironmentSync {
         target.envId,
         "--cwd",
         target.cwd,
+        ...(target.envId === envIds.threadEnvId && input.threadTitle
+          ? ["--title", input.threadTitle]
+          : []),
         "--client",
         HYPRNAV_CLIENT_ID,
       ]);
@@ -532,6 +543,31 @@ export class HyprnavEnvironmentSync {
       }
     }
 
+    const removedBindingKeys = new Set(
+      input.clearBindings.map((binding) => `${binding.scope}:${String(binding.slot)}`),
+    );
+    for (const binding of input.clearNames) {
+      if (removedBindingKeys.has(`${binding.scope}:${String(binding.slot)}`)) {
+        continue;
+      }
+      const envId = resolveScopeEnvId(binding.scope, envIds);
+      if (!envId) {
+        continue;
+      }
+      const clearNameResult = this.runHyprnav([
+        "slot",
+        "name",
+        "clear",
+        "--env",
+        envId,
+        "--slot",
+        String(binding.slot),
+      ]);
+      if (clearNameResult.status !== "ok") {
+        return clearNameResult;
+      }
+    }
+
     for (const binding of bindingsResult.bindings) {
       const assignArgs = [
         "slot",
@@ -543,6 +579,7 @@ export class HyprnavEnvironmentSync {
         ...(binding.workspaceId === null
           ? ["--managed"]
           : ["--workspace", String(binding.workspaceId)]),
+        ...(binding.name === null ? [] : ["--name", binding.name]),
         "--client",
         HYPRNAV_CLIENT_ID,
       ];
@@ -562,6 +599,7 @@ export class HyprnavEnvironmentSync {
               binding.envId,
               "--slot",
               String(binding.slot),
+              ...(binding.name === null ? [] : ["--name", binding.name]),
               "--",
               "sh",
               "-lc",
@@ -628,6 +666,7 @@ export class HyprnavEnvironmentSync {
           binding: {
             envId,
             slot,
+            name: binding.name ?? null,
             workspaceId:
               binding.workspace.mode === "absolute" ? binding.workspace.workspaceId : null,
             command: buildWorktreeTerminalCommand({
@@ -646,6 +685,7 @@ export class HyprnavEnvironmentSync {
               binding: {
                 envId,
                 slot,
+                name: binding.name ?? null,
                 workspaceId:
                   binding.workspace.mode === "absolute" ? binding.workspace.workspaceId : null,
                 command,
@@ -665,6 +705,7 @@ export class HyprnavEnvironmentSync {
           binding: {
             envId,
             slot,
+            name: binding.name ?? null,
             workspaceId:
               binding.workspace.mode === "absolute" ? binding.workspace.workspaceId : null,
             command: null,
@@ -689,6 +730,7 @@ export class HyprnavEnvironmentSync {
           binding: {
             envId,
             slot,
+            name: binding.name ?? null,
             workspaceId:
               binding.workspace.mode === "absolute" ? binding.workspace.workspaceId : null,
             command: command.command,
@@ -744,6 +786,7 @@ function mergePendingSyncInputs(
     ...next,
     lock: current.lock || next.lock,
     clearBindings: normalizeClearBindings([...current.clearBindings, ...next.clearBindings]),
+    clearNames: normalizeClearBindings([...current.clearNames, ...next.clearNames]),
   };
 }
 

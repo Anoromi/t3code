@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildProjectHyprnavSyncJobs,
+  computeClearedHyprnavBindingNames,
   computeRemovedHyprnavBindings,
   projectUsesDefaultHyprnav,
   projectHyprnavNeedsCorkdiffConnection,
@@ -260,13 +261,46 @@ describe("hyprnavSettings", () => {
     ).toEqual([]);
   });
 
+  it("detects slot names cleared without treating the binding as removed", () => {
+    expect(
+      computeClearedHyprnavBindingNames(
+        {
+          bindings: [
+            {
+              id: "slot-1",
+              slot: 1,
+              scope: "worktree",
+              workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+              name: "API",
+              action: "shell-command",
+              command: "old",
+            },
+          ],
+        },
+        {
+          bindings: [
+            {
+              id: "slot-1",
+              slot: 1,
+              scope: "worktree",
+              workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+              action: "shell-command",
+              command: "old",
+            },
+          ],
+        },
+      ),
+    ).toEqual([{ scope: "worktree", slot: 1 }]);
+  });
+
   it("resolves active sync targets from project, worktree, and thread identity", () => {
     const activeThread = {
       id: ThreadId.make("thread-1"),
       environmentId: localEnvironmentId,
       projectId,
+      title: "Thread",
       worktreePath: "/repo/worktrees/feature-a",
-    } satisfies Pick<Thread, "id" | "environmentId" | "projectId" | "worktreePath">;
+    } satisfies Pick<Thread, "id" | "environmentId" | "projectId" | "worktreePath" | "title">;
 
     expect(
       resolveActiveHyprnavSyncTarget({
@@ -278,6 +312,7 @@ describe("hyprnavSettings", () => {
       projectRoot: "/repo",
       worktreePath: "/repo/worktrees/feature-a",
       threadId: ThreadId.make("thread-1"),
+      threadTitle: "Thread",
     });
   });
 
@@ -301,6 +336,7 @@ describe("hyprnavSettings", () => {
           id: ThreadId.make("thread-1"),
           environmentId: remoteEnvironmentId,
           projectId,
+          title: "Remote thread",
           worktreePath: "/remote/worktree",
         },
         project: makeProject({ environmentId: remoteEnvironmentId }),
@@ -327,25 +363,31 @@ describe("hyprnavSettings", () => {
           id: ThreadId.make("thread-2"),
           environmentId: localEnvironmentId,
           projectId,
+          title: "Focused thread",
           worktreePath: "/repo/worktrees/feature-a",
         },
         clearBindingsByProjectKey: new Map([[projectKey, [{ scope: "thread", slot: 8 }]]]),
+        clearNamesByProjectKey: new Map([[projectKey, [{ scope: "thread", slot: 2 }]]]),
       }),
     ).toEqual([
       {
         projectRoot: "/repo",
         worktreePath: "/repo/worktrees/feature-a",
         threadId: ThreadId.make("thread-1"),
+        threadTitle: "Thread",
         hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
         clearBindings: [{ scope: "thread", slot: 8 }],
+        clearNames: [{ scope: "thread", slot: 2 }],
         lock: false,
       },
       {
         projectRoot: "/repo",
         worktreePath: "/repo/worktrees/feature-a",
         threadId: ThreadId.make("thread-2"),
+        threadTitle: "Focused thread",
         hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
         clearBindings: [{ scope: "thread", slot: 8 }],
+        clearNames: [{ scope: "thread", slot: 2 }],
         lock: true,
       },
     ]);
@@ -359,14 +401,17 @@ describe("hyprnavSettings", () => {
         threadShells: [],
         activeThread: null,
         clearBindingsByProjectKey: new Map([[projectKey, [{ scope: "project", slot: 2 }]]]),
+        clearNamesByProjectKey: new Map([[projectKey, [{ scope: "project", slot: 5 }]]]),
       }),
     ).toEqual([
       {
         projectRoot: "/repo",
         worktreePath: null,
         threadId: null,
+        threadTitle: null,
         hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
         clearBindings: [{ scope: "project", slot: 2 }],
+        clearNames: [{ scope: "project", slot: 5 }],
         lock: false,
       },
     ]);
