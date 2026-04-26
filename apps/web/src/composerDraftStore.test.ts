@@ -727,6 +727,23 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(draftByKey(draftId)).toBeUndefined();
   });
 
+  it("copies draft model selection state onto the promoted server thread key", () => {
+    const store = useComposerDraftStore.getState();
+    const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setModelSelection(draftId, modelSelection("claudeAgent", "claude-sonnet-4-6"));
+
+    markPromotedDraftThreadByRef(threadRef);
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.activeProvider).toBe("claudeAgent");
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider).toMatchObject({
+      claudeAgent: {
+        provider: "claudeAgent",
+        model: "claude-sonnet-4-6",
+      },
+    });
+  });
+
   it("updates branch context on an existing draft thread", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, {
@@ -1124,6 +1141,25 @@ describe("composerDraftStore modelSelection", () => {
 });
 
 describe("deriveEffectiveComposerModelState", () => {
+  it("prefers the draft model over a stale thread model for the selected provider", () => {
+    const state = deriveEffectiveComposerModelState({
+      draft: {
+        activeProvider: "codex",
+        modelSelectionByProvider: {
+          codex: modelSelection("codex", "gpt-5.3-codex-spark"),
+        },
+      },
+      providers: [],
+      selectedProvider: "codex",
+      threadModelSelection: modelSelection("codex", "gpt-5.4"),
+      projectModelSelection: modelSelection("codex", "gpt-5"),
+      settings: DEFAULT_UNIFIED_SETTINGS,
+      applyDefaultCodexSettings: true,
+    });
+
+    expect(state.selectedModel).toBe("gpt-5.3-codex-spark");
+  });
+
   it("applies default codex settings when a server thread has no explicit options", () => {
     const state = deriveEffectiveComposerModelState({
       draft: null,

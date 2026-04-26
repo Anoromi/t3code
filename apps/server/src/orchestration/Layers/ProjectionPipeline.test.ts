@@ -2052,6 +2052,99 @@ it.layer(BaseTestLayer)("OrchestrationProjectionPipeline", (it) => {
   );
 });
 
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-turn-start-model-")))(
+  "OrchestrationProjectionPipeline",
+  (it) => {
+    it.effect("updates projected thread model and modes on turn-start requests", () =>
+      Effect.gen(function* () {
+        const projectionPipeline = yield* OrchestrationProjectionPipeline;
+        const eventStore = yield* OrchestrationEventStore;
+        const sql = yield* SqlClient.SqlClient;
+        const createdAt = "2026-03-01T10:00:00.000Z";
+        const startedAt = "2026-03-01T10:00:05.000Z";
+        const threadId = ThreadId.make("thread-model-refresh");
+        const projectId = ProjectId.make("project-model-refresh");
+
+        yield* eventStore.append({
+          type: "thread.created",
+          eventId: EventId.make("evt-model-refresh-created"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: createdAt,
+          commandId: CommandId.make("cmd-model-refresh-created"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-model-refresh-created"),
+          metadata: {},
+          payload: {
+            threadId,
+            projectId,
+            title: "Model refresh",
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5.4",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        });
+
+        yield* eventStore.append({
+          type: "thread.turn-start-requested",
+          eventId: EventId.make("evt-model-refresh-start"),
+          aggregateKind: "thread",
+          aggregateId: threadId,
+          occurredAt: startedAt,
+          commandId: CommandId.make("cmd-model-refresh-start"),
+          causationEventId: null,
+          correlationId: CommandId.make("cmd-model-refresh-start"),
+          metadata: {},
+          payload: {
+            threadId,
+            messageId: MessageId.make("message-model-refresh"),
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5.2",
+            },
+            runtimeMode: "approval-required",
+            interactionMode: "plan",
+            createdAt: startedAt,
+          },
+        });
+
+        yield* projectionPipeline.bootstrap;
+
+        const rows = yield* sql<{
+          modelSelection: string;
+          runtimeMode: string;
+          interactionMode: string;
+          updatedAt: string;
+        }>`
+        SELECT
+          model_selection_json AS "modelSelection",
+          runtime_mode AS "runtimeMode",
+          interaction_mode AS "interactionMode",
+          updated_at AS "updatedAt"
+        FROM projection_threads
+        WHERE thread_id = ${threadId}
+      `;
+
+        assert.deepStrictEqual(rows, [
+          {
+            modelSelection: '{"provider":"codex","model":"gpt-5.2"}',
+            runtimeMode: "approval-required",
+            interactionMode: "plan",
+            updatedAt: startedAt,
+          },
+        ]);
+      }),
+    );
+  },
+);
+
 it.effect("restores pending turn-start metadata across projection pipeline restart", () =>
   Effect.gen(function* () {
     const { dbPath } = yield* ServerConfig;

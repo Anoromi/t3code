@@ -1,4 +1,5 @@
 import {
+  DEFAULT_MODEL_BY_PROVIDER,
   type KeybindingCommand,
   type EnvironmentId,
   type GitBranch,
@@ -14,7 +15,11 @@ import {
 } from "@t3tools/contracts";
 import { buildTemporaryWorktreeBranchName } from "@t3tools/shared/git";
 import { type ChatMessage, type SessionPhase, type Thread, type ThreadSession } from "../types";
-import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
+import {
+  type ComposerImageAttachment,
+  type ComposerThreadDraftState,
+  type DraftThreadState,
+} from "../composerDraftStore";
 import { Schema } from "effect";
 import { selectThreadByRef, useStore } from "../store";
 import {
@@ -43,7 +48,7 @@ export function isScrollElementAtEnd(
 export function buildLocalDraftThread(
   threadId: ThreadId,
   draftThread: DraftThreadState,
-  fallbackModelSelection: ModelSelection,
+  modelSelection: ModelSelection,
   error: string | null,
 ): Thread {
   return {
@@ -52,7 +57,7 @@ export function buildLocalDraftThread(
     codexThreadId: null,
     projectId: draftThread.projectId,
     title: "New thread",
-    modelSelection: fallbackModelSelection,
+    modelSelection,
     runtimeMode: draftThread.runtimeMode,
     interactionMode: draftThread.interactionMode,
     session: null,
@@ -68,6 +73,28 @@ export function buildLocalDraftThread(
     turnDiffSummaries: [],
     activities: [],
     proposedPlans: [],
+  };
+}
+
+export function resolveLocalDraftThreadModelSelection(input: {
+  draftModelState:
+    | Pick<ComposerThreadDraftState, "activeProvider" | "modelSelectionByProvider">
+    | null
+    | undefined;
+  fallbackModelSelection: ModelSelection;
+}): ModelSelection {
+  const selectedProvider =
+    input.draftModelState?.activeProvider ?? input.fallbackModelSelection.provider;
+  const selectedModelSelection = input.draftModelState?.modelSelectionByProvider[selectedProvider];
+  if (selectedModelSelection) {
+    return selectedModelSelection;
+  }
+  if (selectedProvider === input.fallbackModelSelection.provider) {
+    return input.fallbackModelSelection;
+  }
+  return {
+    provider: selectedProvider,
+    model: DEFAULT_MODEL_BY_PROVIDER[selectedProvider],
   };
 }
 

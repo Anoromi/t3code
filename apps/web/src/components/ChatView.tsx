@@ -141,6 +141,8 @@ import { buildDraftThreadRouteParams } from "../threadRoutes";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
+  useComposerDraftModelState,
+  useEffectiveComposerModelState,
   useComposerDraftStore,
   type DraftId,
 } from "../composerDraftStore";
@@ -187,6 +189,7 @@ import {
   readFileAsDataUrl,
   reconcileMountedTerminalThreadIds,
   resolveChatViewShortcutCommand,
+  resolveLocalDraftThreadModelSelection,
   resolvePendingWorktreeAction,
   resolveSendEnvMode,
   revokeBlobPreviewUrl,
@@ -845,6 +848,7 @@ export default function ChatView(props: ChatViewProps) {
     (store) =>
       store.getComposerDraft(composerDraftTarget)?.terminalContexts ?? EMPTY_TERMINAL_CONTEXTS,
   );
+  const composerDraftModelState = useComposerDraftModelState(composerDraftTarget);
   const [composerCursor, setComposerCursor] = useState(0);
   const [composerTrigger, setComposerTrigger] = useState<ComposerTrigger | null>(null);
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
@@ -963,21 +967,30 @@ export default function ChatView(props: ChatViewProps) {
     routeKind === "server" && serverThread
       ? null
       : ((draftId ? localDraftErrorsByDraftId[draftId] : null) ?? null);
-  const localDraftThread = useMemo(
-    () =>
-      draftThread
-        ? buildLocalDraftThread(
-            threadId,
-            draftThread,
-            fallbackDraftProject?.defaultModelSelection ?? {
-              provider: "codex",
-              model: DEFAULT_MODEL_BY_PROVIDER.codex,
-            },
-            localDraftError,
-          )
-        : undefined,
-    [draftThread, fallbackDraftProject?.defaultModelSelection, localDraftError, threadId],
-  );
+  const localDraftThread = useMemo(() => {
+    if (!draftThread) {
+      return undefined;
+    }
+    const fallbackModelSelection = fallbackDraftProject?.defaultModelSelection ?? {
+      provider: "codex",
+      model: DEFAULT_MODEL_BY_PROVIDER.codex,
+    };
+    return buildLocalDraftThread(
+      threadId,
+      draftThread,
+      resolveLocalDraftThreadModelSelection({
+        draftModelState: composerDraftModelState,
+        fallbackModelSelection,
+      }),
+      localDraftError,
+    );
+  }, [
+    composerDraftModelState,
+    draftThread,
+    fallbackDraftProject?.defaultModelSelection,
+    localDraftError,
+    threadId,
+  ]);
   const isServerThread = routeKind === "server" && serverThread !== undefined;
   const activeThread = isServerThread ? serverThread : localDraftThread;
   const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
@@ -1247,10 +1260,15 @@ export default function ChatView(props: ChatViewProps) {
     selectedProviderByThreadId ?? threadProvider ?? "codex",
   );
   const selectedProvider: ProviderKind = lockedProvider ?? unlockedSelectedProvider;
-  const selectedModelForPicker =
-    activeThread?.modelSelection.model ??
-    activeProject?.defaultModelSelection?.model ??
-    DEFAULT_MODEL_BY_PROVIDER[selectedProvider];
+  const { selectedModel: selectedModelForPicker } = useEffectiveComposerModelState({
+    threadRef: composerDraftTarget,
+    providers: providerStatuses,
+    selectedProvider,
+    threadModelSelection: activeThread?.modelSelection,
+    projectModelSelection: activeProject?.defaultModelSelection,
+    settings,
+    applyDefaultCodexSettings: selectedProvider === "codex",
+  });
   const phase = derivePhase(activeThread?.session ?? null);
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(
