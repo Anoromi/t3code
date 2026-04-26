@@ -375,7 +375,11 @@ describe("hyprnavSettings", () => {
         worktreePath: "/repo/worktrees/feature-a",
         threadId: ThreadId.make("thread-1"),
         threadTitle: "Thread",
-        hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
+        hyprnav: {
+          bindings: DEFAULT_PROJECT_HYPRNAV_SETTINGS.bindings.filter(
+            (binding) => binding.scope === "thread",
+          ),
+        },
         clearBindings: [{ scope: "thread", slot: 8 }],
         clearNames: [{ scope: "thread", slot: 2 }],
         lock: false,
@@ -385,10 +389,28 @@ describe("hyprnavSettings", () => {
         worktreePath: "/repo/worktrees/feature-a",
         threadId: ThreadId.make("thread-2"),
         threadTitle: "Focused thread",
-        hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
+        hyprnav: {
+          bindings: DEFAULT_PROJECT_HYPRNAV_SETTINGS.bindings.filter(
+            (binding) => binding.scope === "thread",
+          ),
+        },
         clearBindings: [{ scope: "thread", slot: 8 }],
         clearNames: [{ scope: "thread", slot: 2 }],
         lock: true,
+      },
+      {
+        projectRoot: "/repo",
+        worktreePath: null,
+        threadId: null,
+        threadTitle: null,
+        hyprnav: {
+          bindings: DEFAULT_PROJECT_HYPRNAV_SETTINGS.bindings.filter(
+            (binding) => binding.scope !== "thread",
+          ),
+        },
+        clearBindings: [],
+        clearNames: [],
+        lock: false,
       },
     ]);
   });
@@ -409,7 +431,11 @@ describe("hyprnavSettings", () => {
         worktreePath: null,
         threadId: null,
         threadTitle: null,
-        hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
+        hyprnav: {
+          bindings: DEFAULT_PROJECT_HYPRNAV_SETTINGS.bindings.filter(
+            (binding) => binding.scope !== "thread",
+          ),
+        },
         clearBindings: [{ scope: "project", slot: 2 }],
         clearNames: [{ scope: "project", slot: 5 }],
         lock: false,

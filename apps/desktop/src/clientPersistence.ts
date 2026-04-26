@@ -100,7 +100,8 @@ export function readClientSettings(settingsPath: string): ClientSettings | null 
 }
 
 export function writeClientSettings(settingsPath: string, settings: ClientSettings): void {
-  writeJsonFile(settingsPath, { settings } satisfies ClientSettingsDocument);
+  const parsedSettings = Schema.decodeUnknownSync(ClientSettingsSchema)(settings);
+  writeJsonFile(settingsPath, { settings: parsedSettings } satisfies ClientSettingsDocument);
 }
 
 export function readSavedEnvironmentRegistry(

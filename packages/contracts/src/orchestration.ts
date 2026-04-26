@@ -1132,9 +1132,7 @@ export const ProjectCreatedPayload = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   scripts: Schema.Array(ProjectScript),
-  hyprnav: ProjectHyprnavOverride.pipe(
-    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROJECT_HYPRNAV_SETTINGS)),
-  ),
+  hyprnav: ProjectHyprnavOverride.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   worktreeGroupTitles: Schema.optional(Schema.Array(OrchestrationWorktreeGroupTitle)).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),

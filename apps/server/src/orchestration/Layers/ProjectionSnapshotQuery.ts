@@ -1,6 +1,5 @@
 import {
   ChatAttachment,
-  DEFAULT_PROJECT_HYPRNAV_SETTINGS,
   IsoDateTime,
   MessageId,
   NonNegativeInt,
@@ -56,8 +55,6 @@ import {
 const decodeReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
 const decodeShellSnapshot = Schema.decodeUnknownEffect(OrchestrationShellSnapshot);
 const decodeThread = Schema.decodeUnknownEffect(OrchestrationThread);
-const DEFAULT_PROJECT_HYPRNAV_JSON = JSON.stringify(DEFAULT_PROJECT_HYPRNAV_SETTINGS);
-const DEFAULT_PROJECT_HYPRNAV_SQL_LITERAL = `'${DEFAULT_PROJECT_HYPRNAV_JSON.replaceAll("'", "''")}'`;
 const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
   Struct.assign({
     defaultModelSelection: Schema.NullOr(Schema.fromJsonString(ModelSelection)),
@@ -291,9 +288,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
     const projectWorktreeGroupTitlesExpression = projectColumns.has("worktree_group_titles_json")
       ? "worktree_group_titles_json"
       : "'[]'";
-    const projectHyprnavExpression = projectColumns.has("hyprnav_json")
-      ? "hyprnav_json"
-      : DEFAULT_PROJECT_HYPRNAV_SQL_LITERAL;
+    const projectHyprnavExpression = projectColumns.has("hyprnav_json") ? "hyprnav_json" : "NULL";
 
     return SqlSchema.findAll({
       Request: Schema.Void,

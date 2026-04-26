@@ -1,5 +1,5 @@
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime";
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import {
   DEFAULT_PROJECT_HYPRNAV_SETTINGS,
@@ -180,6 +180,30 @@ function hyprnavSettingsEqual(
   right: ProjectHyprnavSettings,
 ): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function makeProjectHyprnavPanelStateKey(input: {
+  logicalProjectKey: string | null;
+  groupedProjects: readonly Project[];
+  defaultProjectHyprnavSettings: ProjectHyprnavSettings;
+  groupedProjectState: GroupedProjectHyprnavState | null | undefined;
+  representativePhysicalKey: string | null;
+}): string {
+  return JSON.stringify({
+    logicalProjectKey: input.logicalProjectKey,
+    groupedProjects: input.groupedProjects.map((project) => ({
+      physicalProjectKey: derivePhysicalProjectKey(project),
+      hyprnav: project.hyprnav,
+    })),
+    defaultProjectHyprnavSettings: input.defaultProjectHyprnavSettings,
+    groupedProjectState: input.groupedProjectState
+      ? {
+          mode: input.groupedProjectState.mode,
+          defaultProjectKey: input.groupedProjectState.defaultProjectKey ?? null,
+        }
+      : null,
+    representativePhysicalKey: input.representativePhysicalKey,
+  });
 }
 
 function findNextSlot(draft: HyprnavDraft): number {
@@ -878,20 +902,43 @@ export function ProjectHyprnavSettingsPanel({
     [defaultProjectHyprnavSettings, groupedProjects],
   );
 
+  const groupedProjectState = logicalProjectKey
+    ? settings.groupedProjectHyprnavStateByLogicalProjectKey[logicalProjectKey]
+    : undefined;
+
+  const representativePhysicalKey = representativeProject
+    ? derivePhysicalProjectKey(representativeProject)
+    : null;
+
+  const panelStateKey = useMemo(
+    () =>
+      makeProjectHyprnavPanelStateKey({
+        logicalProjectKey,
+        groupedProjects,
+        defaultProjectHyprnavSettings,
+        groupedProjectState,
+        representativePhysicalKey,
+      }),
+    [
+      defaultProjectHyprnavSettings,
+      groupedProjectState,
+      groupedProjects,
+      logicalProjectKey,
+      representativePhysicalKey,
+    ],
+  );
+
   const initialPanelState = useMemo(() => {
     if (!representativeProject) {
       return null;
     }
-
-    const groupedState = logicalProjectKey
-      ? settings.groupedProjectHyprnavStateByLogicalProjectKey[logicalProjectKey]
-      : undefined;
-    const representativePhysicalKey = derivePhysicalProjectKey(representativeProject);
+    const resolvedRepresentativePhysicalKey = derivePhysicalProjectKey(representativeProject);
     const representativeHyprnav =
-      effectiveHyprnavByPhysicalKey.get(representativePhysicalKey) ?? defaultProjectHyprnavSettings;
+      effectiveHyprnavByPhysicalKey.get(resolvedRepresentativePhysicalKey) ??
+      defaultProjectHyprnavSettings;
     const sharedDraft = draftFromSettings(representativeHyprnav);
     const mode: GroupedProjectHyprnavMode =
-      groupedProjects.length > 1 && groupedState?.mode === "separate" ? "separate" : "same";
+      groupedProjects.length > 1 && groupedProjectState?.mode === "separate" ? "separate" : "same";
 
     return {
       mode,
@@ -907,20 +954,19 @@ export function ProjectHyprnavSettingsPanel({
                 ),
               ]),
             )
-          : copyDraftToProjects(groupedProjects, sharedDraft),
+          : {},
       defaultPhysicalProjectKey: resolveDefaultProjectKey({
         projects: groupedProjects,
-        preferredPhysicalKey: groupedState?.defaultProjectKey,
-        representativePhysicalKey,
+        preferredPhysicalKey: groupedProjectState?.defaultProjectKey,
+        representativePhysicalKey: resolvedRepresentativePhysicalKey,
       }),
     };
   }, [
-    groupedProjects,
-    effectiveHyprnavByPhysicalKey,
-    logicalProjectKey,
-    representativeProject,
     defaultProjectHyprnavSettings,
-    settings.groupedProjectHyprnavStateByLogicalProjectKey,
+    effectiveHyprnavByPhysicalKey,
+    groupedProjectState,
+    groupedProjects,
+    representativeProject,
   ]);
 
   const [editorMode, setEditorMode] = useState<GroupedProjectHyprnavMode>("same");
@@ -932,8 +978,13 @@ export function ProjectHyprnavSettingsPanel({
   const [resetProjectKeys, setResetProjectKeys] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
+  const lastAppliedPanelStateKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
+    if (lastAppliedPanelStateKeyRef.current === panelStateKey) {
+      return;
+    }
+    lastAppliedPanelStateKeyRef.current = panelStateKey;
     if (!initialPanelState) {
       setEditorMode("same");
       setSharedDraft(null);
@@ -947,51 +998,60 @@ export function ProjectHyprnavSettingsPanel({
     setProjectDraftsByPhysicalKey(cloneDraftRecord(initialPanelState.projectDraftsByPhysicalKey));
     setDefaultPhysicalProjectKey(initialPanelState.defaultPhysicalProjectKey);
     setResetProjectKeys([]);
-  }, [initialPanelState]);
+  }, [initialPanelState, panelStateKey]);
 
   const sharedEvaluation = useMemo(
     () => (sharedDraft ? evaluateDraft(sharedDraft) : null),
     [sharedDraft],
   );
 
-  const projectEvaluationsByPhysicalKey = useMemo(
-    () =>
-      Object.fromEntries(
-        Object.entries(projectDraftsByPhysicalKey).map(([physicalKey, draft]) => [
-          physicalKey,
-          evaluateDraft(draft),
-        ]),
-      ),
-    [projectDraftsByPhysicalKey],
-  );
+  const projectEvaluationsByPhysicalKey = useMemo(() => {
+    if (editorMode !== "separate") {
+      return {} as Record<string, DraftEvaluation>;
+    }
 
-  const groupEditors = useMemo(
-    () =>
-      groupedProjects.map((candidate) => {
-        const physicalProjectKey = derivePhysicalProjectKey(candidate);
-        const draft =
-          projectDraftsByPhysicalKey[physicalProjectKey] ??
-          draftFromSettings(
-            effectiveHyprnavByPhysicalKey.get(physicalProjectKey) ?? defaultProjectHyprnavSettings,
-          );
-        return {
-          project: candidate,
-          physicalProjectKey,
-          scopedProjectKey: scopedProjectKey(
-            scopeProjectRef(candidate.environmentId, candidate.id),
-          ),
-          draft,
-          evaluation: projectEvaluationsByPhysicalKey[physicalProjectKey] ?? evaluateDraft(draft),
-        };
-      }),
-    [
-      defaultProjectHyprnavSettings,
-      effectiveHyprnavByPhysicalKey,
-      groupedProjects,
-      projectDraftsByPhysicalKey,
-      projectEvaluationsByPhysicalKey,
-    ],
-  );
+    return Object.fromEntries(
+      Object.entries(projectDraftsByPhysicalKey).map(([physicalKey, draft]) => [
+        physicalKey,
+        evaluateDraft(draft),
+      ]),
+    );
+  }, [editorMode, projectDraftsByPhysicalKey]);
+
+  const groupEditors = useMemo(() => {
+    if (editorMode !== "separate") {
+      return [] as Array<{
+        project: Project;
+        physicalProjectKey: string;
+        scopedProjectKey: string;
+        draft: HyprnavDraft;
+        evaluation: DraftEvaluation;
+      }>;
+    }
+
+    return groupedProjects.map((candidate) => {
+      const physicalProjectKey = derivePhysicalProjectKey(candidate);
+      const draft =
+        projectDraftsByPhysicalKey[physicalProjectKey] ??
+        draftFromSettings(
+          effectiveHyprnavByPhysicalKey.get(physicalProjectKey) ?? defaultProjectHyprnavSettings,
+        );
+      return {
+        project: candidate,
+        physicalProjectKey,
+        scopedProjectKey: scopedProjectKey(scopeProjectRef(candidate.environmentId, candidate.id)),
+        draft,
+        evaluation: projectEvaluationsByPhysicalKey[physicalProjectKey] ?? evaluateDraft(draft),
+      };
+    });
+  }, [
+    defaultProjectHyprnavSettings,
+    editorMode,
+    effectiveHyprnavByPhysicalKey,
+    groupedProjects,
+    projectDraftsByPhysicalKey,
+    projectEvaluationsByPhysicalKey,
+  ]);
 
   const hasValidationError =
     editorMode === "same"

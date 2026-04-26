@@ -31,6 +31,45 @@ function getSpawnSyncArgs(call: readonly unknown[]): readonly string[] | null {
   return Array.isArray(args) && args.every((arg) => typeof arg === "string") ? args : null;
 }
 
+function getSpawnSyncOptions(
+  call: readonly unknown[],
+): ChildProcess.SpawnSyncOptionsWithStringEncoding | null {
+  const options = call[2];
+  return options && typeof options === "object"
+    ? (options as ChildProcess.SpawnSyncOptionsWithStringEncoding)
+    : null;
+}
+
+function getBatchPayload(call: readonly unknown[]): {
+  readonly atomic: boolean;
+  readonly operations: ReadonlyArray<{
+    readonly op?: string;
+    readonly env?: string;
+    readonly slot?: number;
+    readonly argv?: ReadonlyArray<string>;
+    readonly [key: string]: unknown;
+  }>;
+} | null {
+  const args = getSpawnSyncArgs(call);
+  if (!args || args[0] !== "batch" || args[1] !== "--stdin") {
+    return null;
+  }
+  const options = getSpawnSyncOptions(call);
+  if (!options || typeof options.input !== "string") {
+    return null;
+  }
+  return JSON.parse(options.input) as {
+    readonly atomic: boolean;
+    readonly operations: ReadonlyArray<{
+      readonly op?: string;
+      readonly env?: string;
+      readonly slot?: number;
+      readonly argv?: ReadonlyArray<string>;
+      readonly [key: string]: unknown;
+    }>;
+  };
+}
+
 describe("hyprnav helpers", () => {
   it("deduplicates and filters clear bindings", () => {
     expect(
@@ -166,185 +205,90 @@ describe("HyprnavEnvironmentSync", () => {
       }),
     ).resolves.toEqual({ status: "ok", message: null });
 
-    expect(spawnSync.mock.calls).toEqual([
-      [
-        "hyprnav",
-        [
-          "env",
-          "ensure",
-          "--env",
-          "p.81cede1a43fc",
-          "--cwd",
-          "/real/resolved/repo",
-          "--client",
-          "t3code",
-        ],
-        expect.any(Object),
-      ],
-      [
-        "hyprnav",
-        [
-          "env",
-          "ensure",
-          "--env",
-          "p.81cede1a43fc.w.9430f831f299",
-          "--cwd",
-          "/real/resolved/repo/worktrees/feature-a",
-          "--client",
-          "t3code",
-        ],
-        expect.any(Object),
-      ],
-      [
-        "hyprnav",
-        [
-          "env",
-          "ensure",
-          "--env",
-          "p.81cede1a43fc.w.9430f831f299.t.thread-1",
-          "--cwd",
-          "/real/resolved/repo/worktrees/feature-a",
-          "--title",
-          "Thread Alpha",
-          "--client",
-          "t3code",
-        ],
-        expect.any(Object),
-      ],
-      [
-        "hyprnav",
-        ["slot", "command", "clear", "--env", "p.81cede1a43fc", "--slot", "4"],
-        expect.any(Object),
-      ],
-      ["hyprnav", ["slot", "clear", "--env", "p.81cede1a43fc", "--slot", "4"], expect.any(Object)],
-      [
-        "hyprnav",
-        [
-          "slot",
-          "command",
-          "clear",
-          "--env",
-          "p.81cede1a43fc.w.9430f831f299.t.thread-1",
-          "--slot",
-          "9",
-        ],
-        expect.any(Object),
-      ],
-      [
-        "hyprnav",
-        ["slot", "clear", "--env", "p.81cede1a43fc.w.9430f831f299.t.thread-1", "--slot", "9"],
-        expect.any(Object),
-      ],
-      [
-        "hyprnav",
-        [
-          "slot",
-          "assign",
-          "--env",
-          "p.81cede1a43fc.w.9430f831f299",
-          "--slot",
-          "1",
-          "--managed",
-          "--client",
-          "t3code",
-        ],
-        expect.any(Object),
-      ],
-      [
-        "hyprnav",
-        [
-          "slot",
-          "command",
-          "set",
-          "--env",
-          "p.81cede1a43fc.w.9430f831f299",
-          "--slot",
-          "1",
-          "--",
+    expect(spawnSync.mock.calls).toHaveLength(1);
+    expect(getSpawnSyncArgs(spawnSync.mock.calls[0]!)).toEqual(["batch", "--stdin"]);
+
+    const payload = getBatchPayload(spawnSync.mock.calls[0]!);
+    expect(payload).not.toBeNull();
+    expect(payload?.atomic).toBe(true);
+    expect(payload?.operations).toEqual([
+      {
+        op: "env_ensure",
+        env: "p.81cede1a43fc",
+        cwd: "/real/resolved/repo",
+        client: "t3code",
+      },
+      {
+        op: "env_ensure",
+        env: "p.81cede1a43fc.w.9430f831f299",
+        cwd: "/real/resolved/repo/worktrees/feature-a",
+        client: "t3code",
+      },
+      {
+        op: "env_ensure",
+        env: "p.81cede1a43fc.w.9430f831f299.t.thread-1",
+        cwd: "/real/resolved/repo/worktrees/feature-a",
+        title: "Thread Alpha",
+        client: "t3code",
+      },
+      { op: "slot_command_clear", env: "p.81cede1a43fc", slot: 4 },
+      { op: "slot_clear", env: "p.81cede1a43fc", slot: 4, client: "t3code" },
+      { op: "slot_command_clear", env: "p.81cede1a43fc.w.9430f831f299.t.thread-1", slot: 9 },
+      {
+        op: "slot_clear",
+        env: "p.81cede1a43fc.w.9430f831f299.t.thread-1",
+        slot: 9,
+        client: "t3code",
+      },
+      {
+        op: "slot_assign",
+        env: "p.81cede1a43fc.w.9430f831f299",
+        slot: 1,
+        assignment_mode: { mode: "managed" },
+        client: "t3code",
+      },
+      {
+        op: "slot_command_set",
+        env: "p.81cede1a43fc.w.9430f831f299",
+        slot: 1,
+        argv: [
           "sh",
           "-lc",
           "exec ghostty --gtk-single-instance=false --working-directory='/real/resolved/repo/worktrees/feature-a' -e sh -lc 'exec tmux'",
         ],
-        expect.any(Object),
-      ],
-      [
-        "hyprnav",
-        [
-          "slot",
-          "assign",
-          "--env",
-          "p.81cede1a43fc",
-          "--slot",
-          "2",
-          "--managed",
-          "--client",
-          "t3code",
-        ],
-        expect.any(Object),
-      ],
-      [
-        "hyprnav",
-        [
-          "slot",
-          "command",
-          "set",
-          "--env",
-          "p.81cede1a43fc",
-          "--slot",
-          "2",
-          "--",
-          "sh",
-          "-lc",
-          "'cursor' '/real/resolved/repo'",
-        ],
-        expect.any(Object),
-      ],
-      [
-        "hyprnav",
-        [
-          "slot",
-          "assign",
-          "--env",
-          "p.81cede1a43fc.w.9430f831f299.t.thread-1",
-          "--slot",
-          "8",
-          "--managed",
-          "--client",
-          "t3code",
-        ],
-        expect.any(Object),
-      ],
-      [
-        "hyprnav",
-        [
-          "slot",
-          "command",
-          "set",
-          "--env",
-          "p.81cede1a43fc.w.9430f831f299.t.thread-1",
-          "--slot",
-          "8",
-          "--",
-          "sh",
-          "-lc",
-          expect.any(String),
-        ],
-        expect.any(Object),
-      ],
-      ["hyprnav", ["lock", "p.81cede1a43fc.w.9430f831f299.t.thread-1"], expect.any(Object)],
+      },
+      {
+        op: "slot_assign",
+        env: "p.81cede1a43fc",
+        slot: 2,
+        assignment_mode: { mode: "managed" },
+        client: "t3code",
+      },
+      {
+        op: "slot_command_set",
+        env: "p.81cede1a43fc",
+        slot: 2,
+        argv: ["sh", "-lc", "'cursor' '/real/resolved/repo'"],
+      },
+      {
+        op: "slot_assign",
+        env: "p.81cede1a43fc.w.9430f831f299.t.thread-1",
+        slot: 8,
+        assignment_mode: { mode: "managed" },
+        client: "t3code",
+      },
+      expect.objectContaining({
+        op: "slot_command_set",
+        env: "p.81cede1a43fc.w.9430f831f299.t.thread-1",
+        slot: 8,
+        argv: expect.any(Array),
+      }),
+      { op: "lock_set", env: "p.81cede1a43fc.w.9430f831f299.t.thread-1" },
     ]);
 
-    const corkdiffCommandSetCall = spawnSync.mock.calls.find((call) => {
-      const args = getSpawnSyncArgs(call);
-      return (
-        args?.[0] === "slot" &&
-        args[1] === "command" &&
-        args[2] === "set" &&
-        args.includes("p.81cede1a43fc.w.9430f831f299.t.thread-1") &&
-        args.includes("8")
-      );
-    });
-    const corkdiffCommand = getSpawnSyncArgs(corkdiffCommandSetCall ?? [])?.at(-1);
+    const corkdiffCommand = (payload?.operations.at(12)?.argv as readonly string[] | undefined)?.at(
+      2,
+    );
     expect(corkdiffCommand).toContain(
       "cd '/real/resolved/repo/worktrees/feature-a' && exec ghostty",
     );
@@ -392,78 +336,33 @@ describe("HyprnavEnvironmentSync", () => {
       }),
     ).resolves.toEqual({ status: "ok", message: null });
 
-    const managedAssignCall = spawnSync.mock.calls.find((call) => {
-      const args = getSpawnSyncArgs(call);
-      return (
-        args?.[0] === "slot" &&
-        args[1] === "assign" &&
-        args[2] === "--env" &&
-        args[4] === "--slot" &&
-        args[5] === "1"
-      );
-    });
-    expect(getSpawnSyncArgs(managedAssignCall ?? [])).toEqual([
-      "slot",
-      "assign",
-      "--env",
-      "p.816fc349d3fa.w.7d4d8df2de1b",
-      "--slot",
-      "1",
-      "--managed",
-      "--client",
-      "t3code",
-    ]);
-
-    const absoluteAssignCall = spawnSync.mock.calls.find((call) => {
-      const args = getSpawnSyncArgs(call);
-      return (
-        args?.[0] === "slot" &&
-        args[1] === "assign" &&
-        args[2] === "--env" &&
-        args[4] === "--slot" &&
-        args[5] === "4"
-      );
-    });
-    expect(getSpawnSyncArgs(absoluteAssignCall ?? [])).toEqual([
-      "slot",
-      "assign",
-      "--env",
-      "p.816fc349d3fa",
-      "--slot",
-      "4",
-      "--workspace",
-      "12",
-      "--name",
-      "API",
-      "--client",
-      "t3code",
-    ]);
-
-    const absoluteCommandSetCall = spawnSync.mock.calls.find((call) => {
-      const args = getSpawnSyncArgs(call);
-      return (
-        args?.[0] === "slot" &&
-        args[1] === "command" &&
-        args[2] === "set" &&
-        args[4] === "p.816fc349d3fa" &&
-        args[6] === "4"
-      );
-    });
-    expect(getSpawnSyncArgs(absoluteCommandSetCall ?? [])).toEqual([
-      "slot",
-      "command",
-      "set",
-      "--env",
-      "p.816fc349d3fa",
-      "--slot",
-      "4",
-      "--name",
-      "API",
-      "--",
-      "sh",
-      "-lc",
-      "printf hi",
-    ]);
+    const payload = getBatchPayload(spawnSync.mock.calls[0]!);
+    expect(payload?.operations).toEqual(
+      expect.arrayContaining([
+        {
+          op: "slot_assign",
+          env: "p.816fc349d3fa.w.7d4d8df2de1b",
+          slot: 1,
+          assignment_mode: { mode: "managed" },
+          client: "t3code",
+        },
+        {
+          op: "slot_assign",
+          env: "p.816fc349d3fa",
+          slot: 4,
+          assignment_mode: { mode: "fixed", workspace_id: 12 },
+          display_name: "API",
+          client: "t3code",
+        },
+        {
+          op: "slot_command_set",
+          env: "p.816fc349d3fa",
+          slot: 4,
+          display_name: "API",
+          argv: ["sh", "-lc", "printf hi"],
+        },
+      ]),
+    );
   });
 
   it("keeps slot assignment and clears the command for nothing bindings", async () => {
@@ -497,58 +396,31 @@ describe("HyprnavEnvironmentSync", () => {
       }),
     ).resolves.toEqual({ status: "ok", message: null });
 
-    const assignCall = spawnSync.mock.calls.find((call) => {
-      const args = getSpawnSyncArgs(call);
-      return (
-        args?.[0] === "slot" && args[1] === "assign" && args[4] === "--slot" && args[5] === "5"
-      );
-    });
-    expect(getSpawnSyncArgs(assignCall ?? [])).toEqual([
-      "slot",
-      "assign",
-      "--env",
-      "p.816fc349d3fa",
-      "--slot",
-      "5",
-      "--workspace",
-      "7",
-      "--name",
-      "Docs",
-      "--client",
-      "t3code",
-    ]);
-
-    const commandClearCall = spawnSync.mock.calls.find((call) => {
-      const args = getSpawnSyncArgs(call);
-      return (
-        args?.[0] === "slot" &&
-        args[1] === "command" &&
-        args[2] === "clear" &&
-        args[4] === "p.816fc349d3fa" &&
-        args[6] === "5"
-      );
-    });
-    expect(getSpawnSyncArgs(commandClearCall ?? [])).toEqual([
-      "slot",
-      "command",
-      "clear",
-      "--env",
-      "p.816fc349d3fa",
-      "--slot",
-      "5",
-    ]);
-
+    const payload = getBatchPayload(spawnSync.mock.calls[0]!);
+    expect(payload?.operations).toEqual(
+      expect.arrayContaining([
+        {
+          op: "slot_assign",
+          env: "p.816fc349d3fa",
+          slot: 5,
+          assignment_mode: { mode: "fixed", workspace_id: 7 },
+          display_name: "Docs",
+          client: "t3code",
+        },
+        {
+          op: "slot_command_clear",
+          env: "p.816fc349d3fa",
+          slot: 5,
+        },
+      ]),
+    );
     expect(
-      spawnSync.mock.calls.some((call) => {
-        const args = getSpawnSyncArgs(call);
-        return (
-          args?.[0] === "slot" &&
-          args[1] === "command" &&
-          args[2] === "set" &&
-          args[4] === "p.816fc349d3fa" &&
-          args[6] === "5"
-        );
-      }),
+      payload?.operations.some(
+        (operation) =>
+          operation.op === "slot_command_set" &&
+          operation.env === "p.816fc349d3fa" &&
+          operation.slot === 5,
+      ),
     ).toBe(false);
   });
 
@@ -589,6 +461,45 @@ describe("HyprnavEnvironmentSync", () => {
     ).toBe(true);
   });
 
+  it("only ensures the thread environment for thread-only sync jobs", async () => {
+    const spawnSync = vi.fn(() => spawnSyncResult());
+    const sync = createHyprnavEnvironmentSync({
+      spawnSync: spawnSync as unknown as typeof ChildProcess.spawnSync,
+      resolvePath: (value: string) => value,
+      realpathSync: (value: string) => value,
+    });
+
+    await expect(
+      sync.sync({
+        projectRoot: "/repo",
+        worktreePath: "/repo/worktrees/feature-a",
+        threadId: "thread-1",
+        threadTitle: "Thread Alpha",
+        hyprnav: {
+          bindings: [
+            {
+              id: "corkdiff",
+              slot: 8,
+              scope: "thread",
+              workspace: DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET,
+              action: "shell-command",
+              command: "printf thread-only",
+            },
+          ],
+        },
+        clearBindings: [{ scope: "thread", slot: 9 }],
+        clearNames: [{ scope: "thread", slot: 10 }],
+        lock: false,
+      }),
+    ).resolves.toEqual({ status: "ok", message: null });
+
+    const payload = getBatchPayload(spawnSync.mock.calls[0]!);
+    const ensuredEnvIds = payload?.operations.flatMap((operation) =>
+      operation.op === "env_ensure" ? [String(operation.env)] : [],
+    );
+    expect(ensuredEnvIds).toEqual(["p.816fc349d3fa.w.7d4d8df2de1b.t.thread-1"]);
+  });
+
   it("clears stored slot names explicitly when requested", async () => {
     const spawnSync = vi.fn(() => spawnSyncResult());
     const sync = createHyprnavEnvironmentSync({
@@ -608,11 +519,18 @@ describe("HyprnavEnvironmentSync", () => {
       }),
     ).resolves.toEqual({ status: "ok", message: null });
 
-    expect(spawnSync.mock.calls).toContainEqual([
-      "hyprnav",
-      ["slot", "name", "clear", "--env", "p.816fc349d3fa", "--slot", "3"],
-      expect.any(Object),
-    ]);
+    const payload = getBatchPayload(spawnSync.mock.calls[0]!);
+    expect(payload?.operations).toEqual(
+      expect.arrayContaining([
+        {
+          op: "env_ensure",
+          env: "p.816fc349d3fa",
+          cwd: "/repo",
+          client: "t3code",
+        },
+        { op: "slot_name_clear", env: "p.816fc349d3fa", slot: 3 },
+      ]),
+    );
   });
 
   it("returns unavailable when hyprnav is missing", async () => {
@@ -735,33 +653,31 @@ describe("HyprnavEnvironmentSync", () => {
       { status: "ok", message: null },
     ]);
     expect(callCount).toBeGreaterThan(0);
+    const operations = spawnSync.mock.calls.flatMap(
+      (call) => getBatchPayload(call)?.operations ?? [],
+    );
     expect(
-      spawnSync.mock.calls.some((call) => {
-        const args = getSpawnSyncArgs(call);
-        return args?.[0] === "lock" && args[1] === "p.816fc349d3fa.w.7d4d8df2de1b.t.thread-1";
-      }),
+      operations.some(
+        (operation) =>
+          operation.op === "lock_set" &&
+          operation.env === "p.816fc349d3fa.w.7d4d8df2de1b.t.thread-1",
+      ),
     ).toBe(true);
     expect(
-      spawnSync.mock.calls.some((call) => {
-        const args = getSpawnSyncArgs(call);
-        return (
-          args?.[0] === "slot" &&
-          args[1] === "clear" &&
-          args.includes("p.816fc349d3fa") &&
-          args.includes("7")
-        );
-      }),
+      operations.some(
+        (operation) =>
+          operation.op === "slot_clear" &&
+          operation.env === "p.816fc349d3fa" &&
+          operation.slot === 7,
+      ),
     ).toBe(true);
     expect(
-      spawnSync.mock.calls.some((call) => {
-        const args = getSpawnSyncArgs(call);
-        return (
-          args?.[0] === "slot" &&
-          args[1] === "clear" &&
-          args.includes("p.816fc349d3fa.w.7d4d8df2de1b.t.thread-1") &&
-          args.includes("8")
-        );
-      }),
+      operations.some(
+        (operation) =>
+          operation.op === "slot_clear" &&
+          operation.env === "p.816fc349d3fa.w.7d4d8df2de1b.t.thread-1" &&
+          operation.slot === 8,
+      ),
     ).toBe(true);
   });
 });
