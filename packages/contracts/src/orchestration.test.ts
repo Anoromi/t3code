@@ -239,7 +239,7 @@ it.effect("decodes Hyprnav bindings with nothing actions and no command", () =>
   }),
 );
 
-it.effect("decodes legacy project.created payloads with default Hyprnav settings", () =>
+it.effect("decodes legacy project.created payloads with inherited Hyprnav settings", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeProjectCreatedPayload({
       projectId: "project-1",
@@ -249,7 +249,7 @@ it.effect("decodes legacy project.created payloads with default Hyprnav settings
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
-    assert.deepStrictEqual(parsed.hyprnav, DEFAULT_PROJECT_HYPRNAV_SETTINGS);
+    assert.strictEqual(parsed.hyprnav, null);
   }),
 );
 

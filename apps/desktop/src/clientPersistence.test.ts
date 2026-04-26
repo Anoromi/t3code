@@ -84,6 +84,19 @@ describe("clientPersistence", () => {
     expect(readClientSettings(settingsPath)).toEqual(clientSettings);
   });
 
+  it("rejects invalid client settings payloads instead of persisting them", () => {
+    const settingsPath = makeTempPath("client-settings.json");
+
+    expect(() =>
+      writeClientSettings(settingsPath, {
+        ...clientSettings,
+        defaultProjectHyprnavSettings: null,
+      } as unknown as ClientSettings),
+    ).toThrow();
+
+    expect(fs.existsSync(settingsPath)).toBe(false);
+  });
+
   it("persists and reloads saved environment metadata", () => {
     const registryPath = makeTempPath("saved-environments.json");
 

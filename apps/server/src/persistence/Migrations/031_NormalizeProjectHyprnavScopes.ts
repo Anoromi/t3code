@@ -26,10 +26,11 @@ export default Effect.gen(function* () {
   for (const row of rows) {
     const normalizedJson = yield* Effect.try({
       try: () => {
-        if (!row.hyprnavJson || row.hyprnavJson.trim().length === 0) {
-          return DEFAULT_PROJECT_HYPRNAV_JSON;
+        const rawHyprnavJson = row.hyprnavJson?.trim() ?? "";
+        if (rawHyprnavJson.length === 0 || rawHyprnavJson === "null") {
+          return "null";
         }
-        const decoded = decodeProjectHyprnavSettings(JSON.parse(row.hyprnavJson));
+        const decoded = decodeProjectHyprnavSettings(JSON.parse(rawHyprnavJson));
         const normalized = decoded.bindings.some(
           (binding) => binding.id === PROJECT_HYPRNAV_CORKDIFF_ID,
         )
@@ -42,9 +43,11 @@ export default Effect.gen(function* () {
                 ),
               ],
             };
-        return JSON.stringify(normalized);
+        return JSON.stringify(normalized) === DEFAULT_PROJECT_HYPRNAV_JSON
+          ? "null"
+          : JSON.stringify(normalized);
       },
-      catch: () => DEFAULT_PROJECT_HYPRNAV_JSON,
+      catch: () => "null",
     });
 
     yield* sql`

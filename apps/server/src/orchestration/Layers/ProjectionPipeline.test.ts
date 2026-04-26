@@ -2614,7 +2614,7 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         {
           title: "Live Project",
           scriptsJson: "[]",
-          hyprnavJson: JSON.stringify(DEFAULT_PROJECT_HYPRNAV_SETTINGS),
+          hyprnavJson: "null",
         },
       ]);
 
@@ -2703,7 +2703,7 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
             '[{"id":"script-1","name":"Build","command":"bun run build","icon":"build","runOnWorktreeCreate":false}]',
           defaultModelSelection: '{"provider":"codex","model":"gpt-5"}',
           hyprnavJson:
-            '{"bindings":[{"id":"terminal","slot":3,"scope":"worktree","action":"worktree-terminal"},{"id":"custom","slot":4,"scope":"worktree","action":"shell-command","command":"tmux"}]}',
+            '{"bindings":[{"id":"terminal","slot":3,"scope":"worktree","workspace":{"mode":"managed"},"action":"worktree-terminal"},{"id":"custom","slot":4,"scope":"worktree","workspace":{"mode":"managed"},"action":"shell-command","command":"tmux"}]}',
         },
       ]);
     }),

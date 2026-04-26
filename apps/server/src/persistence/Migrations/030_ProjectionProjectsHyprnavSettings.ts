@@ -1,8 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
-const DEFAULT_PROJECT_HYPRNAV_JSON =
-  '{"bindings":[{"id":"worktree-terminal","slot":1,"action":"worktree-terminal"},{"id":"open-favorite-editor","slot":2,"action":"open-favorite-editor"}]}';
+const DEFAULT_PROJECT_HYPRNAV_JSON = "null";
 const DEFAULT_PROJECT_HYPRNAV_SQL_LITERAL = `'${DEFAULT_PROJECT_HYPRNAV_JSON.replaceAll("'", "''")}'`;
 
 const getProjectionProjectColumnNames = (sql: SqlClient.SqlClient) =>

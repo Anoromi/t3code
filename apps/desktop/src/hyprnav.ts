@@ -36,6 +36,57 @@ interface HyprnavBinding {
   readonly workspaceId: number | null;
 }
 
+type HyprnavBatchMutationRequest =
+  | {
+      readonly op: "env_ensure";
+      readonly env: string;
+      readonly cwd: string;
+      readonly client: string;
+      readonly title?: string;
+    }
+  | {
+      readonly op: "slot_clear";
+      readonly env: string;
+      readonly slot: number;
+      readonly client: string;
+    }
+  | {
+      readonly op: "slot_command_clear";
+      readonly env: string;
+      readonly slot: number;
+    }
+  | {
+      readonly op: "slot_name_clear";
+      readonly env: string;
+      readonly slot: number;
+    }
+  | {
+      readonly op: "slot_assign";
+      readonly env: string;
+      readonly slot: number;
+      readonly assignment_mode:
+        | { readonly mode: "managed" }
+        | { readonly mode: "fixed"; readonly workspace_id: number };
+      readonly client: string;
+      readonly display_name?: string;
+    }
+  | {
+      readonly op: "slot_command_set";
+      readonly env: string;
+      readonly slot: number;
+      readonly argv: readonly string[];
+      readonly display_name?: string;
+    }
+  | {
+      readonly op: "lock_set";
+      readonly env: string;
+    };
+
+interface HyprnavBatchPayload {
+  readonly atomic: true;
+  readonly operations: readonly HyprnavBatchMutationRequest[];
+}
+
 type HyprnavBindingResolution =
   | {
       readonly tag: "ok";
@@ -487,60 +538,53 @@ export class HyprnavEnvironmentSync {
       return bindingsResult.result;
     }
 
+    const relevantScopes = collectRelevantScopes(input);
     const envEnsureTargets = [
-      { envId: envIds.projectEnvId, cwd: input.projectRoot },
-      { envId: envIds.worktreeEnvId, cwd: envIds.targetPath },
-      ...(envIds.threadEnvId ? [{ envId: envIds.threadEnvId, cwd: envIds.targetPath }] : []),
+      ...(relevantScopes.has("project")
+        ? [{ envId: envIds.projectEnvId, cwd: input.projectRoot }]
+        : []),
+      ...(relevantScopes.has("worktree")
+        ? [{ envId: envIds.worktreeEnvId, cwd: envIds.targetPath }]
+        : []),
+      ...(relevantScopes.has("thread") && envIds.threadEnvId
+        ? [{ envId: envIds.threadEnvId, cwd: envIds.targetPath }]
+        : []),
     ];
 
-    for (const target of envEnsureTargets) {
-      const ensureResult = this.runHyprnav([
-        "env",
-        "ensure",
-        "--env",
-        target.envId,
-        "--cwd",
-        target.cwd,
-        ...(target.envId === envIds.threadEnvId && input.threadTitle
-          ? ["--title", input.threadTitle]
-          : []),
-        "--client",
-        HYPRNAV_CLIENT_ID,
-      ]);
-      if (ensureResult.status !== "ok") {
-        return ensureResult;
+    const operations: HyprnavBatchMutationRequest[] = envEnsureTargets.map((target) => {
+      if (target.envId === envIds.threadEnvId && input.threadTitle) {
+        return {
+          op: "env_ensure",
+          env: target.envId,
+          cwd: target.cwd,
+          client: HYPRNAV_CLIENT_ID,
+          title: input.threadTitle,
+        };
       }
-    }
+      return {
+        op: "env_ensure",
+        env: target.envId,
+        cwd: target.cwd,
+        client: HYPRNAV_CLIENT_ID,
+      };
+    });
 
     for (const binding of input.clearBindings) {
       const envId = resolveScopeEnvId(binding.scope, envIds);
       if (!envId) {
         continue;
       }
-      const clearCommandResult = this.runHyprnav([
-        "slot",
-        "command",
-        "clear",
-        "--env",
-        envId,
-        "--slot",
-        String(binding.slot),
-      ]);
-      if (clearCommandResult.status !== "ok") {
-        return clearCommandResult;
-      }
-
-      const clearSlotResult = this.runHyprnav([
-        "slot",
-        "clear",
-        "--env",
-        envId,
-        "--slot",
-        String(binding.slot),
-      ]);
-      if (clearSlotResult.status !== "ok") {
-        return clearSlotResult;
-      }
+      operations.push({
+        op: "slot_command_clear",
+        env: envId,
+        slot: binding.slot,
+      });
+      operations.push({
+        op: "slot_clear",
+        env: envId,
+        slot: binding.slot,
+        client: HYPRNAV_CLIENT_ID,
+      });
     }
 
     const removedBindingKeys = new Set(
@@ -554,71 +598,58 @@ export class HyprnavEnvironmentSync {
       if (!envId) {
         continue;
       }
-      const clearNameResult = this.runHyprnav([
-        "slot",
-        "name",
-        "clear",
-        "--env",
-        envId,
-        "--slot",
-        String(binding.slot),
-      ]);
-      if (clearNameResult.status !== "ok") {
-        return clearNameResult;
-      }
+      operations.push({
+        op: "slot_name_clear",
+        env: envId,
+        slot: binding.slot,
+      });
     }
 
     for (const binding of bindingsResult.bindings) {
-      const assignArgs = [
-        "slot",
-        "assign",
-        "--env",
-        binding.envId,
-        "--slot",
-        String(binding.slot),
-        ...(binding.workspaceId === null
-          ? ["--managed"]
-          : ["--workspace", String(binding.workspaceId)]),
-        ...(binding.name === null ? [] : ["--name", binding.name]),
-        "--client",
-        HYPRNAV_CLIENT_ID,
-      ];
-      const assignResult = this.runHyprnav(assignArgs);
-      if (assignResult.status !== "ok") {
-        return assignResult;
-      }
+      operations.push({
+        op: "slot_assign",
+        env: binding.envId,
+        slot: binding.slot,
+        assignment_mode:
+          binding.workspaceId === null
+            ? { mode: "managed" }
+            : { mode: "fixed", workspace_id: binding.workspaceId },
+        client: HYPRNAV_CLIENT_ID,
+        ...(binding.name === null ? {} : { display_name: binding.name }),
+      });
 
-      const commandResult = this.runHyprnav(
-        binding.command === null
-          ? ["slot", "command", "clear", "--env", binding.envId, "--slot", String(binding.slot)]
-          : [
-              "slot",
-              "command",
-              "set",
-              "--env",
-              binding.envId,
-              "--slot",
-              String(binding.slot),
-              ...(binding.name === null ? [] : ["--name", binding.name]),
-              "--",
-              "sh",
-              "-lc",
-              binding.command,
-            ],
-      );
-      if (commandResult.status !== "ok") {
-        return commandResult;
+      if (binding.command === null) {
+        operations.push({
+          op: "slot_command_clear",
+          env: binding.envId,
+          slot: binding.slot,
+        });
+      } else {
+        operations.push({
+          op: "slot_command_set",
+          env: binding.envId,
+          slot: binding.slot,
+          argv: ["sh", "-lc", binding.command],
+          ...(binding.name === null ? {} : { display_name: binding.name }),
+        });
       }
     }
 
     if (input.lock) {
-      const lockResult = this.runHyprnav(["lock", envIds.lockEnvId]);
-      if (lockResult.status !== "ok") {
-        return lockResult;
-      }
+      operations.push({
+        op: "lock_set",
+        env: envIds.lockEnvId,
+      });
     }
 
-    return { status: "ok", message: null };
+    if (operations.length === 0) {
+      return { status: "ok", message: null };
+    }
+
+    return this.runHyprnavBatch({
+      atomic: true,
+      operations,
+    });
   }
 
   private collectHyprnavBindings(
@@ -762,6 +793,31 @@ export class HyprnavEnvironmentSync {
       message: formatCommandFailure("hyprnav", args, result.stderr.trim()),
     };
   }
+
+  private runHyprnavBatch(payload: HyprnavBatchPayload): DesktopHyprnavSyncResult {
+    const args = ["batch", "--stdin"] as const;
+    const result = this.deps.spawnSync("hyprnav", [...args], {
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"],
+      input: JSON.stringify(payload),
+    });
+
+    if (isHyprnavUnavailableResult(result)) {
+      return {
+        status: "unavailable",
+        message: "hyprnav is not installed or not available in PATH.",
+      };
+    }
+
+    if (result.status === 0) {
+      return { status: "ok", message: null };
+    }
+
+    return {
+      status: "error",
+      message: formatCommandFailure("hyprnav", args, result.stderr.trim()),
+    };
+  }
 }
 
 function resolveScopeEnvId(
@@ -776,6 +832,23 @@ function resolveScopeEnvId(
     case "thread":
       return envIds.threadEnvId;
   }
+}
+
+function collectRelevantScopes(input: CanonicalHyprnavSyncInput): Set<ProjectHyprnavScope> {
+  const scopes = new Set<ProjectHyprnavScope>();
+  for (const binding of input.hyprnav.bindings) {
+    scopes.add(binding.scope);
+  }
+  for (const binding of input.clearBindings) {
+    scopes.add(binding.scope);
+  }
+  for (const binding of input.clearNames) {
+    scopes.add(binding.scope);
+  }
+  if (input.lock && input.threadId) {
+    scopes.add("thread");
+  }
+  return scopes;
 }
 
 function mergePendingSyncInputs(

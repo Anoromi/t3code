@@ -7,8 +7,7 @@ import * as SqliteClient from "../NodeSqliteClient.ts";
 
 const layer = it.layer(SqliteClient.layerMemory());
 
-const MIGRATION_30_DEFAULT_PROJECT_HYPRNAV_JSON =
-  '{"bindings":[{"id":"worktree-terminal","slot":1,"action":"worktree-terminal"},{"id":"open-favorite-editor","slot":2,"action":"open-favorite-editor"}]}';
+const MIGRATION_30_DEFAULT_PROJECT_HYPRNAV_JSON = "null";
 
 const prepareMigration30Fixture = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -43,7 +42,7 @@ const prepareMigration30Fixture = Effect.gen(function* () {
 });
 
 layer("030_ProjectionProjectsHyprnavSettings", (it) => {
-  it.effect("adds and backfills hyprnav settings for existing project projections", () =>
+  it.effect("adds and backfills inherited hyprnav settings for existing project projections", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
 

@@ -270,6 +270,24 @@ export function projectHyprnavNeedsCorkdiffConnection(settings: ProjectHyprnavSe
   );
 }
 
+function filterHyprnavBindingsByScopes(
+  settings: ProjectHyprnavSettings,
+  scopes: readonly ProjectHyprnavScope[],
+): ProjectHyprnavSettings {
+  const scopeSet = new Set(scopes);
+  return {
+    bindings: settings.bindings.filter((binding) => scopeSet.has(binding.scope)),
+  };
+}
+
+function filterScopedSlotsByScopes(
+  bindings: readonly DesktopHyprnavScopedSlot[],
+  scopes: readonly ProjectHyprnavScope[],
+): DesktopHyprnavScopedSlot[] {
+  const scopeSet = new Set(scopes);
+  return bindings.filter((binding) => scopeSet.has(binding.scope));
+}
+
 export function buildProjectHyprnavSyncJobs(input: {
   localEnvironmentId: EnvironmentId;
   projects: readonly (Pick<Project, "environmentId" | "id" | "cwd"> & {
@@ -283,6 +301,8 @@ export function buildProjectHyprnavSyncJobs(input: {
   clearBindingsByProjectKey: ReadonlyMap<string, readonly DesktopHyprnavScopedSlot[]>;
   clearNamesByProjectKey: ReadonlyMap<string, readonly DesktopHyprnavScopedSlot[]>;
 }): ProjectHyprnavSyncJob[] {
+  const BASE_JOB_SCOPES = ["project", "worktree"] as const satisfies readonly ProjectHyprnavScope[];
+  const THREAD_JOB_SCOPES = ["thread"] as const satisfies readonly ProjectHyprnavScope[];
   const localProjectsByKey = new Map(
     input.projects
       .filter((project) => project.environmentId === input.localEnvironmentId)
@@ -293,7 +313,6 @@ export function buildProjectHyprnavSyncJobs(input: {
   );
 
   const jobsByKey = new Map<string, ProjectHyprnavSyncJob>();
-  const projectsWithThreadJobs = new Set<string>();
 
   const addJob = (jobInput: {
     projectKey: string;
@@ -302,11 +321,13 @@ export function buildProjectHyprnavSyncJobs(input: {
     threadId: string | null;
     threadTitle: string | null;
     hyprnav: ProjectHyprnavSettings;
+    clearBindings: readonly DesktopHyprnavScopedSlot[];
+    clearNames: readonly DesktopHyprnavScopedSlot[];
     lock: boolean;
   }) => {
     const key = `${jobInput.projectRoot}\u0000${jobInput.worktreePath ?? ""}\u0000${jobInput.threadId ?? ""}`;
-    const clearBindings = [...(input.clearBindingsByProjectKey.get(jobInput.projectKey) ?? [])];
-    const clearNames = [...(input.clearNamesByProjectKey.get(jobInput.projectKey) ?? [])];
+    const clearBindings = [...jobInput.clearBindings];
+    const clearNames = [...jobInput.clearNames];
     const existing = jobsByKey.get(key);
     if (existing) {
       existing.lock = existing.lock || jobInput.lock;
@@ -358,14 +379,31 @@ export function buildProjectHyprnavSyncJobs(input: {
       continue;
     }
 
-    projectsWithThreadJobs.add(projectKey);
+    const threadHyprnav = filterHyprnavBindingsByScopes(project.hyprnav, THREAD_JOB_SCOPES);
+    const threadClearBindings = filterScopedSlotsByScopes(
+      input.clearBindingsByProjectKey.get(projectKey) ?? [],
+      THREAD_JOB_SCOPES,
+    );
+    const threadClearNames = filterScopedSlotsByScopes(
+      input.clearNamesByProjectKey.get(projectKey) ?? [],
+      THREAD_JOB_SCOPES,
+    );
+    if (
+      threadHyprnav.bindings.length === 0 &&
+      threadClearBindings.length === 0 &&
+      threadClearNames.length === 0
+    ) {
+      continue;
+    }
     addJob({
       projectKey,
       projectRoot: project.cwd,
       worktreePath: thread.worktreePath ?? null,
       threadId: thread.id,
       threadTitle: thread.title,
-      hyprnav: project.hyprnav,
+      hyprnav: threadHyprnav,
+      clearBindings: threadClearBindings,
+      clearNames: threadClearNames,
       lock: false,
     });
   }
@@ -377,31 +415,47 @@ export function buildProjectHyprnavSyncJobs(input: {
     );
     const project = localProjectsByKey.get(projectKey);
     if (project) {
-      projectsWithThreadJobs.add(projectKey);
+      const threadHyprnav = filterHyprnavBindingsByScopes(project.hyprnav, THREAD_JOB_SCOPES);
+      const threadClearBindings = filterScopedSlotsByScopes(
+        input.clearBindingsByProjectKey.get(projectKey) ?? [],
+        THREAD_JOB_SCOPES,
+      );
+      const threadClearNames = filterScopedSlotsByScopes(
+        input.clearNamesByProjectKey.get(projectKey) ?? [],
+        THREAD_JOB_SCOPES,
+      );
       addJob({
         projectKey,
         projectRoot: project.cwd,
         worktreePath: activeThread.worktreePath ?? null,
         threadId: activeThread.id,
         threadTitle: activeThread.title,
-        hyprnav: project.hyprnav,
+        hyprnav: threadHyprnav,
+        clearBindings: threadClearBindings,
+        clearNames: threadClearNames,
         lock: true,
       });
     }
   }
 
   for (const [projectKey, project] of localProjectsByKey.entries()) {
-    if (projectsWithThreadJobs.has(projectKey)) {
-      continue;
-    }
-
+    const baseClearBindings = filterScopedSlotsByScopes(
+      input.clearBindingsByProjectKey.get(projectKey) ?? [],
+      BASE_JOB_SCOPES,
+    );
+    const baseClearNames = filterScopedSlotsByScopes(
+      input.clearNamesByProjectKey.get(projectKey) ?? [],
+      BASE_JOB_SCOPES,
+    );
     addJob({
       projectKey,
       projectRoot: project.cwd,
       worktreePath: null,
       threadId: null,
       threadTitle: null,
-      hyprnav: project.hyprnav,
+      hyprnav: filterHyprnavBindingsByScopes(project.hyprnav, BASE_JOB_SCOPES),
+      clearBindings: baseClearBindings,
+      clearNames: baseClearNames,
       lock: false,
     });
   }
