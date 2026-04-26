@@ -2105,10 +2105,40 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             }
             const nextPromotedTo =
               promotedTo ?? scopeThreadRef(existing.environmentId, existing.threadId);
-            if (scopedThreadRefsEqual(existing.promotedTo, nextPromotedTo)) {
+            const targetThreadKey = scopedThreadKey(nextPromotedTo);
+            const sourceDraft = state.draftsByThreadKey[threadKey];
+            const targetDraft = state.draftsByThreadKey[targetThreadKey];
+            const shouldCopyModelState =
+              sourceDraft !== undefined &&
+              (Object.keys(sourceDraft.modelSelectionByProvider).length > 0 ||
+                sourceDraft.activeProvider !== null) &&
+              (targetDraft === undefined ||
+                (Object.keys(targetDraft.modelSelectionByProvider).length === 0 &&
+                  targetDraft.activeProvider === null));
+            if (
+              scopedThreadRefsEqual(existing.promotedTo, nextPromotedTo) &&
+              !shouldCopyModelState
+            ) {
               return state;
             }
+            const nextDraftsByThreadKey = shouldCopyModelState
+              ? {
+                  ...state.draftsByThreadKey,
+                  [targetThreadKey]: targetDraft
+                    ? {
+                        ...targetDraft,
+                        modelSelectionByProvider: sourceDraft!.modelSelectionByProvider,
+                        activeProvider: sourceDraft!.activeProvider,
+                      }
+                    : {
+                        ...createEmptyThreadDraft(),
+                        modelSelectionByProvider: sourceDraft!.modelSelectionByProvider,
+                        activeProvider: sourceDraft!.activeProvider,
+                      },
+                }
+              : state.draftsByThreadKey;
             return {
+              draftsByThreadKey: nextDraftsByThreadKey,
               draftThreadsByThreadKey: {
                 ...state.draftThreadsByThreadKey,
                 [threadKey]: {

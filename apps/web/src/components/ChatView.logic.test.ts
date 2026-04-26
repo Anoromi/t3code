@@ -29,6 +29,7 @@ import {
   isThreadForkReady,
   reconcileMountedTerminalThreadIds,
   resolveChatViewShortcutCommand,
+  resolveLocalDraftThreadModelSelection,
   resolveSendEnvMode,
   shouldWriteThreadErrorToCurrentServerThread,
   waitForStartedServerThread,
@@ -174,6 +175,48 @@ describe("deriveComposerSendState", () => {
     expect(state.trimmedPrompt).toBe("yoo  waddup");
     expect(state.expiredTerminalContextCount).toBe(1);
     expect(state.hasSendableContent).toBe(true);
+  });
+});
+
+describe("resolveLocalDraftThreadModelSelection", () => {
+  it("prefers the draft's active model selection over the project default", () => {
+    expect(
+      resolveLocalDraftThreadModelSelection({
+        draftModelState: {
+          activeProvider: "claudeAgent",
+          modelSelectionByProvider: {
+            claudeAgent: {
+              provider: "claudeAgent",
+              model: "claude-sonnet-4-6",
+              options: { thinking: true },
+            },
+          },
+        },
+        fallbackModelSelection: {
+          provider: "codex",
+          model: "gpt-5.4",
+        },
+      }),
+    ).toEqual({
+      provider: "claudeAgent",
+      model: "claude-sonnet-4-6",
+      options: { thinking: true },
+    });
+  });
+
+  it("falls back to the project default when the draft has no explicit model state", () => {
+    expect(
+      resolveLocalDraftThreadModelSelection({
+        draftModelState: null,
+        fallbackModelSelection: {
+          provider: "codex",
+          model: "gpt-5.4",
+        },
+      }),
+    ).toEqual({
+      provider: "codex",
+      model: "gpt-5.4",
+    });
   });
 });
 
