@@ -29,6 +29,7 @@ import { usePrimaryEnvironmentId } from "../../environments/primary";
 import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import {
   buildProjectHyprnavSyncJobs,
+  computeClearedHyprnavBindingNames,
   computeRemovedHyprnavBindings,
   findHyprnavActionLabel,
   findHyprnavScopeLabel,
@@ -81,6 +82,7 @@ type HyprnavDraftBinding = {
   scope: ProjectHyprnavScope;
   workspaceMode: ProjectHyprnavWorkspaceTarget["mode"];
   workspaceId: string;
+  name: string;
   action: ProjectHyprnavAction;
   command: string;
 };
@@ -124,6 +126,7 @@ function draftBindingFromSettings(binding: ProjectHyprnavBinding): HyprnavDraftB
     scope: binding.scope,
     workspaceMode: binding.workspace.mode,
     workspaceId: binding.workspace.mode === "absolute" ? String(binding.workspace.workspaceId) : "",
+    name: binding.name ?? "",
     action: binding.action,
     command: binding.action === "shell-command" ? binding.command : "",
   };
@@ -164,6 +167,7 @@ function restoreDraftBinding(
           scope: "worktree",
           workspaceMode: "managed",
           workspaceId: "",
+          name: "",
           action: "shell-command",
           command: "",
         }
@@ -253,12 +257,15 @@ function parseDraft(draft: HyprnavDraft): {
       continue;
     }
 
+    const name = binding.name.trim();
+
     if (binding.action === "shell-command") {
       bindings.push({
         id: binding.id,
         slot,
         scope: binding.scope,
         workspace,
+        ...(name.length > 0 ? { name } : {}),
         action: "shell-command",
         command: binding.command.trim(),
       });
@@ -270,6 +277,7 @@ function parseDraft(draft: HyprnavDraft): {
       slot,
       scope: binding.scope,
       workspace,
+      ...(name.length > 0 ? { name } : {}),
       action: binding.action,
     });
   }
@@ -657,7 +665,7 @@ function HyprnavBindingsEditor({
               </div>
             </div>
 
-            <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-[minmax(12rem,14rem)_minmax(0,1fr)]">
+            <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-[minmax(11rem,13rem)_minmax(11rem,14rem)_minmax(0,1fr)]">
               <div className="space-y-1 min-w-0">
                 <p className="text-[11px] font-medium text-muted-foreground">Workspace ID</p>
                 {binding.workspaceMode === "absolute" ? (
@@ -689,6 +697,26 @@ function HyprnavBindingsEditor({
                     Hyprnav-managed workspace
                   </div>
                 )}
+              </div>
+
+              <div className="space-y-1 min-w-0">
+                <p className="text-[11px] font-medium text-muted-foreground">Name</p>
+                <Input
+                  className="w-full"
+                  disabled={busy}
+                  placeholder="Fallback workspace name"
+                  size="sm"
+                  value={binding.name}
+                  onChange={(event) =>
+                    onUpdateBinding(binding.id, (current) => ({
+                      ...current,
+                      name: event.target.value,
+                    }))
+                  }
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Used when live window or app metadata is unavailable.
+                </p>
               </div>
 
               <div className="space-y-1 min-w-0">
@@ -1019,6 +1047,7 @@ export function ProjectHyprnavSettingsPanel({
           scope: "worktree",
           workspaceMode: "managed",
           workspaceId: "",
+          name: "",
           action: "shell-command",
           command: "",
         },
@@ -1040,6 +1069,7 @@ export function ProjectHyprnavSettingsPanel({
             scope: "worktree",
             workspaceMode: "managed",
             workspaceId: "",
+            name: "",
             action: "shell-command",
             command: "",
           },
@@ -1263,6 +1293,15 @@ export function ProjectHyprnavSettingsPanel({
             ),
           ]),
         );
+        const clearNamesByProjectKey = new Map(
+          localBaseProjects.map((candidate) => [
+            scopedProjectKey(scopeProjectRef(candidate.environmentId, candidate.id)),
+            computeClearedHyprnavBindingNames(
+              resolveProjectHyprnavSettings(candidate.hyprnav, defaultProjectHyprnavSettings),
+              nextSettingsByPhysicalKey.get(derivePhysicalProjectKey(candidate))!,
+            ),
+          ]),
+        );
 
         const jobs = buildProjectHyprnavSyncJobs({
           localEnvironmentId,
@@ -1276,6 +1315,7 @@ export function ProjectHyprnavSettingsPanel({
           ),
           activeThread: null,
           clearBindingsByProjectKey,
+          clearNamesByProjectKey,
         });
 
         const needsCorkdiffConnection =
@@ -1301,9 +1341,11 @@ export function ProjectHyprnavSettingsPanel({
             projectRoot: job.projectRoot,
             worktreePath: job.worktreePath,
             threadId: job.threadId,
+            threadTitle: job.threadTitle,
             hyprnav: job.hyprnav,
             preferredEditor,
             clearBindings: job.clearBindings,
+            clearNames: job.clearNames,
             corkdiffConnection,
             lock: job.lock,
           });
@@ -1628,6 +1670,7 @@ export function HyprnavDefaultsSettingsPanel() {
                 scope: "worktree",
                 workspaceMode: "managed",
                 workspaceId: "",
+                name: "",
                 action: "shell-command",
                 command: "",
               },
