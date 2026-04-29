@@ -219,6 +219,110 @@ layer("024_BackfillProjectionThreadShellSummary", (it) => {
     }),
   );
 
+  it.effect("backfills pending user input counts and clears no-session failures", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+
+      yield* runMigrations({ toMigrationInclusive: 23 });
+
+      yield* sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          latest_turn_id,
+          created_at,
+          updated_at,
+          archived_at,
+          latest_user_message_at,
+          pending_approval_count,
+          pending_user_input_count,
+          has_actionable_proposed_plan,
+          deleted_at
+        )
+        VALUES (
+          'thread-2',
+          'project-1',
+          'Thread 2',
+          'gpt-5-codex',
+          '{"provider":"codex","model":"gpt-5-codex"}',
+          'approval-required',
+          'plan',
+          NULL,
+          NULL,
+          'turn-2',
+          '2026-02-24T00:10:00.000Z',
+          '2026-02-24T00:10:00.000Z',
+          NULL,
+          NULL,
+          0,
+          0,
+          0,
+          NULL
+        )
+      `;
+
+      yield* sql`
+        INSERT INTO projection_thread_activities (
+          activity_id,
+          thread_id,
+          turn_id,
+          tone,
+          kind,
+          summary,
+          payload_json,
+          sequence,
+          created_at
+        )
+        VALUES
+          (
+            'activity-user-input-requested-no-session',
+            'thread-2',
+            'turn-2',
+            'info',
+            'user-input.requested',
+            'User input requested',
+            '{"requestId":"input-2","questions":[{"id":"mode","header":"Mode","question":"Which mode?","options":[{"label":"workspace-write","description":"Allow writes."}]}]}',
+            NULL,
+            '2026-02-24T00:11:00.000Z'
+          ),
+          (
+            'activity-user-input-failed-no-session',
+            'thread-2',
+            'turn-2',
+            'error',
+            'provider.user-input.respond.failed',
+            'Provider user input response failed',
+            '{"requestId":"input-2","detail":"No active provider session is bound to this thread."}',
+            NULL,
+            '2026-02-24T00:12:00.000Z'
+          )
+      `;
+
+      yield* runMigrations({ toMigrationInclusive: 24 });
+
+      const threadRows = yield* sql<{
+        readonly pendingUserInputCount: number;
+      }>`
+        SELECT
+          pending_user_input_count AS "pendingUserInputCount"
+        FROM projection_threads
+        WHERE thread_id = 'thread-2'
+      `;
+      assert.deepStrictEqual(threadRows, [
+        {
+          pendingUserInputCount: 0,
+        },
+      ]);
+    }),
+  );
+
   it.effect("repairs drifted schemas when the shell summary columns are missing", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

@@ -337,6 +337,33 @@ export const WsOrchestrationReplayEventsRpc = Rpc.make(ORCHESTRATION_WS_METHODS.
   error: OrchestrationReplayEventsError,
 });
 
+export const WsOrchestrationGetShellSnapshotRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.getShellSnapshot,
+  {
+    payload: OrchestrationRpcSchemas.getShellSnapshot.input,
+    success: OrchestrationRpcSchemas.getShellSnapshot.output,
+    error: OrchestrationGetSnapshotError,
+  },
+);
+
+export const WsOrchestrationGetThreadShellByIdRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.getThreadShellById,
+  {
+    payload: OrchestrationRpcSchemas.getThreadShellById.input,
+    success: OrchestrationRpcSchemas.getThreadShellById.output,
+    error: OrchestrationGetSnapshotError,
+  },
+);
+
+export const WsOrchestrationGetThreadCheckpointContextRpc = Rpc.make(
+  ORCHESTRATION_WS_METHODS.getThreadCheckpointContext,
+  {
+    payload: OrchestrationRpcSchemas.getThreadCheckpointContext.input,
+    success: OrchestrationRpcSchemas.getThreadCheckpointContext.output,
+    error: OrchestrationGetSnapshotError,
+  },
+);
+
 export const WsOrchestrationSubscribeShellRpc = Rpc.make(ORCHESTRATION_WS_METHODS.subscribeShell, {
   payload: OrchestrationRpcSchemas.subscribeShell.input,
   success: OrchestrationRpcSchemas.subscribeShell.output,
@@ -429,6 +456,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeDesktopControlRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetSnapshotRpc,
+  WsOrchestrationGetShellSnapshotRpc,
+  WsOrchestrationGetThreadShellByIdRpc,
+  WsOrchestrationGetThreadCheckpointContextRpc,
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,
   WsOrchestrationReplayEventsRpc,

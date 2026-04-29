@@ -48,6 +48,7 @@ import {
   parseThreadSegmentFromAttachmentId,
   toSafeThreadAttachmentSegment,
 } from "../../attachmentStore.ts";
+import { isStalePendingUserInputFailureDetail } from "../pendingUserInput.ts";
 
 export const ORCHESTRATION_PROJECTOR_NAMES = {
   projects: "projection.projects",
@@ -135,8 +136,7 @@ function derivePendingUserInputCountFromActivities(
     if (
       activity.kind === "provider.user-input.respond.failed" &&
       detail !== null &&
-      (detail.includes("stale pending user-input request") ||
-        detail.includes("unknown pending user-input request"))
+      isStalePendingUserInputFailureDetail(detail)
     ) {
       openRequestIds.delete(requestId);
     }

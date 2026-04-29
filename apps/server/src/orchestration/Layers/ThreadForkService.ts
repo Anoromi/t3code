@@ -24,6 +24,7 @@ import { ProjectionTurnRepository } from "../../persistence/Services/ProjectionT
 import { OrchestrationCommandInvariantError } from "../Errors.ts";
 import { requireThread, requireThreadAbsent } from "../commandInvariants.ts";
 import { ThreadForkService, type ThreadForkServiceShape } from "../Services/ThreadForkService.ts";
+import { isStalePendingUserInputFailureDetail } from "../pendingUserInput.ts";
 
 function truncateThreadTitle(text: string, maxLength = 50): string {
   const trimmed = text.trim();
@@ -112,7 +113,7 @@ function filterOpenInteractiveActivities<
     }
     if (
       activity.kind === "provider.user-input.respond.failed" &&
-      isStalePendingRequestFailure(extractActivityFailureDetail(activity.payload))
+      isStalePendingUserInputFailureDetail(extractActivityFailureDetail(activity.payload))
     ) {
       openUserInputRequestIds.delete(requestId);
     }

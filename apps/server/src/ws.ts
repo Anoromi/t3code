@@ -628,6 +628,52 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             ),
             { "rpc.aggregate": "orchestration" },
           ),
+        [ORCHESTRATION_WS_METHODS.getShellSnapshot]: (_input: {}) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.getShellSnapshot,
+            projectionSnapshotQuery.getShellSnapshot().pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationGetSnapshotError({
+                    message: "Failed to load orchestration shell snapshot",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.getThreadShellById]: (input: { readonly threadId: ThreadId }) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.getThreadShellById,
+            projectionSnapshotQuery.getThreadShellById(input.threadId).pipe(
+              Effect.map((thread) => (Option.isSome(thread) ? thread.value : null)),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationGetSnapshotError({
+                    message: `Failed to load thread shell ${input.threadId}`,
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
+        [ORCHESTRATION_WS_METHODS.getThreadCheckpointContext]: (input: {
+          readonly threadId: ThreadId;
+        }) =>
+          observeRpcEffect(
+            ORCHESTRATION_WS_METHODS.getThreadCheckpointContext,
+            projectionSnapshotQuery.getThreadCheckpointContext(input.threadId).pipe(
+              Effect.map((context) => (Option.isSome(context) ? context.value : null)),
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationGetSnapshotError({
+                    message: `Failed to load thread checkpoint context ${input.threadId}`,
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "orchestration" },
+          ),
         [ORCHESTRATION_WS_METHODS.getTurnDiff]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.getTurnDiff,

@@ -316,33 +316,6 @@ export function resolveTerminalStatusIndicator(input: {
   };
 }
 
-function compareThreadCreatedAtDesc(
-  left: Pick<SidebarThreadLike, "createdAt" | "id">,
-  right: Pick<SidebarThreadLike, "createdAt" | "id">,
-): number {
-  const byCreatedAt = right.createdAt.localeCompare(left.createdAt);
-  if (byCreatedAt !== 0) return byCreatedAt;
-  return String(right.id).localeCompare(String(left.id));
-}
-
-function compareSidebarEntryOrder(
-  left: Pick<SidebarProjectThreadEntry<SidebarThreadLike>, "kind" | "positionCreatedAt"> &
-    Partial<Pick<SidebarWorktreeGroupEntry<SidebarThreadLike>, "worktreePath">> &
-    Partial<Pick<SidebarThreadEntry<SidebarThreadLike>, "thread">>,
-  right: Pick<SidebarProjectThreadEntry<SidebarThreadLike>, "kind" | "positionCreatedAt"> &
-    Partial<Pick<SidebarWorktreeGroupEntry<SidebarThreadLike>, "worktreePath">> &
-    Partial<Pick<SidebarThreadEntry<SidebarThreadLike>, "thread">>,
-): number {
-  const byPositionCreatedAt = right.positionCreatedAt.localeCompare(left.positionCreatedAt);
-  if (byPositionCreatedAt !== 0) return byPositionCreatedAt;
-
-  const leftIdentity =
-    left.kind === "worktree-group" ? (left.worktreePath ?? "") : String(left.thread?.id ?? "");
-  const rightIdentity =
-    right.kind === "worktree-group" ? (right.worktreePath ?? "") : String(right.thread?.id ?? "");
-  return rightIdentity.localeCompare(leftIdentity);
-}
-
 function sidebarWorktreeGroupKey(thread: Pick<Thread, "projectId">, worktreePath: string): string {
   return `${String(thread.projectId)}::${worktreePath}`;
 }
@@ -385,6 +358,7 @@ export function buildSidebarProjectThreadEntries<TThread extends SidebarThreadLi
   }
 
   const entries: SidebarProjectThreadEntry<TThread>[] = [];
+  const emittedGroupKeys = new Set<string>();
   for (const thread of threads) {
     const worktreePath = normalizeWorktreePath(thread.worktreePath);
     const worktreeThreads = worktreePath
@@ -400,33 +374,30 @@ export function buildSidebarProjectThreadEntries<TThread extends SidebarThreadLi
       continue;
     }
 
-    const earliestThread = [...worktreeThreads].toSorted(
-      (left, right) =>
-        left.createdAt.localeCompare(right.createdAt) ||
-        String(left.id).localeCompare(String(right.id)),
-    )[0];
-    if (!earliestThread || earliestThread.id !== thread.id) {
+    const groupKey = sidebarWorktreeGroupKey(thread, worktreePath);
+    if (emittedGroupKeys.has(groupKey)) {
       continue;
     }
+    emittedGroupKeys.add(groupKey);
 
     const worktreeGroupTitle = worktreeTitlesByPath.get(worktreePath) ?? null;
     entries.push({
       kind: "worktree-group",
-      groupKey: sidebarWorktreeGroupKey(thread, worktreePath),
+      groupKey,
       label:
         worktreeGroupTitle?.status === "ready" && worktreeGroupTitle.title
           ? worktreeGroupTitle.title
           : formatWorktreePathForDisplay(worktreePath),
       fallbackLabel: formatWorktreePathForDisplay(worktreePath),
-      positionCreatedAt: earliestThread.createdAt,
-      threads: [...worktreeThreads].toSorted(compareThreadCreatedAtDesc),
+      positionCreatedAt: thread.createdAt,
+      threads: [...worktreeThreads],
       worktreeTitleStatus: worktreeGroupTitle?.status ?? "absent",
       worktreeTitleUpdatedAt: worktreeGroupTitle?.updatedAt ?? null,
       worktreePath,
     });
   }
 
-  return entries.toSorted(compareSidebarEntryOrder);
+  return entries;
 }
 
 export function flattenSidebarProjectThreadIds(

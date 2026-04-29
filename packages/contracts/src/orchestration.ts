@@ -21,6 +21,9 @@ import {
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getSnapshot: "orchestration.getSnapshot",
+  getShellSnapshot: "orchestration.getShellSnapshot",
+  getThreadShellById: "orchestration.getThreadShellById",
+  getThreadCheckpointContext: "orchestration.getThreadCheckpointContext",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   replayEvents: "orchestration.replayEvents",
@@ -704,6 +707,16 @@ export const OrchestrationShellSnapshot = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 export type OrchestrationShellSnapshot = typeof OrchestrationShellSnapshot.Type;
+
+export const OrchestrationThreadCheckpointContext = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+  workspaceRoot: TrimmedNonEmptyString,
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  forkSourceThreadId: Schema.NullOr(ThreadId),
+  checkpoints: Schema.Array(OrchestrationCheckpointSummary),
+});
+export type OrchestrationThreadCheckpointContext = typeof OrchestrationThreadCheckpointContext.Type;
 
 export const OrchestrationShellStreamEvent = Schema.Union([
   Schema.Struct({
@@ -1611,6 +1624,18 @@ export const OrchestrationRpcSchemas = {
   getSnapshot: {
     input: Schema.Struct({}),
     output: OrchestrationReadModel,
+  },
+  getShellSnapshot: {
+    input: Schema.Struct({}),
+    output: OrchestrationShellSnapshot,
+  },
+  getThreadShellById: {
+    input: Schema.Struct({ threadId: ThreadId }),
+    output: Schema.NullOr(OrchestrationThreadShell),
+  },
+  getThreadCheckpointContext: {
+    input: Schema.Struct({ threadId: ThreadId }),
+    output: Schema.NullOr(OrchestrationThreadCheckpointContext),
   },
   getTurnDiff: {
     input: OrchestrationGetTurnDiffInput,

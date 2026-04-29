@@ -273,6 +273,7 @@ export default Effect.gen(function* () {
             latest_user_input_states.kind = 'provider.user-input.respond.failed'
             AND latest_user_input_states.detail NOT LIKE '%stale pending user-input request%'
             AND latest_user_input_states.detail NOT LIKE '%unknown pending user-input request%'
+            AND latest_user_input_states.detail NOT LIKE '%no active provider session is bound to this thread%'
           )
       ), 0),
       has_actionable_proposed_plan = COALESCE((

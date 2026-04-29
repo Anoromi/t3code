@@ -430,14 +430,14 @@ describe("buildSidebarProjectThreadEntries", () => {
   it("groups threads that share the same worktree path", () => {
     const entries = buildSidebarProjectThreadEntries(makeGroupedProject(), [
       makeGroupedThread({
-        id: ThreadId.make("thread-1"),
-        createdAt: "2026-02-13T00:00:00.000Z",
-        worktreePath: "/tmp/worktrees/feature-a",
-      }),
-      makeGroupedThread({
         id: ThreadId.make("thread-2"),
         createdAt: "2026-02-14T00:00:00.000Z",
         worktreePath: " /tmp/worktrees/feature-a ",
+      }),
+      makeGroupedThread({
+        id: ThreadId.make("thread-1"),
+        createdAt: "2026-02-13T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/feature-a",
       }),
     ]);
 
@@ -447,7 +447,7 @@ describe("buildSidebarProjectThreadEntries", () => {
       groupKey: "project-1::/tmp/worktrees/feature-a",
       label: "feature-a",
       fallbackLabel: "feature-a",
-      positionCreatedAt: "2026-02-13T00:00:00.000Z",
+      positionCreatedAt: "2026-02-14T00:00:00.000Z",
       worktreeTitleStatus: "absent",
       worktreeTitleUpdatedAt: null,
       worktreePath: "/tmp/worktrees/feature-a",
@@ -498,13 +498,8 @@ describe("buildSidebarProjectThreadEntries", () => {
     expect(entries.map((entry) => entry.kind)).toEqual(["thread", "thread"]);
   });
 
-  it("anchors group ordering to the earliest thread on that worktree", () => {
+  it("preserves the incoming sorted order for grouped rows", () => {
     const entries = buildSidebarProjectThreadEntries(makeGroupedProject(), [
-      makeGroupedThread({
-        id: ThreadId.make("thread-old"),
-        createdAt: "2026-02-10T00:00:00.000Z",
-        worktreePath: "/tmp/worktrees/feature-a",
-      }),
       makeGroupedThread({
         id: ThreadId.make("thread-new"),
         createdAt: "2026-02-15T00:00:00.000Z",
@@ -514,33 +509,38 @@ describe("buildSidebarProjectThreadEntries", () => {
         id: ThreadId.make("thread-mid"),
         createdAt: "2026-02-12T00:00:00.000Z",
       }),
+      makeGroupedThread({
+        id: ThreadId.make("thread-old"),
+        createdAt: "2026-02-10T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/feature-a",
+      }),
     ]);
 
     expect(
       entries.map((entry) => (entry.kind === "thread" ? entry.thread.id : entry.groupKey)),
-    ).toEqual([ThreadId.make("thread-mid"), "project-1::/tmp/worktrees/feature-a"]);
+    ).toEqual(["project-1::/tmp/worktrees/feature-a", ThreadId.make("thread-mid")]);
   });
 
-  it("breaks ties deterministically for grouped entries", () => {
+  it("keeps grouped entries in the caller-provided order", () => {
     const entries = buildSidebarProjectThreadEntries(makeGroupedProject(), [
-      makeGroupedThread({
-        id: ThreadId.make("thread-a1"),
-        createdAt: "2026-02-10T00:00:00.000Z",
-        worktreePath: "/tmp/worktrees/a",
-      }),
       makeGroupedThread({
         id: ThreadId.make("thread-a2"),
         createdAt: "2026-02-11T00:00:00.000Z",
         worktreePath: "/tmp/worktrees/a",
       }),
       makeGroupedThread({
-        id: ThreadId.make("thread-b1"),
-        createdAt: "2026-02-10T00:00:00.000Z",
+        id: ThreadId.make("thread-b2"),
+        createdAt: "2026-02-12T00:00:00.000Z",
         worktreePath: "/tmp/worktrees/b",
       }),
       makeGroupedThread({
-        id: ThreadId.make("thread-b2"),
-        createdAt: "2026-02-12T00:00:00.000Z",
+        id: ThreadId.make("thread-a1"),
+        createdAt: "2026-02-10T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/a",
+      }),
+      makeGroupedThread({
+        id: ThreadId.make("thread-b1"),
+        createdAt: "2026-02-10T00:00:00.000Z",
         worktreePath: "/tmp/worktrees/b",
       }),
     ]);
@@ -549,7 +549,35 @@ describe("buildSidebarProjectThreadEntries", () => {
       entries.map((entry) =>
         entry.kind === "worktree-group" ? entry.worktreePath : entry.thread.id,
       ),
-    ).toEqual(["/tmp/worktrees/b", "/tmp/worktrees/a"]);
+    ).toEqual(["/tmp/worktrees/a", "/tmp/worktrees/b"]);
+  });
+
+  it("preserves the incoming sorted order inside a worktree group", () => {
+    const entries = buildSidebarProjectThreadEntries(makeGroupedProject(), [
+      makeGroupedThread({
+        id: ThreadId.make("thread-newest"),
+        createdAt: "2026-02-15T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/feature-a",
+      }),
+      makeGroupedThread({
+        id: ThreadId.make("thread-middle"),
+        createdAt: "2026-02-14T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/feature-a",
+      }),
+      makeGroupedThread({
+        id: ThreadId.make("thread-oldest"),
+        createdAt: "2026-02-13T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/feature-a",
+      }),
+    ]);
+
+    expect(
+      entries[0]?.kind === "worktree-group" ? entries[0].threads.map((thread) => thread.id) : [],
+    ).toEqual([
+      ThreadId.make("thread-newest"),
+      ThreadId.make("thread-middle"),
+      ThreadId.make("thread-oldest"),
+    ]);
   });
 
   it("uses the generated worktree title when metadata is ready", () => {
@@ -822,6 +850,11 @@ describe("flattenSidebarProjectThreadIds", () => {
   it("returns thread ids in visual order across grouped and ungrouped entries", () => {
     const entries = buildSidebarProjectThreadEntries(makeGroupedProject(), [
       makeGroupedThread({
+        id: ThreadId.make("thread-3"),
+        createdAt: "2026-02-14T00:00:00.000Z",
+        worktreePath: "/tmp/worktrees/feature-a",
+      }),
+      makeGroupedThread({
         id: ThreadId.make("thread-1"),
         createdAt: "2026-02-13T00:00:00.000Z",
       }),
@@ -830,17 +863,12 @@ describe("flattenSidebarProjectThreadIds", () => {
         createdAt: "2026-02-12T00:00:00.000Z",
         worktreePath: "/tmp/worktrees/feature-a",
       }),
-      makeGroupedThread({
-        id: ThreadId.make("thread-3"),
-        createdAt: "2026-02-14T00:00:00.000Z",
-        worktreePath: "/tmp/worktrees/feature-a",
-      }),
     ]);
 
     expect(flattenSidebarProjectThreadIds(entries)).toEqual([
-      ThreadId.make("thread-1"),
       ThreadId.make("thread-3"),
       ThreadId.make("thread-2"),
+      ThreadId.make("thread-1"),
     ]);
   });
 });
