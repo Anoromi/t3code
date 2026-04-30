@@ -609,6 +609,58 @@ const makeKeybindings = Effect.gen(function* () {
     ).pipe(Effect.map(Array.filter(Predicate.isNotNull)));
   });
 
+  const sanitizeWritableCustomKeybindingsConfig = Effect.fn(function* (): Effect.fn.Return<
+    {
+      readonly keybindings: readonly KeybindingRule[];
+      readonly issues: readonly ServerConfigIssue[];
+      readonly droppedInvalidEntryCount: number;
+    },
+    KeybindingsConfigError
+  > {
+    if (!(yield* readConfigExists)) {
+      return { keybindings: [], issues: [], droppedInvalidEntryCount: 0 };
+    }
+
+    const rawConfig = yield* readRawConfig;
+    const decodedEntries = Schema.decodeUnknownExit(RawKeybindingsEntries)(rawConfig);
+    if (decodedEntries._tag === "Failure") {
+      const detail = `expected JSON array (${Cause.pretty(decodedEntries.cause)})`;
+      return {
+        keybindings: [],
+        issues: [malformedConfigIssue(detail)],
+        droppedInvalidEntryCount: 0,
+      };
+    }
+
+    const keybindings: KeybindingRule[] = [];
+    const issues: ServerConfigIssue[] = [];
+    let droppedInvalidEntryCount = 0;
+
+    for (const [index, entry] of decodedEntries.value.entries()) {
+      const decodedRule = Schema.decodeUnknownExit(KeybindingRule)(entry);
+      if (decodedRule._tag === "Failure") {
+        issues.push(invalidEntryIssue(index, Cause.pretty(decodedRule.cause)));
+        droppedInvalidEntryCount += 1;
+        continue;
+      }
+
+      const resolvedRule = Schema.decodeExit(ResolvedKeybindingFromConfig)(decodedRule.value);
+      if (resolvedRule._tag === "Failure") {
+        issues.push(invalidEntryIssue(index, Cause.pretty(resolvedRule.cause)));
+        droppedInvalidEntryCount += 1;
+        continue;
+      }
+
+      keybindings.push(decodedRule.value);
+    }
+
+    return {
+      keybindings,
+      issues,
+      droppedInvalidEntryCount,
+    };
+  });
+
   const loadRuntimeCustomKeybindingsConfig = Effect.fn(function* (): Effect.fn.Return<
     {
       readonly keybindings: readonly KeybindingRule[];
@@ -719,19 +771,31 @@ const makeKeybindings = Effect.gen(function* () {
         return;
       }
 
-      const runtimeConfig = yield* loadRuntimeCustomKeybindingsConfig();
-      if (runtimeConfig.issues.length > 0) {
-        yield* Effect.logWarning(
-          "skipping startup keybindings default sync because config has issues",
-          {
-            path: keybindingsConfigPath,
-            issues: runtimeConfig.issues,
-          },
+      const sanitizedConfig = yield* sanitizeWritableCustomKeybindingsConfig();
+      let customConfig = sanitizedConfig.keybindings;
+      if (sanitizedConfig.issues.length > 0) {
+        const onlyInvalidEntryIssues = sanitizedConfig.issues.every(
+          (issue) => issue.kind === "keybindings.invalid-entry",
         );
-        yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
-        return;
+        if (sanitizedConfig.droppedInvalidEntryCount > 0 && onlyInvalidEntryIssues) {
+          yield* writeConfigAtomically(sanitizedConfig.keybindings);
+          yield* Effect.logInfo("removed invalid keybinding entries during startup sync", {
+            path: keybindingsConfigPath,
+            droppedInvalidEntryCount: sanitizedConfig.droppedInvalidEntryCount,
+          });
+          customConfig = sanitizedConfig.keybindings;
+        } else {
+          yield* Effect.logWarning(
+            "skipping startup keybindings default sync because config has issues",
+            {
+              path: keybindingsConfigPath,
+              issues: sanitizedConfig.issues,
+            },
+          );
+          yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
+          return;
+        }
       }
-      const customConfig = runtimeConfig.keybindings;
       const existingCommands = new Set(customConfig.map((entry) => entry.command));
       const missingDefaults: KeybindingRule[] = [];
       const shortcutConflictWarnings: Array<{

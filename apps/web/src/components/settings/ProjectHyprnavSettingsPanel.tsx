@@ -26,7 +26,7 @@ import {
 import { readEnvironmentApi } from "../../environmentApi";
 import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
 import { usePrimaryEnvironmentId } from "../../environments/primary";
-import { useSettings, useUpdateSettings } from "../../hooks/useSettings";
+import { useClientSettingsHydrated, useSettings, useUpdateSettings } from "../../hooks/useSettings";
 import {
   buildProjectHyprnavSyncJobs,
   computeClearedHyprnavBindingNames,
@@ -119,6 +119,34 @@ function cloneDraftRecord(record: Record<string, HyprnavDraft>): Record<string, 
   return Object.fromEntries(Object.entries(record).map(([key, draft]) => [key, cloneDraft(draft)]));
 }
 
+export function buildProjectHyprnavResetDraft(
+  defaultProjectHyprnavSettings: ProjectHyprnavSettings,
+): HyprnavDraft {
+  return draftFromSettings(defaultProjectHyprnavSettings);
+}
+
+export function areProjectHyprnavActionsDisabled(input: {
+  busy: boolean;
+  clientSettingsHydrated: boolean;
+}): boolean {
+  return input.busy || !input.clientSettingsHydrated;
+}
+
+export function resolveProjectHyprnavNextOverride(input: {
+  parsedSettings: ProjectHyprnavSettings;
+  defaultProjectHyprnavSettings: ProjectHyprnavSettings;
+  forceInherited: boolean;
+}): ProjectHyprnavOverride {
+  if (
+    input.forceInherited ||
+    hyprnavSettingsEqual(input.parsedSettings, input.defaultProjectHyprnavSettings)
+  ) {
+    return null;
+  }
+
+  return input.parsedSettings;
+}
+
 function draftBindingFromSettings(binding: ProjectHyprnavBinding): HyprnavDraftBinding {
   return {
     id: binding.id,
@@ -180,6 +208,58 @@ function hyprnavSettingsEqual(
   right: ProjectHyprnavSettings,
 ): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function cloneProjectHyprnavSettings(settings: ProjectHyprnavSettings): ProjectHyprnavSettings {
+  return {
+    bindings: settings.bindings.map((binding) => ({
+      ...binding,
+      workspace: { ...binding.workspace },
+    })),
+  };
+}
+
+function cloneProjectHyprnavOverride(hyprnav: ProjectHyprnavOverride): ProjectHyprnavOverride {
+  if (hyprnav === null) {
+    return null;
+  }
+
+  return cloneProjectHyprnavSettings(hyprnav);
+}
+
+function cloneInheritedSettingsRecord(
+  record: Record<string, ProjectHyprnavSettings>,
+): Record<string, ProjectHyprnavSettings> {
+  return Object.fromEntries(
+    Object.entries(record).map(([key, settings]) => [key, cloneProjectHyprnavSettings(settings)]),
+  );
+}
+
+export function resolveProjectHyprnavNextSaveTarget(input: {
+  parsedSettings: ProjectHyprnavSettings;
+  defaultProjectHyprnavSettings: ProjectHyprnavSettings;
+  pendingInheritedSettings: ProjectHyprnavSettings | null;
+}): {
+  nextOverride: ProjectHyprnavOverride;
+  nextSettings: ProjectHyprnavSettings;
+} {
+  if (input.pendingInheritedSettings !== null) {
+    return {
+      nextOverride: null,
+      nextSettings: cloneProjectHyprnavSettings(input.pendingInheritedSettings),
+    };
+  }
+
+  const nextOverride = resolveProjectHyprnavNextOverride({
+    parsedSettings: input.parsedSettings,
+    defaultProjectHyprnavSettings: input.defaultProjectHyprnavSettings,
+    forceInherited: false,
+  });
+
+  return {
+    nextOverride,
+    nextSettings: resolveProjectHyprnavSettings(nextOverride, input.defaultProjectHyprnavSettings),
+  };
 }
 
 function makeProjectHyprnavPanelStateKey(input: {
@@ -806,6 +886,7 @@ export function ProjectHyprnavSettingsPanel({
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
   const threadShells = useStore(useShallow(selectThreadShellsAcrossEnvironments));
   const settings = useSettings();
+  const clientSettingsHydrated = useClientSettingsHydrated();
   const { updateSettings } = useUpdateSettings();
   const availableEditors = useServerAvailableEditors();
   const localEnvironmentId = usePrimaryEnvironmentId();
@@ -975,10 +1056,42 @@ export function ProjectHyprnavSettingsPanel({
     Record<string, HyprnavDraft>
   >({});
   const [defaultPhysicalProjectKey, setDefaultPhysicalProjectKey] = useState<string | null>(null);
-  const [resetProjectKeys, setResetProjectKeys] = useState<string[]>([]);
+  const [, setPendingInheritedSettingsByPhysicalKey] = useState<
+    Record<string, ProjectHyprnavSettings>
+  >({});
   const [isSaving, setIsSaving] = useState(false);
   const [isApplying, setIsApplying] = useState(false);
   const lastAppliedPanelStateKeyRef = useRef<string | null>(null);
+  const sharedDraftRef = useRef<HyprnavDraft | null>(null);
+  const projectDraftsByPhysicalKeyRef = useRef<Record<string, HyprnavDraft>>({});
+  const pendingInheritedSettingsByPhysicalKeyRef = useRef<Record<string, ProjectHyprnavSettings>>(
+    {},
+  );
+
+  const replaceSharedDraft = useCallback((next: HyprnavDraft | null) => {
+    const cloned = next ? cloneDraft(next) : null;
+    sharedDraftRef.current = cloned;
+    setSharedDraft(cloned);
+  }, []);
+
+  const replaceProjectDraftsByPhysicalKey = useCallback((next: Record<string, HyprnavDraft>) => {
+    const cloned = cloneDraftRecord(next);
+    projectDraftsByPhysicalKeyRef.current = cloned;
+    setProjectDraftsByPhysicalKey(cloned);
+  }, []);
+
+  const replacePendingInheritedSettingsByPhysicalKey = useCallback(
+    (next: Record<string, ProjectHyprnavSettings>) => {
+      const cloned = cloneInheritedSettingsRecord(next);
+      pendingInheritedSettingsByPhysicalKeyRef.current = cloned;
+      setPendingInheritedSettingsByPhysicalKey(cloned);
+    },
+    [],
+  );
+
+  const clearPendingInheritedSettings = useCallback(() => {
+    replacePendingInheritedSettingsByPhysicalKey({});
+  }, [replacePendingInheritedSettingsByPhysicalKey]);
 
   useEffect(() => {
     if (lastAppliedPanelStateKeyRef.current === panelStateKey) {
@@ -987,18 +1100,24 @@ export function ProjectHyprnavSettingsPanel({
     lastAppliedPanelStateKeyRef.current = panelStateKey;
     if (!initialPanelState) {
       setEditorMode("same");
-      setSharedDraft(null);
-      setProjectDraftsByPhysicalKey({});
+      replaceSharedDraft(null);
+      replaceProjectDraftsByPhysicalKey({});
       setDefaultPhysicalProjectKey(null);
-      setResetProjectKeys([]);
+      replacePendingInheritedSettingsByPhysicalKey({});
       return;
     }
     setEditorMode(initialPanelState.mode);
-    setSharedDraft(cloneDraft(initialPanelState.sharedDraft));
-    setProjectDraftsByPhysicalKey(cloneDraftRecord(initialPanelState.projectDraftsByPhysicalKey));
+    replaceSharedDraft(initialPanelState.sharedDraft);
+    replaceProjectDraftsByPhysicalKey(initialPanelState.projectDraftsByPhysicalKey);
     setDefaultPhysicalProjectKey(initialPanelState.defaultPhysicalProjectKey);
-    setResetProjectKeys([]);
-  }, [initialPanelState, panelStateKey]);
+    replacePendingInheritedSettingsByPhysicalKey({});
+  }, [
+    initialPanelState,
+    panelStateKey,
+    replaceProjectDraftsByPhysicalKey,
+    replacePendingInheritedSettingsByPhysicalKey,
+    replaceSharedDraft,
+  ]);
 
   const sharedEvaluation = useMemo(
     () => (sharedDraft ? evaluateDraft(sharedDraft) : null),
@@ -1059,17 +1178,23 @@ export function ProjectHyprnavSettingsPanel({
       : groupEditors.some((editor) => editor.evaluation.hasValidationError);
 
   const busy = isSaving || isApplying;
+  const actionsDisabled = areProjectHyprnavActionsDisabled({
+    busy,
+    clientSettingsHydrated,
+  });
 
   const updateSharedDraft = useCallback(
     (bindingId: string, update: (binding: HyprnavDraftBinding) => HyprnavDraftBinding) => {
-      setResetProjectKeys([]);
-      setSharedDraft((current) =>
-        current
-          ? current.map((binding) => (binding.id === bindingId ? update(binding) : binding))
-          : current,
+      clearPendingInheritedSettings();
+      const current = sharedDraftRef.current;
+      if (!current) {
+        return;
+      }
+      replaceSharedDraft(
+        current.map((binding) => (binding.id === bindingId ? update(binding) : binding)),
       );
     },
-    [],
+    [clearPendingInheritedSettings, replaceSharedDraft],
   );
 
   const updateProjectDraft = useCallback(
@@ -1078,49 +1203,49 @@ export function ProjectHyprnavSettingsPanel({
       bindingId: string,
       update: (binding: HyprnavDraftBinding) => HyprnavDraftBinding,
     ) => {
-      setResetProjectKeys((current) => current.filter((key) => key !== physicalProjectKey));
-      setProjectDraftsByPhysicalKey((current) => {
-        const draft = current[physicalProjectKey];
-        if (!draft) {
-          return current;
-        }
-        return {
-          ...current,
-          [physicalProjectKey]: draft.map((binding) =>
-            binding.id === bindingId ? update(binding) : binding,
-          ),
-        };
+      const { [physicalProjectKey]: _removed, ...restPendingInheritedSettings } =
+        pendingInheritedSettingsByPhysicalKeyRef.current;
+      replacePendingInheritedSettingsByPhysicalKey(restPendingInheritedSettings);
+      const draft = projectDraftsByPhysicalKeyRef.current[physicalProjectKey];
+      if (!draft) {
+        return;
+      }
+      replaceProjectDraftsByPhysicalKey({
+        ...projectDraftsByPhysicalKeyRef.current,
+        [physicalProjectKey]: draft.map((binding) =>
+          binding.id === bindingId ? update(binding) : binding,
+        ),
       });
     },
-    [],
+    [replacePendingInheritedSettingsByPhysicalKey, replaceProjectDraftsByPhysicalKey],
   );
 
   const addSharedBinding = useCallback(() => {
-    setResetProjectKeys([]);
-    setSharedDraft((current) => {
-      const nextDraft = current ?? [];
-      return [
-        ...nextDraft,
-        {
-          id: makeCustomBindingId(),
-          slot: String(findNextSlot(nextDraft)),
-          scope: "worktree",
-          workspaceMode: "managed",
-          workspaceId: "",
-          name: "",
-          action: "shell-command",
-          command: "",
-        },
-      ];
-    });
-  }, []);
+    clearPendingInheritedSettings();
+    const nextDraft = sharedDraftRef.current ?? [];
+    replaceSharedDraft([
+      ...nextDraft,
+      {
+        id: makeCustomBindingId(),
+        slot: String(findNextSlot(nextDraft)),
+        scope: "worktree",
+        workspaceMode: "managed",
+        workspaceId: "",
+        name: "",
+        action: "shell-command",
+        command: "",
+      },
+    ]);
+  }, [clearPendingInheritedSettings, replaceSharedDraft]);
 
-  const addProjectBinding = useCallback((physicalProjectKey: string) => {
-    setResetProjectKeys((current) => current.filter((key) => key !== physicalProjectKey));
-    setProjectDraftsByPhysicalKey((current) => {
-      const nextDraft = current[physicalProjectKey] ?? [];
-      return {
-        ...current,
+  const addProjectBinding = useCallback(
+    (physicalProjectKey: string) => {
+      const { [physicalProjectKey]: _removed, ...restPendingInheritedSettings } =
+        pendingInheritedSettingsByPhysicalKeyRef.current;
+      replacePendingInheritedSettingsByPhysicalKey(restPendingInheritedSettings);
+      const nextDraft = projectDraftsByPhysicalKeyRef.current[physicalProjectKey] ?? [];
+      replaceProjectDraftsByPhysicalKey({
+        ...projectDraftsByPhysicalKeyRef.current,
         [physicalProjectKey]: [
           ...nextDraft,
           {
@@ -1134,49 +1259,66 @@ export function ProjectHyprnavSettingsPanel({
             command: "",
           },
         ],
-      };
-    });
-  }, []);
+      });
+    },
+    [replacePendingInheritedSettingsByPhysicalKey, replaceProjectDraftsByPhysicalKey],
+  );
 
-  const removeSharedBinding = useCallback((bindingId: string) => {
-    setResetProjectKeys([]);
-    setSharedDraft((current) =>
-      current ? current.filter((binding) => binding.id !== bindingId) : current,
-    );
-  }, []);
-
-  const removeProjectBinding = useCallback((physicalProjectKey: string, bindingId: string) => {
-    setResetProjectKeys((current) => current.filter((key) => key !== physicalProjectKey));
-    setProjectDraftsByPhysicalKey((current) => {
-      const draft = current[physicalProjectKey];
-      if (!draft) {
-        return current;
+  const removeSharedBinding = useCallback(
+    (bindingId: string) => {
+      clearPendingInheritedSettings();
+      const current = sharedDraftRef.current;
+      if (!current) {
+        return;
       }
-      return {
-        ...current,
+      replaceSharedDraft(current.filter((binding) => binding.id !== bindingId));
+    },
+    [clearPendingInheritedSettings, replaceSharedDraft],
+  );
+
+  const removeProjectBinding = useCallback(
+    (physicalProjectKey: string, bindingId: string) => {
+      const { [physicalProjectKey]: _removed, ...restPendingInheritedSettings } =
+        pendingInheritedSettingsByPhysicalKeyRef.current;
+      replacePendingInheritedSettingsByPhysicalKey(restPendingInheritedSettings);
+      const draft = projectDraftsByPhysicalKeyRef.current[physicalProjectKey];
+      if (!draft) {
+        return;
+      }
+      replaceProjectDraftsByPhysicalKey({
+        ...projectDraftsByPhysicalKeyRef.current,
         [physicalProjectKey]: draft.filter((binding) => binding.id !== bindingId),
-      };
-    });
-  }, []);
+      });
+    },
+    [replacePendingInheritedSettingsByPhysicalKey, replaceProjectDraftsByPhysicalKey],
+  );
 
   const restoreSharedBinding = useCallback(
     (bindingId: string) => {
       if (!representativeProject) {
         return;
       }
-      setResetProjectKeys([]);
-      setSharedDraft((current) =>
-        current
-          ? restoreDraftBinding(
-              current,
-              bindingId,
-              effectiveHyprnavByPhysicalKey.get(derivePhysicalProjectKey(representativeProject)) ??
-                defaultProjectHyprnavSettings,
-            )
-          : current,
+      clearPendingInheritedSettings();
+      const current = sharedDraftRef.current;
+      if (!current) {
+        return;
+      }
+      replaceSharedDraft(
+        restoreDraftBinding(
+          current,
+          bindingId,
+          effectiveHyprnavByPhysicalKey.get(derivePhysicalProjectKey(representativeProject)) ??
+            defaultProjectHyprnavSettings,
+        ),
       );
     },
-    [defaultProjectHyprnavSettings, effectiveHyprnavByPhysicalKey, representativeProject],
+    [
+      defaultProjectHyprnavSettings,
+      effectiveHyprnavByPhysicalKey,
+      clearPendingInheritedSettings,
+      replaceSharedDraft,
+      representativeProject,
+    ],
   );
 
   const restoreProjectBinding = useCallback(
@@ -1187,27 +1329,34 @@ export function ProjectHyprnavSettingsPanel({
       if (!hasSourceProject) {
         return;
       }
-      setResetProjectKeys((current) => current.filter((key) => key !== physicalProjectKey));
-      setProjectDraftsByPhysicalKey((current) => {
-        const draft = current[physicalProjectKey];
-        if (!draft) {
-          return current;
-        }
-        return {
-          ...current,
-          [physicalProjectKey]: restoreDraftBinding(
-            draft,
-            bindingId,
-            effectiveHyprnavByPhysicalKey.get(physicalProjectKey) ?? defaultProjectHyprnavSettings,
-          ),
-        };
+      const { [physicalProjectKey]: _removed, ...restPendingInheritedSettings } =
+        pendingInheritedSettingsByPhysicalKeyRef.current;
+      replacePendingInheritedSettingsByPhysicalKey(restPendingInheritedSettings);
+      const draft = projectDraftsByPhysicalKeyRef.current[physicalProjectKey];
+      if (!draft) {
+        return;
+      }
+      replaceProjectDraftsByPhysicalKey({
+        ...projectDraftsByPhysicalKeyRef.current,
+        [physicalProjectKey]: restoreDraftBinding(
+          draft,
+          bindingId,
+          effectiveHyprnavByPhysicalKey.get(physicalProjectKey) ?? defaultProjectHyprnavSettings,
+        ),
       });
     },
-    [defaultProjectHyprnavSettings, effectiveHyprnavByPhysicalKey, groupedProjects],
+    [
+      defaultProjectHyprnavSettings,
+      effectiveHyprnavByPhysicalKey,
+      groupedProjects,
+      replacePendingInheritedSettingsByPhysicalKey,
+      replaceProjectDraftsByPhysicalKey,
+    ],
   );
 
   const separatePerProject = useCallback(() => {
-    if (!sharedDraft) {
+    const currentSharedDraft = sharedDraftRef.current;
+    if (!currentSharedDraft) {
       return;
     }
     const fallbackDefaultKey = resolveDefaultProjectKey({
@@ -1218,81 +1367,122 @@ export function ProjectHyprnavSettingsPanel({
         : null,
     });
     setEditorMode("separate");
-    setProjectDraftsByPhysicalKey(copyDraftToProjects(groupedProjects, sharedDraft));
+    replaceProjectDraftsByPhysicalKey(copyDraftToProjects(groupedProjects, currentSharedDraft));
     setDefaultPhysicalProjectKey(fallbackDefaultKey);
-    setResetProjectKeys([]);
-  }, [defaultPhysicalProjectKey, groupedProjects, representativeProject, sharedDraft]);
+    clearPendingInheritedSettings();
+  }, [
+    clearPendingInheritedSettings,
+    defaultPhysicalProjectKey,
+    groupedProjects,
+    replaceProjectDraftsByPhysicalKey,
+    representativeProject,
+  ]);
 
   const makeDefaultProject = useCallback(
     (physicalProjectKey: string) => {
-      const sourceDraft = projectDraftsByPhysicalKey[physicalProjectKey];
+      const sourceDraft = projectDraftsByPhysicalKeyRef.current[physicalProjectKey];
       if (!sourceDraft) {
         return;
       }
       setDefaultPhysicalProjectKey(physicalProjectKey);
-      setSharedDraft(cloneDraft(sourceDraft));
-      setProjectDraftsByPhysicalKey(copyDraftToProjects(groupedProjects, sourceDraft));
-      setResetProjectKeys([]);
+      replaceSharedDraft(sourceDraft);
+      replaceProjectDraftsByPhysicalKey(copyDraftToProjects(groupedProjects, sourceDraft));
+      clearPendingInheritedSettings();
     },
-    [groupedProjects, projectDraftsByPhysicalKey],
+    [
+      clearPendingInheritedSettings,
+      groupedProjects,
+      replaceProjectDraftsByPhysicalKey,
+      replaceSharedDraft,
+    ],
   );
 
   const resetSharedToDefault = useCallback(() => {
-    setSharedDraft(draftFromSettings(defaultProjectHyprnavSettings));
-    setResetProjectKeys(groupedProjects.map((candidate) => derivePhysicalProjectKey(candidate)));
-  }, [defaultProjectHyprnavSettings, groupedProjects]);
+    const inheritedSettingsSnapshot = cloneProjectHyprnavSettings(defaultProjectHyprnavSettings);
+    replaceSharedDraft(buildProjectHyprnavResetDraft(inheritedSettingsSnapshot));
+    replacePendingInheritedSettingsByPhysicalKey(
+      Object.fromEntries(
+        groupedProjects.map((candidate) => [
+          derivePhysicalProjectKey(candidate),
+          cloneProjectHyprnavSettings(inheritedSettingsSnapshot),
+        ]),
+      ),
+    );
+  }, [
+    defaultProjectHyprnavSettings,
+    groupedProjects,
+    replacePendingInheritedSettingsByPhysicalKey,
+    replaceSharedDraft,
+  ]);
 
   const resetProjectToDefault = useCallback(
     (physicalProjectKey: string) => {
-      setProjectDraftsByPhysicalKey((current) => ({
-        ...current,
-        [physicalProjectKey]: draftFromSettings(defaultProjectHyprnavSettings),
-      }));
-      setResetProjectKeys((current) =>
-        current.includes(physicalProjectKey) ? current : [...current, physicalProjectKey],
-      );
+      const inheritedSettingsSnapshot = cloneProjectHyprnavSettings(defaultProjectHyprnavSettings);
+      replaceProjectDraftsByPhysicalKey({
+        ...projectDraftsByPhysicalKeyRef.current,
+        [physicalProjectKey]: buildProjectHyprnavResetDraft(inheritedSettingsSnapshot),
+      });
+      replacePendingInheritedSettingsByPhysicalKey({
+        ...pendingInheritedSettingsByPhysicalKeyRef.current,
+        [physicalProjectKey]: inheritedSettingsSnapshot,
+      });
     },
-    [defaultProjectHyprnavSettings],
+    [
+      defaultProjectHyprnavSettings,
+      replacePendingInheritedSettingsByPhysicalKey,
+      replaceProjectDraftsByPhysicalKey,
+    ],
   );
 
   const save = useCallback(async () => {
-    if (!project || !logicalProjectKey || groupedProjects.length === 0 || hasValidationError) {
+    if (
+      !project ||
+      !logicalProjectKey ||
+      groupedProjects.length === 0 ||
+      hasValidationError ||
+      !clientSettingsHydrated
+    ) {
       return;
     }
 
     const nextSettingsByPhysicalKey = new Map<string, ProjectHyprnavSettings>();
     const nextOverridesByPhysicalKey = new Map<string, ProjectHyprnavOverride>();
     if (editorMode === "same") {
-      if (!sharedEvaluation) {
+      const currentSharedDraft = sharedDraftRef.current;
+      if (!currentSharedDraft) {
+        return;
+      }
+      const currentSharedEvaluation = evaluateDraft(currentSharedDraft);
+      if (currentSharedEvaluation.hasValidationError) {
         return;
       }
       for (const candidate of groupedProjects) {
         const physicalProjectKey = derivePhysicalProjectKey(candidate);
-        const nextOverride =
-          resetProjectKeys.includes(physicalProjectKey) ||
-          (projectUsesDefaultHyprnav(candidate.hyprnav) &&
-            hyprnavSettingsEqual(sharedEvaluation.parsed.settings, defaultProjectHyprnavSettings))
-            ? null
-            : sharedEvaluation.parsed.settings;
-        nextOverridesByPhysicalKey.set(physicalProjectKey, nextOverride);
-        nextSettingsByPhysicalKey.set(
-          physicalProjectKey,
-          resolveProjectHyprnavSettings(nextOverride, defaultProjectHyprnavSettings),
-        );
+        const nextSaveTarget = resolveProjectHyprnavNextSaveTarget({
+          parsedSettings: currentSharedEvaluation.parsed.settings,
+          defaultProjectHyprnavSettings,
+          pendingInheritedSettings:
+            pendingInheritedSettingsByPhysicalKeyRef.current[physicalProjectKey] ?? null,
+        });
+        nextOverridesByPhysicalKey.set(physicalProjectKey, nextSaveTarget.nextOverride);
+        nextSettingsByPhysicalKey.set(physicalProjectKey, nextSaveTarget.nextSettings);
       }
     } else {
       for (const editor of groupEditors) {
-        const nextOverride =
-          resetProjectKeys.includes(editor.physicalProjectKey) ||
-          (projectUsesDefaultHyprnav(editor.project.hyprnav) &&
-            hyprnavSettingsEqual(editor.evaluation.parsed.settings, defaultProjectHyprnavSettings))
-            ? null
-            : editor.evaluation.parsed.settings;
-        nextOverridesByPhysicalKey.set(editor.physicalProjectKey, nextOverride);
-        nextSettingsByPhysicalKey.set(
-          editor.physicalProjectKey,
-          resolveProjectHyprnavSettings(nextOverride, defaultProjectHyprnavSettings),
-        );
+        const currentDraft =
+          projectDraftsByPhysicalKeyRef.current[editor.physicalProjectKey] ?? editor.draft;
+        const currentEvaluation = evaluateDraft(currentDraft);
+        if (currentEvaluation.hasValidationError) {
+          return;
+        }
+        const nextSaveTarget = resolveProjectHyprnavNextSaveTarget({
+          parsedSettings: currentEvaluation.parsed.settings,
+          defaultProjectHyprnavSettings,
+          pendingInheritedSettings:
+            pendingInheritedSettingsByPhysicalKeyRef.current[editor.physicalProjectKey] ?? null,
+        });
+        nextOverridesByPhysicalKey.set(editor.physicalProjectKey, nextSaveTarget.nextOverride);
+        nextSettingsByPhysicalKey.set(editor.physicalProjectKey, nextSaveTarget.nextSettings);
       }
     }
 
@@ -1303,13 +1493,58 @@ export function ProjectHyprnavSettingsPanel({
         if (!api) {
           throw new Error(`Environment unavailable for ${candidate.cwd}.`);
         }
+        const commandId = newCommandId();
         await api.orchestration.dispatchCommand({
           type: "project.meta.update",
-          commandId: newCommandId(),
+          commandId,
           projectId: candidate.id,
           hyprnav: nextOverridesByPhysicalKey.get(derivePhysicalProjectKey(candidate))!,
         });
       }
+
+      useStore.setState((state) => {
+        let changed = false;
+        const nextEnvironmentStateById = { ...state.environmentStateById };
+        const nextUpdatedAt = new Date().toISOString();
+
+        for (const candidate of groupedProjects) {
+          const environmentState = nextEnvironmentStateById[candidate.environmentId];
+          if (!environmentState) {
+            continue;
+          }
+
+          const projectEntry = environmentState.projectById[candidate.id];
+          if (!projectEntry) {
+            continue;
+          }
+
+          const nextOverride = cloneProjectHyprnavOverride(
+            nextOverridesByPhysicalKey.get(derivePhysicalProjectKey(candidate)) ?? null,
+          );
+          const nextEnvironmentState =
+            nextEnvironmentStateById[candidate.environmentId] === environmentState
+              ? {
+                  ...environmentState,
+                  projectById: { ...environmentState.projectById },
+                }
+              : nextEnvironmentStateById[candidate.environmentId]!;
+
+          nextEnvironmentState.projectById[candidate.id] = {
+            ...projectEntry,
+            hyprnav: nextOverride,
+            updatedAt: nextUpdatedAt,
+          };
+          nextEnvironmentStateById[candidate.environmentId] = nextEnvironmentState;
+          changed = true;
+        }
+
+        return changed
+          ? {
+              ...state,
+              environmentStateById: nextEnvironmentStateById,
+            }
+          : state;
+      });
 
       const nextGroupedProjectState = makeGroupedProjectStateRecord({
         current: settings.groupedProjectHyprnavStateByLogicalProjectKey,
@@ -1442,12 +1677,11 @@ export function ProjectHyprnavSettingsPanel({
     groupEditors,
     groupedProjects,
     hasValidationError,
+    clientSettingsHydrated,
     localEnvironmentId,
-    resetProjectKeys,
     logicalProjectKey,
     project,
     settings.groupedProjectHyprnavStateByLogicalProjectKey,
-    sharedEvaluation,
     threadShells,
     updateSettings,
   ]);
@@ -1545,7 +1779,7 @@ export function ProjectHyprnavSettingsPanel({
                       <Button
                         size="xs"
                         variant="outline"
-                        disabled={busy}
+                        disabled={actionsDisabled}
                         onClick={() => makeDefaultProject(physicalProjectKey)}
                       >
                         Make default
@@ -1568,11 +1802,20 @@ export function ProjectHyprnavSettingsPanel({
         headerAction={
           <div className="flex items-center gap-2">
             {editorMode === "same" ? (
-              <Button size="xs" variant="outline" disabled={busy} onClick={resetSharedToDefault}>
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={actionsDisabled}
+                onClick={resetSharedToDefault}
+              >
                 Reset to default
               </Button>
             ) : null}
-            <Button size="xs" disabled={hasValidationError || busy} onClick={() => void save()}>
+            <Button
+              size="xs"
+              disabled={hasValidationError || actionsDisabled}
+              onClick={() => void save()}
+            >
               {isApplying ? "Applying..." : isSaving ? "Saving..." : "Save and apply"}
             </Button>
           </div>
@@ -1588,7 +1831,7 @@ export function ProjectHyprnavSettingsPanel({
             }
             draft={sharedDraft}
             evaluation={sharedEvaluation ?? evaluateDraft(sharedDraft)}
-            busy={busy}
+            busy={actionsDisabled}
             headerAction={
               groupedProjects.length > 1 ? (
                 <Badge size="sm" variant="outline">
@@ -1622,7 +1865,7 @@ export function ProjectHyprnavSettingsPanel({
                   <Button
                     size="xs"
                     variant="outline"
-                    disabled={busy}
+                    disabled={actionsDisabled}
                     onClick={() => resetProjectToDefault(editor.physicalProjectKey)}
                   >
                     Reset to default
@@ -1649,6 +1892,7 @@ export function ProjectHyprnavSettingsPanel({
 
 export function HyprnavDefaultsSettingsPanel() {
   const settings = useSettings();
+  const clientSettingsHydrated = useClientSettingsHydrated();
   const { updateSettings } = useUpdateSettings();
   const [draft, setDraft] = useState<HyprnavDraft>(() =>
     draftFromSettings(settings.defaultProjectHyprnavSettings),
@@ -1661,9 +1905,13 @@ export function HyprnavDefaultsSettingsPanel() {
 
   const evaluation = useMemo(() => evaluateDraft(draft), [draft]);
   const busy = isSaving;
+  const actionsDisabled = areProjectHyprnavActionsDisabled({
+    busy,
+    clientSettingsHydrated,
+  });
 
   const saveDefaults = useCallback(async () => {
-    if (evaluation.hasValidationError) {
+    if (evaluation.hasValidationError || !clientSettingsHydrated) {
       return;
     }
 
@@ -1679,7 +1927,7 @@ export function HyprnavDefaultsSettingsPanel() {
     } finally {
       setIsSaving(false);
     }
-  }, [evaluation, updateSettings]);
+  }, [clientSettingsHydrated, evaluation, updateSettings]);
 
   return (
     <SettingsPageContainer width="wide">
@@ -1690,14 +1938,16 @@ export function HyprnavDefaultsSettingsPanel() {
             <Button
               size="xs"
               variant="outline"
-              disabled={busy}
-              onClick={() => setDraft(draftFromSettings(DEFAULT_PROJECT_HYPRNAV_SETTINGS))}
+              disabled={actionsDisabled}
+              onClick={() => {
+                setDraft(draftFromSettings(DEFAULT_PROJECT_HYPRNAV_SETTINGS));
+              }}
             >
               Restore built-in defaults
             </Button>
             <Button
               size="xs"
-              disabled={evaluation.hasValidationError || busy}
+              disabled={evaluation.hasValidationError || actionsDisabled}
               onClick={() => void saveDefaults()}
             >
               {isSaving ? "Saving..." : "Save defaults"}
@@ -1710,7 +1960,7 @@ export function HyprnavDefaultsSettingsPanel() {
           description="These settings apply to every project that has not been customized."
           draft={draft}
           evaluation={evaluation}
-          busy={busy}
+          busy={actionsDisabled}
           onUpdateBinding={(bindingId, update) =>
             setDraft((current) =>
               current.map((binding) => (binding.id === bindingId ? update(binding) : binding)),

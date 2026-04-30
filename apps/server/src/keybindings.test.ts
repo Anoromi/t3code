@@ -315,6 +315,37 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
+  it.effect("drops invalid entries during startup sync and then restores missing defaults", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { keybindingsConfigPath } = yield* ServerConfig;
+      yield* fs.writeFileString(
+        keybindingsConfigPath,
+        [
+          '[{"key":"mod+shift+t","command":"terminal.toggle"},',
+          '{"key":"ctrl+s","command":"chat.composer.focus"},',
+          '{"key":"ctrl+shift+c","command":"thread.interrupt"}]',
+        ].join(""),
+      );
+
+      yield* Effect.gen(function* () {
+        const keybindings = yield* Keybindings;
+        yield* keybindings.syncDefaultKeybindingsOnStartup;
+      });
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      const byCommand = new Map(persisted.map((entry) => [entry.command, entry]));
+
+      assert.isFalse(persisted.some((entry) => String(entry.command) === "chat.composer.focus"));
+      assert.isFalse(persisted.some((entry) => String(entry.command) === "thread.interrupt"));
+      assert.equal(byCommand.get("terminal.toggle")?.key, "mod+shift+t");
+
+      for (const defaultRule of DEFAULT_KEYBINDINGS) {
+        assert.isTrue(byCommand.has(defaultRule.command), `expected ${defaultRule.command}`);
+      }
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
   it.effect("skips conflicting default keybindings on startup and logs a detailed warning", () => {
     const messages: string[] = [];
     const logger = Logger.make(({ message }) => {

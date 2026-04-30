@@ -414,10 +414,14 @@ const ProjectHyprnavSettingsInput = Schema.Union([
     bindings: Schema.Array(ProjectHyprnavBindingInput),
   }),
   LegacyProjectHyprnavSettings,
-]).pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROJECT_HYPRNAV_SETTINGS)));
+]);
 type ProjectHyprnavSettingsInput = typeof ProjectHyprnavSettingsInput.Type;
 
-export const ProjectHyprnavSettings = ProjectHyprnavSettingsInput.pipe(
+const DefaultedProjectHyprnavSettingsInput = ProjectHyprnavSettingsInput.pipe(
+  Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROJECT_HYPRNAV_SETTINGS)),
+);
+
+export const ProjectHyprnavSettings = DefaultedProjectHyprnavSettingsInput.pipe(
   Schema.decodeTo(
     Schema.toType(ProjectHyprnavSettingsCanonical),
     SchemaTransformation.transform<ProjectHyprnavSettingsCanonical, ProjectHyprnavSettingsInput>({
@@ -428,8 +432,20 @@ export const ProjectHyprnavSettings = ProjectHyprnavSettingsInput.pipe(
 );
 export type ProjectHyprnavSettings = typeof ProjectHyprnavSettings.Type;
 
+const ProjectHyprnavSettingsUpdate = ProjectHyprnavSettingsInput.pipe(
+  Schema.decodeTo(
+    Schema.toType(ProjectHyprnavSettingsCanonical),
+    SchemaTransformation.transform<ProjectHyprnavSettingsCanonical, ProjectHyprnavSettingsInput>({
+      decode: normalizeProjectHyprnavSettings,
+      encode: (settings) => settings,
+    }),
+  ),
+);
+
 export const ProjectHyprnavOverride = Schema.NullOr(ProjectHyprnavSettings);
 export type ProjectHyprnavOverride = typeof ProjectHyprnavOverride.Type;
+
+const ProjectHyprnavUpdateOverride = Schema.NullOr(ProjectHyprnavSettingsUpdate);
 
 export function listProjectHyprnavSlots(settings: ProjectHyprnavSettings): ReadonlyArray<number> {
   return settings.bindings.map((binding) => binding.slot);
@@ -781,7 +797,7 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
-  hyprnav: Schema.optional(ProjectHyprnavOverride),
+  hyprnav: Schema.optional(ProjectHyprnavUpdateOverride),
   worktreeGroupTitles: Schema.optional(Schema.Array(OrchestrationWorktreeGroupTitle)),
 });
 
@@ -1160,7 +1176,7 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   repositoryIdentity: Schema.optional(Schema.NullOr(RepositoryIdentity)),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
-  hyprnav: Schema.optional(ProjectHyprnavOverride),
+  hyprnav: Schema.optional(ProjectHyprnavUpdateOverride),
   worktreeGroupTitles: Schema.optional(Schema.Array(OrchestrationWorktreeGroupTitle)),
   updatedAt: IsoDateTime,
 });

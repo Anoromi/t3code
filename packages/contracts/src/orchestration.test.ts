@@ -334,6 +334,33 @@ it.effect("decodes project.meta-updated payloads carrying Hyprnav settings", () 
   }),
 );
 
+it.effect("preserves explicit null hyprnav in project.meta.update commands", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationCommand({
+      type: "project.meta.update",
+      commandId: "cmd-project-meta-update-null-hyprnav",
+      projectId: "project-meta-update-null-hyprnav",
+      hyprnav: null,
+    });
+
+    assert.strictEqual(parsed.type, "project.meta.update");
+    assert.strictEqual(parsed.hyprnav, null);
+  }),
+);
+
+it.effect("does not decode missing project.meta.update hyprnav into built-in defaults", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeOrchestrationCommand({
+      type: "project.meta.update",
+      commandId: "cmd-project-meta-update-no-hyprnav",
+      projectId: "project-meta-update-no-hyprnav",
+    });
+
+    assert.strictEqual(parsed.type, "project.meta.update");
+    assert.strictEqual(parsed.hyprnav, undefined);
+  }),
+);
+
 it.effect("decodes legacy project Hyprnav settings and upgrades scope and Corkdiff", () =>
   Effect.gen(function* () {
     const parsed = yield* decodeProjectHyprnavSettings({

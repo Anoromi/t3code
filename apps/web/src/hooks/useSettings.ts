@@ -39,6 +39,10 @@ function getClientSettingsSnapshot(): ClientSettings {
   return clientSettingsSnapshot;
 }
 
+function getClientSettingsHydratedSnapshot(): boolean {
+  return clientSettingsHydrated;
+}
+
 function replaceClientSettingsSnapshot(settings: ClientSettings): void {
   clientSettingsSnapshot = settings;
   emitClientSettingsChange();
@@ -70,6 +74,7 @@ async function hydrateClientSettings(): Promise<void> {
       console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} hydrate failed`, error);
     } finally {
       clientSettingsHydrated = true;
+      emitClientSettingsChange();
     }
   })();
 
@@ -176,6 +181,14 @@ export function useUpdateSettings() {
     updateSettings,
     resetSettings,
   };
+}
+
+export function useClientSettingsHydrated(): boolean {
+  return useSyncExternalStore(
+    subscribeClientSettings,
+    getClientSettingsHydratedSnapshot,
+    () => false,
+  );
 }
 
 export function __resetClientSettingsPersistenceForTests(): void {
