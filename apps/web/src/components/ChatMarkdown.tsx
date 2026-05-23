@@ -36,6 +36,7 @@ import {
 } from "../markdown-links";
 import { readLocalApi } from "../localApi";
 import { cn } from "../lib/utils";
+import { remarkAgentHighlightSpans } from "./agentHighlights/agentHighlightMarkdown";
 
 class CodeHighlightErrorBoundary extends React.Component<
   { fallback: ReactNode; children: ReactNode },
@@ -667,7 +668,7 @@ function ChatMarkdown({
       onContextMenu={(event) => readAloud?.onMarkdownContextMenu(event, event.currentTarget)}
     >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkAgentHighlightSpans]}
         components={markdownComponents}
         urlTransform={markdownUrlTransform}
       >

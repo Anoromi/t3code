@@ -175,6 +175,18 @@
   --success-foreground: var(--color-emerald-700);
   --warning: var(--color-amber-500);
   --warning-foreground: var(--color-amber-700);
+  --agent-highlight-issue: oklch(0.47 0.18 27);
+  --agent-highlight-source: oklch(0.5 0.16 86);
+  --agent-highlight-suggestion: oklch(0.46 0.17 256);
+  --agent-highlight-alternative: oklch(0.46 0.16 312);
+  --agent-highlight-breakdown: oklch(0.48 0.14 202);
+  --agent-highlight-success: oklch(0.45 0.15 144);
+  --agent-highlight-info: oklch(0.48 0.15 232);
+  --agent-highlight-warning: oklch(0.52 0.17 67);
+  --agent-highlight-decision: oklch(0.45 0.17 286);
+  --agent-highlight-constraint: oklch(0.5 0.17 45);
+  --agent-highlight-action: oklch(0.47 0.16 218);
+  --agent-highlight-validation: oklch(0.45 0.14 170);
 
   @variant dark {
     color-scheme: dark;
@@ -204,6 +216,18 @@
     --success-foreground: var(--color-emerald-400);
     --warning: var(--color-amber-500);
     --warning-foreground: var(--color-amber-400);
+    --agent-highlight-issue: oklch(0.76 0.16 27);
+    --agent-highlight-source: oklch(0.84 0.13 90);
+    --agent-highlight-suggestion: oklch(0.78 0.15 256);
+    --agent-highlight-alternative: oklch(0.79 0.14 312);
+    --agent-highlight-breakdown: oklch(0.8 0.12 202);
+    --agent-highlight-success: oklch(0.78 0.13 144);
+    --agent-highlight-info: oklch(0.82 0.12 232);
+    --agent-highlight-warning: oklch(0.82 0.15 70);
+    --agent-highlight-decision: oklch(0.78 0.15 286);
+    --agent-highlight-constraint: oklch(0.8 0.15 50);
+    --agent-highlight-action: oklch(0.79 0.13 218);
+    --agent-highlight-validation: oklch(0.78 0.12 170);
   }
 }
 
@@ -413,6 +437,79 @@ label:has(> select#reasoning-effort) select {
   padding: 0.1rem 0.35rem;
   color: var(--foreground);
   font-size: 0.75rem;
+}
+
+.chat-markdown .agent-highlight {
+  font-weight: 600;
+}
+
+.chat-markdown .agent-highlight a {
+  color: inherit;
+  text-decoration-color: color-mix(in srgb, currentColor 50%, transparent);
+}
+
+.chat-markdown .agent-highlight code {
+  color: inherit;
+  border-color: color-mix(in srgb, currentColor 28%, var(--border));
+  background: color-mix(in srgb, currentColor 10%, var(--background));
+}
+
+.chat-markdown .agent-highlight .chat-markdown-file-link {
+  color: inherit;
+  border-color: color-mix(in srgb, currentColor 28%, var(--border));
+  background: color-mix(in srgb, currentColor 8%, var(--background));
+}
+
+.chat-markdown .agent-highlight .chat-markdown-file-link-label {
+  color: inherit;
+}
+
+.chat-markdown .agent-highlight-issue {
+  color: var(--agent-highlight-issue);
+}
+
+.chat-markdown .agent-highlight-source {
+  color: var(--agent-highlight-source);
+}
+
+.chat-markdown .agent-highlight-suggestion {
+  color: var(--agent-highlight-suggestion);
+}
+
+.chat-markdown .agent-highlight-alternative {
+  color: var(--agent-highlight-alternative);
+}
+
+.chat-markdown .agent-highlight-breakdown {
+  color: var(--agent-highlight-breakdown);
+}
+
+.chat-markdown .agent-highlight-success {
+  color: var(--agent-highlight-success);
+}
+
+.chat-markdown .agent-highlight-info {
+  color: var(--agent-highlight-info);
+}
+
+.chat-markdown .agent-highlight-warning {
+  color: var(--agent-highlight-warning);
+}
+
+.chat-markdown .agent-highlight-decision {
+  color: var(--agent-highlight-decision);
+}
+
+.chat-markdown .agent-highlight-constraint {
+  color: var(--agent-highlight-constraint);
+}
+
+.chat-markdown .agent-highlight-action {
+  color: var(--agent-highlight-action);
+}
+
+.chat-markdown .agent-highlight-validation {
+  color: var(--agent-highlight-validation);
 }
 
 .chat-markdown-file-link {
