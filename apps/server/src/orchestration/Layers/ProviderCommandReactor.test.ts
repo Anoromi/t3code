@@ -25,6 +25,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -290,6 +291,10 @@ describe("ProviderCommandReactor", () => {
       respondToUserInput: respondToUserInput as ProviderServiceShape["respondToUserInput"],
       stopSession: stopSession as ProviderServiceShape["stopSession"],
       listSessions: () => Effect.succeed(runtimeSessions),
+      getActiveSessionForThread: (threadId) =>
+        Effect.succeed(
+          Option.fromNullishOr(runtimeSessions.find((session) => session.threadId === threadId)),
+        ),
       getCapabilities: (_provider) =>
         Effect.succeed({
           sessionModelSwitch: input?.sessionModelSwitch ?? "in-session",
@@ -345,7 +350,10 @@ describe("ProviderCommandReactor", () => {
           getStatus: () => Effect.die("getStatus should not be called in this test"),
           refreshLocalStatus: () =>
             Effect.die("refreshLocalStatus should not be called in this test"),
+          refreshRemoteStatus: () =>
+            Effect.die("refreshRemoteStatus should not be called in this test"),
           refreshStatus,
+          refreshStatusLocalFirst: refreshStatus,
           streamStatus: () => Stream.die("streamStatus should not be called in this test"),
         }),
       ),
@@ -447,9 +455,24 @@ describe("ProviderCommandReactor", () => {
       runtimeMode: "approval-required",
     });
 
+    await waitFor(async () => {
+      const model = await harness.readModel();
+      const thread = model.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      return (
+        thread?.session?.status === "running" &&
+        thread.session.activeTurnId === asTurnId("turn-1") &&
+        thread.latestTurn?.state === "running"
+      );
+    });
+
+    await harness.drain();
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
+    expect(thread?.session?.status).toBe("running");
+    expect(thread?.session?.activeTurnId).toBe(asTurnId("turn-1"));
+    expect(thread?.latestTurn?.state).toBe("running");
+    expect(thread?.latestTurn?.turnId).toBe(asTurnId("turn-1"));
     expect(thread?.session?.runtimeMode).toBe("approval-required");
   });
 
@@ -918,6 +941,7 @@ describe("ProviderCommandReactor", () => {
       },
     });
 
+    await harness.drain();
     const readModel = await harness.readModel();
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.providerName).toBe("claudeAgent");
@@ -1857,7 +1881,7 @@ describe("ProviderCommandReactor", () => {
     expect(resolvedActivity).toBeUndefined();
   });
 
-  it("surfaces stale provider user-input failures without faking user-input resolution", async () => {
+  it("starts a recovered follow-up turn when a stale provider user-input callback is lost", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
     harness.respondToUserInput.mockImplementation(() =>
@@ -1865,7 +1889,7 @@ describe("ProviderCommandReactor", () => {
         new ProviderAdapterRequestError({
           provider: ProviderDriverKind.make("claudeAgent"),
           method: "item/tool/respondToUserInput",
-          detail: "Unknown pending user-input request: user-input-request-1",
+          detail: "Unknown pending Codex user input request: user-input-request-1",
         }),
       ),
     );
@@ -1964,6 +1988,16 @@ describe("ProviderCommandReactor", () => {
         (activity.payload as Record<string, unknown>).requestId === "user-input-request-1",
     );
     expect(resolvedActivity).toBeUndefined();
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      threadId: "thread-1",
+      input: expect.stringContaining(
+        "Answering the previous user-input request after the app restarted",
+      ),
+    });
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      input: expect.stringContaining("- sandbox_mode: workspace-write"),
+    });
   });
 
   it("reacts to thread.session.stop by stopping provider session and clearing thread session state", async () => {

@@ -25,6 +25,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -111,6 +112,20 @@ function createProviderServiceHarness(
     respondToUserInput: () => unsupported(),
     stopSession: () => unsupported(),
     listSessions,
+    getActiveSessionForThread: (threadId) =>
+      Effect.succeed(
+        hasSession && threadId === ThreadId.make("thread-1")
+          ? Option.some({
+              provider: providerName,
+              status: "ready",
+              runtimeMode: "full-access",
+              threadId: ThreadId.make("thread-1"),
+              cwd: sessionCwd,
+              createdAt: now,
+              updatedAt: now,
+            } satisfies ProviderSession)
+          : Option.none<ProviderSession>(),
+      ),
     getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
     getInstanceInfo: (instanceId) =>
       Effect.succeed({
@@ -318,7 +333,11 @@ describe("CheckpointReactor", () => {
             workingTree: { files: [], insertions: 0, deletions: 0 },
           }),
         ),
+      refreshRemoteStatus: () =>
+        Effect.die("refreshRemoteStatus should not be called in this test"),
       refreshStatus: () => Effect.die("refreshStatus should not be called in this test"),
+      refreshStatusLocalFirst: () =>
+        Effect.die("refreshStatusLocalFirst should not be called in this test"),
       streamStatus: () => Stream.empty,
     });
 

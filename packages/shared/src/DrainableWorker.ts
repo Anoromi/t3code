@@ -10,6 +10,9 @@
  */
 import * as Scope from "effect/Scope";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Queue from "effect/Queue";
+import * as Semaphore from "effect/Semaphore";
 import * as TxQueue from "effect/TxQueue";
 import * as TxRef from "effect/TxRef";
 
@@ -25,6 +28,11 @@ export interface DrainableWorker<A> {
   /**
    * Resolves when the queue is empty and the worker is idle (not processing).
    */
+  readonly drain: Effect.Effect<void>;
+}
+
+export interface KeyedDrainableWorker<A> {
+  readonly enqueue: (item: A) => Effect.Effect<void>;
   readonly drain: Effect.Effect<void>;
 }
 
@@ -67,4 +75,73 @@ export const makeDrainableWorker = <A, E, R>(
       );
 
     return { enqueue, drain } satisfies DrainableWorker<A>;
+  });
+
+export const makeKeyedDrainableWorker = <A, K, E, R>(input: {
+  readonly key: (item: A) => K;
+  readonly process: (item: A) => Effect.Effect<void, E, R>;
+  readonly maxConcurrentKeys?: number;
+}): Effect.Effect<KeyedDrainableWorker<A>, never, Scope.Scope | R> =>
+  Effect.gen(function* () {
+    const queues = new Map<K, Queue.Queue<A>>();
+    const activeKeys = new Set<K>();
+    const outstanding = yield* TxRef.make(0);
+    const context = yield* Effect.context<R>();
+    const workerScope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+      Scope.close(scope, Exit.void),
+    );
+    const maxConcurrentKeys = input.maxConcurrentKeys ?? Number.POSITIVE_INFINITY;
+    const semaphore =
+      Number.isFinite(maxConcurrentKeys) && maxConcurrentKeys > 0
+        ? yield* Semaphore.make(maxConcurrentKeys)
+        : null;
+
+    const processQueue = (key: K, queue: Queue.Queue<A>) =>
+      Effect.gen(function* () {
+        while (true) {
+          const itemOption = yield* Queue.poll(queue);
+          if (itemOption._tag === "None") {
+            queues.delete(key);
+            activeKeys.delete(key);
+            return;
+          }
+
+          yield* input
+            .process(itemOption.value)
+            .pipe(Effect.ensuring(TxRef.update(outstanding, (n) => n - 1)));
+        }
+      });
+
+    const startQueue = (key: K, queue: Queue.Queue<A>) => {
+      activeKeys.add(key);
+      const run = processQueue(key, queue);
+      return (semaphore ? semaphore.withPermits(1)(run) : run).pipe(
+        Effect.provide(context),
+        Effect.forkIn(workerScope),
+      );
+    };
+
+    const enqueue: KeyedDrainableWorker<A>["enqueue"] = (item) =>
+      Effect.gen(function* () {
+        const key = input.key(item);
+        let queue = queues.get(key);
+        if (!queue) {
+          queue = yield* Queue.unbounded<A>();
+          queues.set(key, queue);
+        }
+
+        yield* Queue.offer(queue, item);
+        yield* TxRef.update(outstanding, (n) => n + 1).pipe(Effect.tx);
+
+        if (!activeKeys.has(key)) {
+          yield* startQueue(key, queue);
+        }
+      });
+
+    const drain: KeyedDrainableWorker<A>["drain"] = TxRef.get(outstanding).pipe(
+      Effect.tap((n) => (n > 0 ? Effect.txRetry : Effect.void)),
+      Effect.tx,
+    );
+
+    return { enqueue, drain } satisfies KeyedDrainableWorker<A>;
   });

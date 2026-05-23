@@ -1,3 +1,5 @@
+import * as NodeOS from "node:os";
+
 import {
   ApprovalRequestId,
   DEFAULT_MODEL,
@@ -19,9 +21,12 @@ import {
 import { normalizeModelSlug } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
@@ -54,6 +59,10 @@ const BENIGN_ERROR_LOG_SNIPPETS = [
   "state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back",
 ];
 const CODEX_APP_SERVER_FORCE_KILL_AFTER = "2 seconds" as const;
+const CODEX_TURN_BACKFILL_INITIAL_DELAY_MS = 500;
+const CODEX_TURN_BACKFILL_POLL_MS = 500;
+const CODEX_TURN_BACKFILL_MAX_ATTEMPTS = 240;
+const CODEX_TURN_BACKFILL_SNAPSHOT_TIMEOUT_MS = 1_000;
 const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "not found",
   "missing thread",
@@ -222,6 +231,13 @@ interface PendingUserInput {
   readonly turnId: TurnId | undefined;
   readonly itemId: ProviderItemId | undefined;
   readonly answers: Deferred.Deferred<ProviderUserInputAnswers>;
+}
+
+interface CodexJsonlTurnCompletion {
+  readonly text: string | undefined;
+  readonly status: "completed" | "failed";
+  readonly completedAt: number | undefined;
+  readonly durationMs: number | undefined;
 }
 
 type CodexServerNotification = {
@@ -692,27 +708,149 @@ function parseThreadSnapshot(
   };
 }
 
+function isTerminalCodexTurnStatus(status: EffectCodexSchema.V2ThreadReadResponse__TurnStatus) {
+  return status === "completed" || status === "failed";
+}
+
+function isTurnScopedNotification(method: CodexRpc.ServerNotificationMethod): boolean {
+  return (
+    method === "turn/started" ||
+    method === "turn/completed" ||
+    method === "turn/diff/updated" ||
+    method === "turn/plan/updated" ||
+    method === "item/started" ||
+    method === "item/completed" ||
+    method === "rawResponseItem/completed" ||
+    method === "item/agentMessage/delta" ||
+    method === "item/plan/delta" ||
+    method === "item/commandExecution/outputDelta" ||
+    method === "item/commandExecution/terminalInteraction" ||
+    method === "item/fileChange/outputDelta" ||
+    method === "item/fileChange/patchUpdated" ||
+    method === "item/mcpToolCall/progress" ||
+    method === "item/reasoning/summaryTextDelta" ||
+    method === "item/reasoning/summaryPartAdded" ||
+    method === "item/reasoning/textDelta"
+  );
+}
+
+function readObjectField(value: unknown, field: string): unknown {
+  return typeof value === "object" && value !== null && field in value
+    ? (value as Record<string, unknown>)[field]
+    : undefined;
+}
+
+function readStringField(value: unknown, field: string): string | undefined {
+  const raw = readObjectField(value, field);
+  return typeof raw === "string" ? raw : undefined;
+}
+
+function readNumberField(value: unknown, field: string): number | undefined {
+  const raw = readObjectField(value, field);
+  return typeof raw === "number" ? raw : undefined;
+}
+
+function parseCodexJsonlTurnCompletion(
+  content: string,
+  turnId: TurnId,
+): CodexJsonlTurnCompletion | undefined {
+  let text: string | undefined;
+  let completedAt: number | undefined;
+  let durationMs: number | undefined;
+  let completed = false;
+  const targetTurnId = String(turnId);
+
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+    if (
+      !trimmed.includes(targetTurnId) &&
+      !trimmed.includes('"type":"agent_message"') &&
+      !trimmed.includes('"role":"assistant"')
+    ) {
+      continue;
+    }
+
+    let record: unknown;
+    try {
+      record = JSON.parse(trimmed);
+    } catch {
+      continue;
+    }
+
+    const payload = readObjectField(record, "payload");
+    if (readStringField(record, "type") === "event_msg") {
+      if (readStringField(payload, "type") === "agent_message") {
+        text = readStringField(payload, "message") ?? text;
+      }
+      if (
+        readStringField(payload, "type") === "task_complete" &&
+        readStringField(payload, "turn_id") === targetTurnId
+      ) {
+        completed = true;
+        text = readStringField(payload, "last_agent_message") ?? text;
+        completedAt = readNumberField(payload, "completed_at") ?? completedAt;
+        durationMs = readNumberField(payload, "duration_ms") ?? durationMs;
+      }
+      continue;
+    }
+
+    if (readStringField(record, "type") !== "response_item") {
+      continue;
+    }
+
+    if (
+      readStringField(payload, "type") !== "message" ||
+      readStringField(payload, "role") !== "assistant"
+    ) {
+      continue;
+    }
+
+    const contentItems = readObjectField(payload, "content");
+    if (!Array.isArray(contentItems)) {
+      continue;
+    }
+    const assistantText = contentItems
+      .map((item) => readStringField(item, "text"))
+      .filter((item): item is string => item !== undefined)
+      .join("");
+    if (assistantText.length > 0) {
+      text = assistantText;
+    }
+  }
+
+  return completed ? { text, status: "completed", completedAt, durationMs } : undefined;
+}
+
 export const makeCodexSessionRuntime = (
   options: CodexSessionRuntimeOptions,
 ): Effect.Effect<
   CodexSessionRuntimeShape,
   CodexErrors.CodexAppServerError,
-  ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path | Scope.Scope
 > =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const runtimeScope = yield* Scope.Scope;
     const events = yield* Queue.unbounded<ProviderEvent>();
     const pendingApprovalsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingApproval>());
     const approvalCorrelationsRef = yield* Ref.make(new Map<string, ApprovalCorrelation>());
     const pendingUserInputsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingUserInput>());
     const collabReceiverTurnsRef = yield* Ref.make(new Map<string, TurnId>());
+    const turnsWithServerNotificationsRef = yield* Ref.make(new Set<string>());
+    const backfilledTurnIdsRef = yield* Ref.make(new Set<string>());
+    const rolloutPathRef = yield* Ref.make<string | undefined>(undefined);
     const closedRef = yield* Ref.make(false);
 
     // `~` is not shell-expanded when env vars are set via
     // `child_process.spawn`; `expandHomePath` lets a configured
     // `CODEX_HOME=~/.codex_work` reach codex as an absolute path.
     const resolvedHomePath = options.homePath ? expandHomePath(options.homePath) : undefined;
+    const fallbackCodexHomePath = resolvedHomePath ?? path.join(NodeOS.homedir(), ".codex");
     const env = {
       ...(options.environment ?? process.env),
       ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
@@ -782,6 +920,28 @@ export const makeCodexSessionRuntime = (
         message,
       });
 
+    const hasSeenServerNotificationForTurn = (turnId: TurnId) =>
+      Ref.get(turnsWithServerNotificationsRef).pipe(
+        Effect.map((turnIds) => turnIds.has(String(turnId))),
+      );
+
+    const markServerNotificationForTurn = (turnId: TurnId) =>
+      Ref.update(turnsWithServerNotificationsRef, (current) => {
+        const next = new Set(current);
+        next.add(String(turnId));
+        return next;
+      });
+
+    const markBackfilledTurn = (turnId: TurnId) =>
+      Ref.update(backfilledTurnIdsRef, (current) => {
+        const next = new Set(current);
+        next.add(String(turnId));
+        return next;
+      });
+
+    const hasBackfilledTurn = (turnId: TurnId) =>
+      Ref.get(backfilledTurnIdsRef).pipe(Effect.map((turnIds) => turnIds.has(String(turnId))));
+
     const settlePendingApprovals = (decision: ProviderApprovalDecision) =>
       Ref.get(pendingApprovalsRef).pipe(
         Effect.flatMap((pendingApprovals) =>
@@ -809,7 +969,25 @@ export const makeCodexSessionRuntime = (
     const handleRawNotification = (notification: CodexServerNotification) =>
       Effect.gen(function* () {
         const payload = notification.params;
+        if (notification.method === "thread/started") {
+          const rolloutPath = notification.params.thread.path;
+          if (typeof rolloutPath === "string" && rolloutPath.length > 0) {
+            yield* Ref.set(rolloutPathRef, rolloutPath);
+          }
+        }
         const route = readRouteFields(notification);
+        if (route.turnId) {
+          const alreadyBackfilled = yield* hasBackfilledTurn(route.turnId);
+          if (alreadyBackfilled && isTurnScopedNotification(notification.method)) {
+            return;
+          }
+          if (
+            notification.method === "item/agentMessage/delta" ||
+            notification.method === "turn/completed"
+          ) {
+            yield* markServerNotificationForTurn(route.turnId);
+          }
+        }
         const collabReceiverTurns = yield* Ref.get(collabReceiverTurnsRef);
         const childParentTurnId = (() => {
           const providerConversationId = readNotificationThreadId(notification);
@@ -1218,6 +1396,206 @@ export const makeCodexSessionRuntime = (
       return providerThreadId;
     });
 
+    const readTurnSnapshot = (providerThreadId: string, turnId: TurnId) =>
+      client
+        .request("thread/read", {
+          threadId: providerThreadId,
+          includeTurns: true,
+        })
+        .pipe(
+          Effect.map((response) =>
+            response.thread.turns.find((turn) => turn.id === String(turnId)),
+          ),
+        );
+
+    const findRolloutPathByProviderThreadId = (providerThreadId: string) =>
+      Effect.gen(function* () {
+        const sessionsRoot = path.join(fallbackCodexHomePath, "sessions");
+        const years = yield* fileSystem
+          .readDirectory(sessionsRoot)
+          .pipe(Effect.catch(() => Effect.succeed([] as string[])));
+        for (const year of years.toSorted().toReversed()) {
+          const yearPath = path.join(sessionsRoot, year);
+          const months = yield* fileSystem
+            .readDirectory(yearPath)
+            .pipe(Effect.catch(() => Effect.succeed([] as string[])));
+          for (const month of months.toSorted().toReversed()) {
+            const monthPath = path.join(yearPath, month);
+            const days = yield* fileSystem
+              .readDirectory(monthPath)
+              .pipe(Effect.catch(() => Effect.succeed([] as string[])));
+            for (const day of days.toSorted().toReversed()) {
+              const dayPath = path.join(monthPath, day);
+              const entries = yield* fileSystem
+                .readDirectory(dayPath)
+                .pipe(Effect.catch(() => Effect.succeed([] as string[])));
+              const match = entries
+                .filter((entry) => entry.endsWith(".jsonl") && entry.includes(providerThreadId))
+                .sort()
+                .at(-1);
+              if (match) {
+                return path.join(dayPath, match);
+              }
+            }
+          }
+        }
+        return undefined;
+      });
+
+    const readJsonlTurnCompletion = (turnId: TurnId) =>
+      Effect.gen(function* () {
+        const existingRolloutPath = yield* Ref.get(rolloutPathRef);
+        const providerThreadId = yield* readProviderThreadId;
+        const rolloutPath =
+          existingRolloutPath ?? (yield* findRolloutPathByProviderThreadId(providerThreadId));
+        if (!rolloutPath) {
+          return undefined;
+        }
+        if (!existingRolloutPath) {
+          yield* Ref.set(rolloutPathRef, rolloutPath);
+        }
+        const content = yield* fileSystem.readFileString(rolloutPath);
+        return parseCodexJsonlTurnCompletion(content, turnId);
+      });
+
+    const emitBackfilledTurnEvents = (input: {
+      readonly providerThreadId: string;
+      readonly turn:
+        | EffectCodexSchema.V2ThreadReadResponse__Turn
+        | {
+            readonly id: string;
+            readonly status: "completed" | "failed";
+            readonly items: ReadonlyArray<EffectCodexSchema.V2ThreadReadResponse__ThreadItem>;
+            readonly completedAt?: number | null;
+            readonly durationMs?: number | null;
+            readonly error?: { readonly message: string } | null;
+          };
+      readonly turnId: TurnId;
+    }) =>
+      Effect.gen(function* () {
+        const alreadyBackfilled = yield* hasBackfilledTurn(input.turnId);
+        if (alreadyBackfilled) {
+          return;
+        }
+
+        yield* markBackfilledTurn(input.turnId);
+        const assistantItems = input.turn.items.flatMap((item) =>
+          item.type === "agentMessage" && item.text.length > 0 ? [item] : [],
+        );
+
+        yield* emitEvent({
+          kind: "notification",
+          threadId: options.threadId,
+          method: "turn/started",
+          turnId: input.turnId,
+          payload: {
+            threadId: input.providerThreadId,
+            turn: {
+              id: input.turn.id,
+              status: "inProgress",
+              items: [],
+            },
+          } satisfies EffectCodexSchema.V2TurnStartedNotification,
+        });
+
+        yield* Effect.forEach(
+          assistantItems,
+          (item) =>
+            emitEvent({
+              kind: "notification",
+              threadId: options.threadId,
+              method: "item/agentMessage/delta",
+              turnId: input.turnId,
+              itemId: ProviderItemId.make(item.id),
+              textDelta: item.text,
+              payload: {
+                threadId: input.providerThreadId,
+                turnId: input.turn.id,
+                itemId: item.id,
+                delta: item.text,
+              } satisfies EffectCodexSchema.V2AgentMessageDeltaNotification,
+            }),
+          { concurrency: 1, discard: true },
+        );
+
+        yield* emitEvent({
+          kind: "notification",
+          threadId: options.threadId,
+          method: "turn/completed",
+          turnId: input.turnId,
+          payload: {
+            threadId: input.providerThreadId,
+            turn: input.turn as unknown as EffectCodexSchema.V2TurnCompletedNotification["turn"],
+          } satisfies EffectCodexSchema.V2TurnCompletedNotification,
+        });
+
+        yield* updateSession(sessionRef, {
+          status: input.turn.status === "failed" ? "error" : "ready",
+          activeTurnId: undefined,
+          ...(input.turn.error?.message ? { lastError: input.turn.error.message } : {}),
+        });
+      });
+
+    const startTurnBackfill = (input: {
+      readonly providerThreadId: string;
+      readonly turnId: TurnId;
+    }) =>
+      Effect.gen(function* () {
+        yield* Effect.sleep(CODEX_TURN_BACKFILL_INITIAL_DELAY_MS);
+        for (let attempt = 0; attempt < CODEX_TURN_BACKFILL_MAX_ATTEMPTS; attempt += 1) {
+          const closed = yield* Ref.get(closedRef);
+          const seenNotification = yield* hasSeenServerNotificationForTurn(input.turnId);
+          if (closed || seenNotification) {
+            return;
+          }
+
+          const jsonlCompletion = yield* readJsonlTurnCompletion(input.turnId).pipe(
+            Effect.catch(() => Effect.void),
+          );
+          if (jsonlCompletion) {
+            yield* emitBackfilledTurnEvents({
+              providerThreadId: input.providerThreadId,
+              turn: {
+                id: String(input.turnId),
+                status: jsonlCompletion.status,
+                items: jsonlCompletion.text
+                  ? [
+                      {
+                        id: `jsonl-agent-message:${String(input.turnId)}`,
+                        type: "agentMessage",
+                        text: jsonlCompletion.text,
+                      },
+                    ]
+                  : [],
+                ...(jsonlCompletion.completedAt !== undefined
+                  ? { completedAt: jsonlCompletion.completedAt }
+                  : {}),
+                ...(jsonlCompletion.durationMs !== undefined
+                  ? { durationMs: jsonlCompletion.durationMs }
+                  : {}),
+              },
+              turnId: input.turnId,
+            });
+            return;
+          }
+
+          const turn = yield* readTurnSnapshot(input.providerThreadId, input.turnId).pipe(
+            Effect.timeout(Duration.millis(CODEX_TURN_BACKFILL_SNAPSHOT_TIMEOUT_MS)),
+            Effect.catch(() => Effect.void),
+          );
+          if (turn && isTerminalCodexTurnStatus(turn.status)) {
+            yield* emitBackfilledTurnEvents({
+              providerThreadId: input.providerThreadId,
+              turn,
+              turnId: input.turnId,
+            });
+            return;
+          }
+
+          yield* Effect.sleep(CODEX_TURN_BACKFILL_POLL_MS);
+        }
+      }).pipe(Effect.forkDetach({ startImmediately: true }), Effect.asVoid);
+
     const close = Effect.gen(function* () {
       const alreadyClosed = yield* Ref.getAndSet(closedRef, true);
       if (alreadyClosed) {
@@ -1254,18 +1632,24 @@ export const makeCodexSessionRuntime = (
             ...(input.effort ? { effort: input.effort } : {}),
             ...(input.interactionMode ? { interactionMode: input.interactionMode } : {}),
           });
-          const rawResponse = yield* client.raw.request("turn/start", params);
-          const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(
-            Effect.mapError((error) =>
-              toProtocolParseError("Invalid turn/start response payload", error),
-            ),
-          );
-          const turnId = TurnId.make(response.turn.id);
+          const turnStartResponse = yield* client.raw
+            .request("turn/start", params)
+            .pipe(
+              Effect.flatMap((rawResponse) =>
+                decodeV2TurnStartResponse(rawResponse).pipe(
+                  Effect.mapError((error) =>
+                    toProtocolParseError("Invalid turn/start response payload", error),
+                  ),
+                ),
+              ),
+            );
+          const turnId = TurnId.make(turnStartResponse.turn.id);
           yield* updateSession(sessionRef, {
             status: "running",
             activeTurnId: turnId,
             ...(normalizedModel ? { model: normalizedModel } : {}),
           });
+          yield* startTurnBackfill({ providerThreadId, turnId });
           const resumedProviderThreadId = currentProviderThreadId(yield* Ref.get(sessionRef));
           return {
             threadId: options.threadId,

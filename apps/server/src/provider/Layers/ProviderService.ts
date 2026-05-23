@@ -215,12 +215,14 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>
     Effect.succeed(event).pipe(
+      Effect.tap((canonicalEvent) => PubSub.publish(runtimeEventPubSub, canonicalEvent)),
       Effect.tap((canonicalEvent) =>
         canonicalEventLogger
-          ? canonicalEventLogger.write(canonicalEvent, canonicalEvent.threadId)
+          ? canonicalEventLogger
+              .write(canonicalEvent, canonicalEvent.threadId)
+              .pipe(Effect.ignore, Effect.forkChild)
           : Effect.void,
       ),
-      Effect.flatMap((canonicalEvent) => PubSub.publish(runtimeEventPubSub, canonicalEvent)),
       Effect.asVoid,
     );
 
@@ -929,6 +931,66 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     },
   );
 
+  const mergeSessionBindingOverrides = (
+    session: ProviderSession,
+    binding: ProviderRuntimeBinding,
+    operation: string,
+  ): ProviderSession => {
+    const providerInstanceId = dieOnMissingBindingInstanceId(operation, binding);
+    const overrides: {
+      resumeCursor?: ProviderSession["resumeCursor"];
+      runtimeMode?: ProviderSession["runtimeMode"];
+      providerInstanceId?: ProviderSession["providerInstanceId"];
+    } = {
+      providerInstanceId,
+    };
+    if (session.resumeCursor === undefined && binding.resumeCursor !== undefined) {
+      overrides.resumeCursor = binding.resumeCursor;
+    }
+    if (binding.runtimeMode !== undefined) {
+      overrides.runtimeMode = binding.runtimeMode;
+    }
+    return Object.assign({}, session, overrides);
+  };
+
+  const getActiveSessionForThread: ProviderServiceShape["getActiveSessionForThread"] = Effect.fn(
+    "ProviderService.getActiveSessionForThread",
+  )(function* (threadId) {
+    const bindingOption = yield* directory.getBinding(threadId);
+    const binding = Option.getOrUndefined(bindingOption);
+    if (!binding) {
+      return Option.none<ProviderSession>();
+    }
+
+    const providerInstanceId = yield* requireBindingInstanceId(
+      "ProviderService.getActiveSessionForThread",
+      binding,
+    );
+    const adapter = yield* registry.getByInstance(providerInstanceId);
+    const sessions = yield* adapter.listSessions();
+    const session = sessions.find((candidate) => candidate.threadId === threadId);
+    if (!session) {
+      return Option.none<ProviderSession>();
+    }
+    if (binding.provider !== session.provider) {
+      return yield* Effect.die(
+        new Error(
+          `ProviderService.getActiveSessionForThread: thread '${session.threadId}' is active on provider '${session.provider}' but persisted binding names provider '${binding.provider}'.`,
+        ),
+      );
+    }
+    if (providerInstanceId !== session.providerInstanceId) {
+      return yield* Effect.die(
+        new Error(
+          `ProviderService.getActiveSessionForThread: thread '${session.threadId}' is active on provider instance '${session.providerInstanceId}' but persisted binding names '${providerInstanceId}'.`,
+        ),
+      );
+    }
+    return Option.some(
+      mergeSessionBindingOverrides(session, binding, "ProviderService.getActiveSessionForThread"),
+    );
+  });
+
   const getCapabilities: ProviderServiceShape["getCapabilities"] = (instanceId) =>
     registry.getByInstance(instanceId).pipe(Effect.map((adapter) => adapter.capabilities));
 
@@ -1040,6 +1102,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     respondToUserInput,
     stopSession,
     listSessions,
+    getActiveSessionForThread,
     getCapabilities,
     getInstanceInfo,
     rollbackConversation,

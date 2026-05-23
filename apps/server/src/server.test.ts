@@ -1,3 +1,4 @@
+// @effect-diagnostics anyUnknownInErrorContext:off
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -3876,7 +3877,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               createWorktree,
             },
             vcsStatusBroadcaster: {
-              refreshStatus,
+              refreshStatusLocalFirst: refreshStatus,
             },
             orchestrationEngine: {
               dispatch: (command) =>

@@ -85,6 +85,7 @@ describe("orchestration projector", () => {
         interactionMode: "default",
         branch: null,
         worktreePath: null,
+        forkOrigin: null,
         latestTurn: null,
         createdAt: now,
         updatedAt: now,
@@ -97,6 +98,58 @@ describe("orchestration projector", () => {
         session: null,
       },
     ]);
+  });
+
+  it("replays legacy thread.forked payloads as canonical fork origins", async () => {
+    const now = "2026-01-01T00:00:00.000Z";
+    const model = createEmptyReadModel(now);
+
+    const next = await Effect.runPromise(
+      projectEvent(
+        model,
+        makeEvent({
+          sequence: 1,
+          type: "thread.forked",
+          aggregateKind: "thread",
+          aggregateId: "thread-fork",
+          occurredAt: now,
+          commandId: "cmd-thread-fork",
+          payload: {
+            threadId: "thread-fork",
+            projectId: "project-1",
+            title: "fork",
+            modelSelection: {
+              provider: ProviderDriverKind.make("codex"),
+              model: "gpt-5-codex",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            forkOrigin: {
+              sourceThreadId: "thread-source",
+              sourceTurnId: null,
+              sourceCheckpointTurnCount: null,
+              forkedAt: now,
+            },
+            latestTurn: null,
+            messages: [],
+            proposedPlans: [],
+            activities: [],
+            checkpoints: [],
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      ),
+    );
+
+    expect(next.threads[0]?.forkOrigin).toEqual({
+      forkSourceThreadId: "thread-source",
+      forkSourceTurnId: null,
+      forkSourceCheckpointTurnCount: null,
+      forkedAt: now,
+    });
   });
 
   it("fails when event payload cannot be decoded by runtime schema", async () => {
@@ -203,6 +256,74 @@ describe("orchestration projector", () => {
       ),
     );
     expect(unarchived.threads[0]?.archivedAt).toBeNull();
+  });
+
+  it("applies thread.turn-start-requested model and mode updates to existing threads", async () => {
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const startedAt = "2026-01-01T00:00:05.000Z";
+    const created = await Effect.runPromise(
+      projectEvent(
+        createEmptyReadModel(createdAt),
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: createdAt,
+          commandId: "cmd-thread-create",
+          payload: {
+            threadId: "thread-1",
+            projectId: "project-1",
+            title: "demo",
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5.4",
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+            updatedAt: createdAt,
+          },
+        }),
+      ),
+    );
+
+    const next = await Effect.runPromise(
+      projectEvent(
+        created,
+        makeEvent({
+          sequence: 2,
+          type: "thread.turn-start-requested",
+          aggregateKind: "thread",
+          aggregateId: "thread-1",
+          occurredAt: startedAt,
+          commandId: "cmd-thread-turn-start",
+          payload: {
+            threadId: "thread-1",
+            messageId: "message-1",
+            modelSelection: {
+              provider: "codex",
+              model: "gpt-5.2",
+            },
+            runtimeMode: "approval-required",
+            interactionMode: "plan",
+            createdAt: startedAt,
+          },
+        }),
+      ),
+    );
+
+    expect(next.threads[0]).toMatchObject({
+      modelSelection: {
+        instanceId: "codex",
+        model: "gpt-5.2",
+      },
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+      updatedAt: startedAt,
+    });
   });
 
   it("keeps projector forward-compatible for unhandled event types", async () => {

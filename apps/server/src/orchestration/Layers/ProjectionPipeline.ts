@@ -2,6 +2,7 @@ import {
   ApprovalRequestId,
   type ChatAttachment,
   type OrchestrationEvent,
+  type OrchestrationThreadActivity,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -515,6 +516,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
+        case "project.worktree-group-title-regeneration-requested":
+          return;
+
         default:
           return;
       }
@@ -562,6 +566,56 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       });
     });
 
+    const adjustPendingUserInputCount = (
+      current: number,
+      activity: OrchestrationThreadActivity,
+    ): number => {
+      if (extractActivityRequestId(activity.payload) === null) {
+        return current;
+      }
+      if (activity.kind === "user-input.requested") {
+        return current + 1;
+      }
+      if (activity.kind === "user-input.resolved") {
+        return Math.max(0, current - 1);
+      }
+      const payload =
+        typeof activity.payload === "object" && activity.payload !== null
+          ? (activity.payload as Record<string, unknown>)
+          : null;
+      const detail = typeof payload?.detail === "string" ? payload.detail.toLowerCase() : null;
+      if (
+        activity.kind === "provider.user-input.respond.failed" &&
+        detail !== null &&
+        (detail.includes("stale pending user-input request") ||
+          detail.includes("unknown pending user-input request"))
+      ) {
+        return Math.max(0, current - 1);
+      }
+      return current;
+    };
+
+    const adjustPendingApprovalCount = (
+      current: number,
+      activity: OrchestrationThreadActivity,
+    ): number => {
+      if (extractActivityRequestId(activity.payload) === null) {
+        return current;
+      }
+      if (activity.kind === "approval.requested") {
+        return current + 1;
+      }
+      if (activity.kind !== "provider.approval.respond.failed") {
+        return current;
+      }
+      const payload =
+        typeof activity.payload === "object" && activity.payload !== null
+          ? (activity.payload as Record<string, unknown>)
+          : null;
+      const detail = typeof payload?.detail === "string" ? payload.detail.toLowerCase() : null;
+      return isStalePendingApprovalFailureDetail(detail) ? Math.max(0, current - 1) : current;
+    };
+
     const applyThreadsProjection: ProjectorDefinition["apply"] = Effect.fn(
       "applyThreadsProjection",
     )(function* (event, attachmentSideEffects) {
@@ -576,11 +630,46 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             interactionMode: event.payload.interactionMode,
             branch: event.payload.branch,
             worktreePath: event.payload.worktreePath,
+            forkSourceThreadId: null,
+            forkSourceTurnId: null,
+            forkSourceCheckpointTurnCount: null,
+            forkedAt: null,
             latestTurnId: null,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
             archivedAt: null,
             latestUserMessageAt: null,
+            pendingApprovalCount: 0,
+            pendingUserInputCount: 0,
+            hasActionableProposedPlan: 0,
+            deletedAt: null,
+          });
+          return;
+
+        case "thread.forked":
+          yield* projectionThreadRepository.upsert({
+            threadId: event.payload.threadId,
+            projectId: event.payload.projectId,
+            title: event.payload.title,
+            modelSelection: event.payload.modelSelection,
+            runtimeMode: event.payload.runtimeMode,
+            interactionMode: event.payload.interactionMode,
+            branch: event.payload.branch,
+            worktreePath: event.payload.worktreePath,
+            forkSourceThreadId: event.payload.forkOrigin.forkSourceThreadId,
+            forkSourceTurnId: event.payload.forkOrigin.forkSourceTurnId,
+            forkSourceCheckpointTurnCount: event.payload.forkOrigin.forkSourceCheckpointTurnCount,
+            forkedAt: event.payload.forkOrigin.forkedAt,
+            latestTurnId: event.payload.latestTurn?.turnId ?? null,
+            createdAt: event.payload.createdAt,
+            updatedAt: event.payload.updatedAt,
+            archivedAt: null,
+            latestUserMessageAt:
+              event.payload.messages
+                .filter((message) => message.role === "user")
+                .map((message) => message.createdAt)
+                .toSorted()
+                .at(-1) ?? null,
             pendingApprovalCount: 0,
             pendingUserInputCount: 0,
             hasActionableProposedPlan: 0,
@@ -670,6 +759,25 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
+        case "thread.turn-start-requested": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            ...(event.payload.modelSelection !== undefined
+              ? { modelSelection: event.payload.modelSelection }
+              : {}),
+            runtimeMode: event.payload.runtimeMode,
+            interactionMode: event.payload.interactionMode,
+            updatedAt: event.occurredAt,
+          });
+          return;
+        }
+
         case "thread.deleted": {
           attachmentSideEffects.deletedThreadIds.add(event.payload.threadId);
           const existingRow = yield* projectionThreadRepository.getById({
@@ -686,9 +794,60 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
-        case "thread.message-sent":
-        case "thread.proposed-plan-upserted":
-        case "thread.activity-appended":
+        case "thread.proposed-plan-upserted": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            latestTurnId: event.payload.proposedPlan.turnId,
+            updatedAt: event.occurredAt,
+          });
+          yield* refreshThreadShellSummary(event.payload.threadId);
+          return;
+        }
+
+        case "thread.message-sent": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            latestUserMessageAt:
+              event.payload.role === "user"
+                ? event.payload.createdAt
+                : existingRow.value.latestUserMessageAt,
+            updatedAt: event.occurredAt,
+          });
+          return;
+        }
+        case "thread.activity-appended": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            pendingUserInputCount: adjustPendingUserInputCount(
+              existingRow.value.pendingUserInputCount,
+              event.payload.activity,
+            ),
+            pendingApprovalCount: adjustPendingApprovalCount(
+              existingRow.value.pendingApprovalCount,
+              event.payload.activity,
+            ),
+            updatedAt: event.occurredAt,
+          });
+          return;
+        }
         case "thread.approval-response-requested":
         case "thread.user-input-response-requested": {
           const existingRow = yield* projectionThreadRepository.getById({
@@ -714,7 +873,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           }
           yield* projectionThreadRepository.upsert({
             ...existingRow.value,
-            latestTurnId: event.payload.session.activeTurnId,
+            latestTurnId: event.payload.session.activeTurnId ?? existingRow.value.latestTurnId,
             updatedAt: event.occurredAt,
           });
           yield* refreshThreadShellSummary(event.payload.threadId);
@@ -784,6 +943,33 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       "applyThreadMessagesProjection",
     )(function* (event, attachmentSideEffects) {
       switch (event.type) {
+        case "thread.forked":
+          yield* Effect.forEach(
+            event.payload.messages,
+            (message) =>
+              Effect.gen(function* () {
+                const attachments =
+                  message.attachments !== undefined
+                    ? yield* materializeAttachmentsForProjection({
+                        attachments: message.attachments,
+                      })
+                    : undefined;
+                yield* projectionThreadMessageRepository.upsert({
+                  messageId: message.id,
+                  threadId: event.payload.threadId,
+                  turnId: message.turnId,
+                  role: message.role,
+                  text: message.text,
+                  ...(attachments !== undefined ? { attachments: [...attachments] } : {}),
+                  isStreaming: message.streaming,
+                  createdAt: message.createdAt,
+                  updatedAt: message.updatedAt,
+                });
+              }),
+            { concurrency: 1 },
+          ).pipe(Effect.asVoid);
+          return;
+
         case "thread.message-sent": {
           const existingMessage = yield* projectionThreadMessageRepository.getByMessageId({
             messageId: event.payload.messageId,
@@ -863,6 +1049,24 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       "applyThreadProposedPlansProjection",
     )(function* (event, _attachmentSideEffects) {
       switch (event.type) {
+        case "thread.forked":
+          yield* Effect.forEach(
+            event.payload.proposedPlans,
+            (proposedPlan) =>
+              projectionThreadProposedPlanRepository.upsert({
+                planId: proposedPlan.id,
+                threadId: event.payload.threadId,
+                turnId: proposedPlan.turnId,
+                planMarkdown: proposedPlan.planMarkdown,
+                implementedAt: proposedPlan.implementedAt,
+                implementationThreadId: proposedPlan.implementationThreadId,
+                createdAt: proposedPlan.createdAt,
+                updatedAt: proposedPlan.updatedAt,
+              }),
+            { concurrency: 1 },
+          ).pipe(Effect.asVoid);
+          return;
+
         case "thread.proposed-plan-upserted":
           yield* projectionThreadProposedPlanRepository.upsert({
             planId: event.payload.proposedPlan.id,
@@ -914,6 +1118,25 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
       "applyThreadActivitiesProjection",
     )(function* (event, _attachmentSideEffects) {
       switch (event.type) {
+        case "thread.forked":
+          yield* Effect.forEach(
+            event.payload.activities,
+            (activity) =>
+              projectionThreadActivityRepository.upsert({
+                activityId: activity.id,
+                threadId: event.payload.threadId,
+                turnId: activity.turnId,
+                tone: activity.tone,
+                kind: activity.kind,
+                summary: activity.summary,
+                payload: activity.payload,
+                ...(activity.sequence !== undefined ? { sequence: activity.sequence } : {}),
+                createdAt: activity.createdAt,
+              }),
+            { concurrency: 1 },
+          ).pipe(Effect.asVoid);
+          return;
+
         case "thread.activity-appended":
           yield* projectionThreadActivityRepository.upsert({
             activityId: event.payload.activity.id,

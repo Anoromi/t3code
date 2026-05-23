@@ -1259,6 +1259,7 @@ function applyEnvironmentOrchestrationEvent(
           interactionMode: event.payload.interactionMode,
           branch: event.payload.branch,
           worktreePath: event.payload.worktreePath,
+          forkOrigin: null,
           latestTurn: null,
           createdAt: event.payload.createdAt,
           updatedAt: event.payload.updatedAt,
@@ -1268,6 +1269,35 @@ function applyEnvironmentOrchestrationEvent(
           proposedPlans: [],
           activities: [],
           checkpoints: [],
+          session: null,
+        },
+        environmentId,
+      );
+      return writeThreadState(state, nextThread, previousThread);
+    }
+
+    case "thread.forked": {
+      const previousThread = getThreadFromEnvironmentState(state, event.payload.threadId);
+      const nextThread = mapThread(
+        {
+          id: event.payload.threadId,
+          projectId: event.payload.projectId,
+          title: event.payload.title,
+          modelSelection: event.payload.modelSelection,
+          runtimeMode: event.payload.runtimeMode,
+          interactionMode: event.payload.interactionMode,
+          branch: event.payload.branch,
+          worktreePath: event.payload.worktreePath,
+          forkOrigin: event.payload.forkOrigin,
+          latestTurn: event.payload.latestTurn,
+          createdAt: event.payload.createdAt,
+          updatedAt: event.payload.updatedAt,
+          archivedAt: null,
+          deletedAt: null,
+          messages: event.payload.messages,
+          proposedPlans: event.payload.proposedPlans,
+          activities: event.payload.activities,
+          checkpoints: event.payload.checkpoints,
           session: null,
         },
         environmentId,

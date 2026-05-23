@@ -154,6 +154,18 @@ function maxIso(left: string | null, right: string): string {
   return left > right ? left : right;
 }
 
+function mapThreadForkOrigin(row: ProjectionThread): OrchestrationThread["forkOrigin"] {
+  if (!row.forkSourceThreadId || !row.forkedAt) {
+    return null;
+  }
+  return {
+    forkSourceThreadId: row.forkSourceThreadId,
+    forkSourceTurnId: row.forkSourceTurnId ?? null,
+    forkSourceCheckpointTurnCount: row.forkSourceCheckpointTurnCount ?? null,
+    forkedAt: row.forkedAt,
+  };
+}
+
 function computeSnapshotSequence(
   stateRows: ReadonlyArray<Schema.Schema.Type<typeof ProjectionStateDbRowSchema>>,
 ): number {
@@ -327,6 +339,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          fork_source_thread_id AS "forkSourceThreadId",
+          fork_source_turn_id AS "forkSourceTurnId",
+          fork_source_checkpoint_turn_count AS "forkSourceCheckpointTurnCount",
+          forked_at AS "forkedAt",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -335,6 +351,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          (
+            SELECT COUNT(*)
+            FROM projection_turns AS pending_turns
+            WHERE pending_turns.thread_id = projection_threads.thread_id
+              AND pending_turns.turn_id IS NULL
+              AND pending_turns.state = 'pending'
+          ) AS "pendingTurnStartCount",
           deleted_at AS "deletedAt"
         FROM projection_threads
         ORDER BY created_at ASC, thread_id ASC
@@ -355,6 +378,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          fork_source_thread_id AS "forkSourceThreadId",
+          fork_source_turn_id AS "forkSourceTurnId",
+          fork_source_checkpoint_turn_count AS "forkSourceCheckpointTurnCount",
+          forked_at AS "forkedAt",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -363,6 +390,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          (
+            SELECT COUNT(*)
+            FROM projection_turns AS pending_turns
+            WHERE pending_turns.thread_id = projection_threads.thread_id
+              AND pending_turns.turn_id IS NULL
+              AND pending_turns.state = 'pending'
+          ) AS "pendingTurnStartCount",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE deleted_at IS NULL
@@ -385,6 +419,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          fork_source_thread_id AS "forkSourceThreadId",
+          fork_source_turn_id AS "forkSourceTurnId",
+          fork_source_checkpoint_turn_count AS "forkSourceCheckpointTurnCount",
+          forked_at AS "forkedAt",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -393,6 +431,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          (
+            SELECT COUNT(*)
+            FROM projection_turns AS pending_turns
+            WHERE pending_turns.thread_id = projection_threads.thread_id
+              AND pending_turns.turn_id IS NULL
+              AND pending_turns.state = 'pending'
+          ) AS "pendingTurnStartCount",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE deleted_at IS NULL
@@ -747,6 +792,10 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           interaction_mode AS "interactionMode",
           branch,
           worktree_path AS "worktreePath",
+          fork_source_thread_id AS "forkSourceThreadId",
+          fork_source_turn_id AS "forkSourceTurnId",
+          fork_source_checkpoint_turn_count AS "forkSourceCheckpointTurnCount",
+          forked_at AS "forkedAt",
           latest_turn_id AS "latestTurnId",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -755,6 +804,13 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
+          (
+            SELECT COUNT(*)
+            FROM projection_turns AS pending_turns
+            WHERE pending_turns.thread_id = projection_threads.thread_id
+              AND pending_turns.turn_id IS NULL
+              AND pending_turns.state = 'pending'
+          ) AS "pendingTurnStartCount",
           deleted_at AS "deletedAt"
         FROM projection_threads
         WHERE thread_id = ${threadId}
@@ -1179,6 +1235,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 interactionMode: row.interactionMode,
                 branch: row.branch,
                 worktreePath: row.worktreePath,
+                forkOrigin: mapThreadForkOrigin(row),
                 latestTurn: latestTurnByThread.get(row.threadId) ?? null,
                 createdAt: row.createdAt,
                 updatedAt: row.updatedAt,
@@ -1377,6 +1434,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   interactionMode: row.interactionMode,
                   branch: row.branch,
                   worktreePath: row.worktreePath,
+                  forkOrigin: mapThreadForkOrigin(row),
                   latestTurn: latestTurnByThread.get(row.threadId) ?? null,
                   createdAt: row.createdAt,
                   updatedAt: row.updatedAt,
@@ -1496,25 +1554,32 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               threads: threadRows
                 .filter((row) => row.deletedAt === null)
                 .map(
-                  (row): OrchestrationThreadShell => ({
-                    id: row.threadId,
-                    projectId: row.projectId,
-                    title: row.title,
-                    modelSelection: row.modelSelection,
-                    runtimeMode: row.runtimeMode,
-                    interactionMode: row.interactionMode,
-                    branch: row.branch,
-                    worktreePath: row.worktreePath,
-                    latestTurn: latestTurnByThread.get(row.threadId) ?? null,
-                    createdAt: row.createdAt,
-                    updatedAt: row.updatedAt,
-                    archivedAt: row.archivedAt,
-                    session: sessionByThread.get(row.threadId) ?? null,
-                    latestUserMessageAt: row.latestUserMessageAt,
-                    hasPendingApprovals: row.pendingApprovalCount > 0,
-                    hasPendingUserInput: row.pendingUserInputCount > 0,
-                    hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
-                  }),
+                  (row): OrchestrationThreadShell =>
+                    Object.assign(
+                      {
+                        id: row.threadId,
+                        projectId: row.projectId,
+                        title: row.title,
+                        modelSelection: row.modelSelection,
+                        runtimeMode: row.runtimeMode,
+                        interactionMode: row.interactionMode,
+                        branch: row.branch,
+                        worktreePath: row.worktreePath,
+                        forkOrigin: mapThreadForkOrigin(row),
+                        latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+                        createdAt: row.createdAt,
+                        updatedAt: row.updatedAt,
+                        archivedAt: row.archivedAt,
+                        session: sessionByThread.get(row.threadId) ?? null,
+                        latestUserMessageAt: row.latestUserMessageAt,
+                        hasPendingApprovals: row.pendingApprovalCount > 0,
+                        hasPendingUserInput: row.pendingUserInputCount > 0,
+                        hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
+                      },
+                      row.pendingTurnStartCount !== undefined && row.pendingTurnStartCount > 0
+                        ? { hasPendingTurnStart: true }
+                        : {},
+                    ),
                 ),
               updatedAt: updatedAt ?? "1970-01-01T00:00:00.000Z",
             };
@@ -1627,25 +1692,32 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   mapProjectShellRow(row, repositoryIdentities.get(row.projectId) ?? null),
                 ),
               threads: threadRows.map(
-                (row): OrchestrationThreadShell => ({
-                  id: row.threadId,
-                  projectId: row.projectId,
-                  title: row.title,
-                  modelSelection: row.modelSelection,
-                  runtimeMode: row.runtimeMode,
-                  interactionMode: row.interactionMode,
-                  branch: row.branch,
-                  worktreePath: row.worktreePath,
-                  latestTurn: latestTurnByThread.get(row.threadId) ?? null,
-                  createdAt: row.createdAt,
-                  updatedAt: row.updatedAt,
-                  archivedAt: row.archivedAt,
-                  session: sessionByThread.get(row.threadId) ?? null,
-                  latestUserMessageAt: row.latestUserMessageAt,
-                  hasPendingApprovals: row.pendingApprovalCount > 0,
-                  hasPendingUserInput: row.pendingUserInputCount > 0,
-                  hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
-                }),
+                (row): OrchestrationThreadShell =>
+                  Object.assign(
+                    {
+                      id: row.threadId,
+                      projectId: row.projectId,
+                      title: row.title,
+                      modelSelection: row.modelSelection,
+                      runtimeMode: row.runtimeMode,
+                      interactionMode: row.interactionMode,
+                      branch: row.branch,
+                      worktreePath: row.worktreePath,
+                      forkOrigin: mapThreadForkOrigin(row),
+                      latestTurn: latestTurnByThread.get(row.threadId) ?? null,
+                      createdAt: row.createdAt,
+                      updatedAt: row.updatedAt,
+                      archivedAt: row.archivedAt,
+                      session: sessionByThread.get(row.threadId) ?? null,
+                      latestUserMessageAt: row.latestUserMessageAt,
+                      hasPendingApprovals: row.pendingApprovalCount > 0,
+                      hasPendingUserInput: row.pendingUserInputCount > 0,
+                      hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
+                    },
+                    row.pendingTurnStartCount !== undefined && row.pendingTurnStartCount > 0
+                      ? { hasPendingTurnStart: true }
+                      : {},
+                  ),
               ),
               updatedAt: updatedAt ?? "1970-01-01T00:00:00.000Z",
             };
@@ -1876,12 +1948,17 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         interactionMode: threadRow.value.interactionMode,
         branch: threadRow.value.branch,
         worktreePath: threadRow.value.worktreePath,
+        forkOrigin: mapThreadForkOrigin(threadRow.value),
         latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,
         archivedAt: threadRow.value.archivedAt,
         session: Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null,
         latestUserMessageAt: threadRow.value.latestUserMessageAt,
+        ...(threadRow.value.pendingTurnStartCount !== undefined &&
+        threadRow.value.pendingTurnStartCount > 0
+          ? { hasPendingTurnStart: true }
+          : {}),
         hasPendingApprovals: threadRow.value.pendingApprovalCount > 0,
         hasPendingUserInput: threadRow.value.pendingUserInputCount > 0,
         hasActionableProposedPlan: threadRow.value.hasActionableProposedPlan > 0,
@@ -1970,6 +2047,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         interactionMode: threadRow.value.interactionMode,
         branch: threadRow.value.branch,
         worktreePath: threadRow.value.worktreePath,
+        forkOrigin: mapThreadForkOrigin(threadRow.value),
         latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,

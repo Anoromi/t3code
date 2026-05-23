@@ -28,6 +28,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -78,7 +79,7 @@ export interface CodexAdapterLiveOptions {
   ) => Effect.Effect<
     CodexSessionRuntimeShape,
     CodexSessionRuntimeError,
-    ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
+    ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Path.Path | Scope.Scope
   >;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
@@ -1348,6 +1349,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
 ) {
   const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("codex");
   const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const serverConfig = yield* Effect.service(ServerConfig);
   const nativeEventLogger =
@@ -1406,6 +1408,8 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         const runtime = yield* createRuntime(runtimeInput).pipe(
           Effect.provideService(Scope.Scope, sessionScope),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
           Effect.mapError(
             (cause) =>
               new ProviderAdapterProcessError({
@@ -1419,9 +1423,13 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
 
         const eventFiber = yield* Stream.runForEach(runtime.events, (event) =>
           Effect.gen(function* () {
-            yield* writeNativeEvent(event);
-            const runtimeEvents = mapToRuntimeEvents(event, event.threadId);
+            const runtimeEvents = yield* Effect.sync(() =>
+              mapToRuntimeEvents(event, event.threadId),
+            ).pipe(
+              Effect.catchCause(() => Effect.succeed([] as ReadonlyArray<ProviderRuntimeEvent>)),
+            );
             if (runtimeEvents.length === 0) {
+              yield* writeNativeEvent(event).pipe(Effect.ignore);
               yield* Effect.logDebug("ignoring unhandled Codex provider event", {
                 method: event.method,
                 threadId: event.threadId,
@@ -1430,9 +1438,10 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               });
               return;
             }
+            yield* writeNativeEvent(event).pipe(Effect.ignore);
             yield* Queue.offerAll(runtimeEventQueue, runtimeEvents);
           }),
-        ).pipe(Effect.forkChild);
+        ).pipe(Effect.forkIn(sessionScope));
 
         const started = yield* runtime.start().pipe(
           Effect.mapError(

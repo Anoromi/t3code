@@ -18,6 +18,7 @@ import {
   ThreadArchivedPayload,
   ThreadCreatedPayload,
   ThreadDeletedPayload,
+  ThreadForkedPayload,
   ThreadInteractionModeSetPayload,
   ThreadMetaUpdatedPayload,
   ThreadProposedPlanUpsertedPayload,
@@ -26,6 +27,7 @@ import {
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
+  ThreadTurnStartRequestedPayload,
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
@@ -259,6 +261,7 @@ export function projectEvent(
             interactionMode: payload.interactionMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
+            forkOrigin: null,
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -267,6 +270,49 @@ export function projectEvent(
             messages: [],
             activities: [],
             checkpoints: [],
+            session: null,
+          },
+          event.type,
+          "thread",
+        );
+        const existing = nextBase.threads.find((entry) => entry.id === thread.id);
+        return {
+          ...nextBase,
+          threads: existing
+            ? nextBase.threads.map((entry) => (entry.id === thread.id ? thread : entry))
+            : [...nextBase.threads, thread],
+        };
+      });
+
+    case "thread.forked":
+      return Effect.gen(function* () {
+        const payload = yield* decodeForEvent(
+          ThreadForkedPayload,
+          event.payload,
+          event.type,
+          "payload",
+        );
+        const thread: OrchestrationThread = yield* decodeForEvent(
+          OrchestrationThread,
+          {
+            id: payload.threadId,
+            projectId: payload.projectId,
+            title: payload.title,
+            modelSelection: payload.modelSelection,
+            runtimeMode: payload.runtimeMode,
+            interactionMode: payload.interactionMode,
+            branch: payload.branch,
+            worktreePath: payload.worktreePath,
+            forkOrigin: payload.forkOrigin,
+            latestTurn: payload.latestTurn,
+            createdAt: payload.createdAt,
+            updatedAt: payload.updatedAt,
+            archivedAt: null,
+            deletedAt: null,
+            messages: payload.messages,
+            proposedPlans: payload.proposedPlans,
+            activities: payload.activities,
+            checkpoints: payload.checkpoints,
             session: null,
           },
           event.type,
@@ -353,6 +399,26 @@ export function projectEvent(
           threads: updateThread(nextBase.threads, payload.threadId, {
             interactionMode: payload.interactionMode,
             updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
+
+    case "thread.turn-start-requested":
+      return decodeForEvent(
+        ThreadTurnStartRequestedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            ...(payload.modelSelection !== undefined
+              ? { modelSelection: payload.modelSelection }
+              : {}),
+            runtimeMode: payload.runtimeMode,
+            interactionMode: payload.interactionMode,
+            updatedAt: event.occurredAt,
           }),
         })),
       );

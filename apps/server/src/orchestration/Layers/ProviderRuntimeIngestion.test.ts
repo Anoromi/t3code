@@ -27,6 +27,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as ManagedRuntime from "effect/ManagedRuntime";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -105,6 +106,10 @@ function createProviderServiceHarness() {
     respondToUserInput: () => unsupported(),
     stopSession: () => unsupported(),
     listSessions: () => Effect.succeed([...runtimeSessions]),
+    getActiveSessionForThread: (threadId) =>
+      Effect.succeed(
+        Option.fromNullishOr(runtimeSessions.find((session) => session.threadId === threadId)),
+      ),
     getCapabilities: () => Effect.succeed({ sessionModelSwitch: "in-session" }),
     getInstanceInfo: (instanceId) => {
       const driverKind = ProviderDriverKind.make(String(instanceId));
@@ -1866,7 +1871,7 @@ describe("ProviderRuntimeIngestion", () => {
     expect(assistantEvents[0]?.payload.streaming).toBe(true);
     expect(assistantEvents[0]?.payload.text).toBe("first half");
     expect(assistantEvents[1]?.payload.streaming).toBe(false);
-    expect(assistantEvents[1]?.payload.text).toBe("");
+    expect(assistantEvents[1]?.payload.text).toBe("first half");
     expect(assistantEvents[2]?.payload.messageId).toBe(
       "assistant:item-buffered-request-append:segment:1",
     );
@@ -1876,7 +1881,7 @@ describe("ProviderRuntimeIngestion", () => {
       "assistant:item-buffered-request-append:segment:1",
     );
     expect(assistantEvents[3]?.payload.streaming).toBe(false);
-    expect(assistantEvents[3]?.payload.text).toBe("");
+    expect(assistantEvents[3]?.payload.text).toBe(" second half");
   });
 
   it("starts a new streaming assistant message segment after approval", async () => {

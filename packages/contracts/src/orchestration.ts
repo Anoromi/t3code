@@ -330,6 +330,45 @@ export const OrchestrationLatestTurn = Schema.Struct({
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
+const ThreadForkOriginCanonical = Schema.Struct({
+  forkSourceThreadId: ThreadId,
+  forkSourceTurnId: Schema.NullOr(TurnId),
+  forkSourceCheckpointTurnCount: Schema.NullOr(NonNegativeInt),
+  forkedAt: IsoDateTime,
+});
+
+const ThreadForkOriginInput = Schema.Union([
+  ThreadForkOriginCanonical,
+  Schema.Struct({
+    sourceThreadId: ThreadId,
+    sourceTurnId: Schema.NullOr(TurnId),
+    sourceCheckpointTurnCount: Schema.NullOr(NonNegativeInt),
+    forkedAt: IsoDateTime,
+  }),
+]);
+
+export const ThreadForkOrigin = ThreadForkOriginInput.pipe(
+  Schema.decodeTo(
+    Schema.toType(ThreadForkOriginCanonical),
+    SchemaTransformation.transform<
+      typeof ThreadForkOriginCanonical.Type,
+      typeof ThreadForkOriginInput.Type
+    >({
+      decode: (input) =>
+        "forkSourceThreadId" in input
+          ? input
+          : {
+              forkSourceThreadId: input.sourceThreadId,
+              forkSourceTurnId: input.sourceTurnId,
+              forkSourceCheckpointTurnCount: input.sourceCheckpointTurnCount,
+              forkedAt: input.forkedAt,
+            },
+      encode: (origin) => origin,
+    }),
+  ),
+);
+export type ThreadForkOrigin = typeof ThreadForkOrigin.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -341,6 +380,7 @@ export const OrchestrationThread = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  forkOrigin: Schema.optional(Schema.NullOr(ThreadForkOrigin)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -387,12 +427,14 @@ export const OrchestrationThreadShell = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  forkOrigin: Schema.optional(Schema.NullOr(ThreadForkOrigin)),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   archivedAt: Schema.NullOr(IsoDateTime).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   session: Schema.NullOr(OrchestrationSession),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
+  hasPendingTurnStart: Schema.optional(Schema.Boolean),
   hasPendingApprovals: Schema.Boolean,
   hasPendingUserInput: Schema.Boolean,
   hasActionableProposedPlan: Schema.Boolean,
@@ -479,6 +521,14 @@ const ProjectDeleteCommand = Schema.Struct({
   force: Schema.optional(Schema.Boolean),
 });
 
+const ProjectWorktreeGroupTitleRegenerateCommand = Schema.Struct({
+  type: Schema.Literal("project.worktree-group-title.regenerate"),
+  commandId: CommandId,
+  projectId: ProjectId,
+  worktreePath: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+
 const ThreadCreateCommand = Schema.Struct({
   type: Schema.Literal("thread.create"),
   commandId: CommandId,
@@ -494,6 +544,48 @@ const ThreadCreateCommand = Schema.Struct({
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
   createdAt: IsoDateTime,
 });
+
+const ThreadForkCommandCanonical = Schema.Struct({
+  type: Schema.Literal("thread.fork"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  forkSourceThreadId: ThreadId,
+  createdAt: IsoDateTime,
+});
+
+const ThreadForkCommandInput = Schema.Union([
+  ThreadForkCommandCanonical,
+  Schema.Struct({
+    type: Schema.Literal("thread.fork"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    sourceThreadId: ThreadId,
+    createdAt: IsoDateTime,
+  }),
+]);
+
+export const ThreadForkCommand = ThreadForkCommandInput.pipe(
+  Schema.decodeTo(
+    Schema.toType(ThreadForkCommandCanonical),
+    SchemaTransformation.transform<
+      typeof ThreadForkCommandCanonical.Type,
+      typeof ThreadForkCommandInput.Type
+    >({
+      decode: (input) =>
+        "forkSourceThreadId" in input
+          ? input
+          : {
+              type: input.type,
+              commandId: input.commandId,
+              threadId: input.threadId,
+              forkSourceThreadId: input.sourceThreadId,
+              createdAt: input.createdAt,
+            },
+      encode: (command) => command,
+    }),
+  ),
+);
+export type ThreadForkCommand = typeof ThreadForkCommand.Type;
 
 const ThreadDeleteCommand = Schema.Struct({
   type: Schema.Literal("thread.delete"),
@@ -649,7 +741,9 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
+  ProjectWorktreeGroupTitleRegenerateCommand,
   ThreadCreateCommand,
+  ThreadForkCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
@@ -670,7 +764,9 @@ export const ClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
   ProjectDeleteCommand,
+  ProjectWorktreeGroupTitleRegenerateCommand,
   ThreadCreateCommand,
+  ThreadForkCommand,
   ThreadDeleteCommand,
   ThreadArchiveCommand,
   ThreadUnarchiveCommand,
@@ -772,7 +868,9 @@ export const OrchestrationEventType = Schema.Literals([
   "project.created",
   "project.meta-updated",
   "project.deleted",
+  "project.worktree-group-title-regeneration-requested",
   "thread.created",
+  "thread.forked",
   "thread.deleted",
   "thread.archived",
   "thread.unarchived",
@@ -824,6 +922,12 @@ export const ProjectDeletedPayload = Schema.Struct({
   deletedAt: IsoDateTime,
 });
 
+export const ProjectWorktreeGroupTitleRegenerationRequestedPayload = Schema.Struct({
+  projectId: ProjectId,
+  worktreePath: TrimmedNonEmptyString,
+  createdAt: IsoDateTime,
+});
+
 export const ThreadCreatedPayload = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
@@ -838,6 +942,28 @@ export const ThreadCreatedPayload = Schema.Struct({
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
+
+export const ThreadForkedPayload = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  modelSelection: ModelSelection,
+  runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_RUNTIME_MODE))),
+  interactionMode: ProviderInteractionMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROVIDER_INTERACTION_MODE)),
+  ),
+  branch: Schema.NullOr(TrimmedNonEmptyString),
+  worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  forkOrigin: ThreadForkOrigin,
+  latestTurn: Schema.NullOr(OrchestrationLatestTurn),
+  messages: Schema.Array(OrchestrationMessage),
+  proposedPlans: Schema.Array(OrchestrationProposedPlan),
+  activities: Schema.Array(OrchestrationThreadActivity),
+  checkpoints: Schema.Array(OrchestrationCheckpointSummary),
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type ThreadForkedPayload = typeof ThreadForkedPayload.Type;
 
 export const ThreadDeletedPayload = Schema.Struct({
   threadId: ThreadId,
@@ -1004,8 +1130,18 @@ export const OrchestrationEvent = Schema.Union([
   }),
   Schema.Struct({
     ...EventBaseFields,
+    type: Schema.Literal("project.worktree-group-title-regeneration-requested"),
+    payload: ProjectWorktreeGroupTitleRegenerationRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
     type: Schema.Literal("thread.created"),
     payload: ThreadCreatedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.forked"),
+    payload: ThreadForkedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

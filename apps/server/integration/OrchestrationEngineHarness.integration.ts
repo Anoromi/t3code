@@ -59,6 +59,7 @@ import {
   type OrchestrationEngineShape,
 } from "../src/orchestration/Services/OrchestrationEngine.ts";
 import { ThreadDeletionReactor } from "../src/orchestration/Services/ThreadDeletionReactor.ts";
+import { WorktreeGroupTitleReactor } from "../src/orchestration/Services/WorktreeGroupTitleReactor.ts";
 import { OrchestrationReactor } from "../src/orchestration/Services/OrchestrationReactor.ts";
 import { ProjectionSnapshotQuery } from "../src/orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
@@ -340,7 +341,11 @@ export const makeOrchestrationIntegrationHarness = (
               hasWorkingTreeChanges: false,
               workingTree: { files: [], insertions: 0, deletions: 0 },
             }),
+          refreshRemoteStatus: () =>
+            Effect.die("refreshRemoteStatus should not be called in this test"),
           refreshStatus: () => Effect.die("refreshStatus should not be called in this test"),
+          refreshStatusLocalFirst: () =>
+            Effect.die("refreshStatusLocalFirst should not be called in this test"),
           streamStatus: () => Stream.empty,
         }),
       ),
@@ -360,6 +365,12 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(checkpointReactorLayer),
       Layer.provideMerge(
         Layer.succeed(ThreadDeletionReactor, {
+          start: () => Effect.void,
+          drain: Effect.void,
+        }),
+      ),
+      Layer.provideMerge(
+        Layer.succeed(WorktreeGroupTitleReactor, {
           start: () => Effect.void,
           drain: Effect.void,
         }),

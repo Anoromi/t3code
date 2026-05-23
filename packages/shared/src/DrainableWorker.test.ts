@@ -2,8 +2,9 @@ import { it } from "@effect/vitest";
 import { describe, expect } from "vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Ref from "effect/Ref";
 
-import { makeDrainableWorker } from "./DrainableWorker.ts";
+import { makeDrainableWorker, makeKeyedDrainableWorker } from "./DrainableWorker.ts";
 
 describe("makeDrainableWorker", () => {
   it.live("waits for work enqueued during active processing before draining", () =>
@@ -51,6 +52,67 @@ describe("makeDrainableWorker", () => {
         yield* Deferred.await(drained);
 
         expect(processed).toEqual(["first", "second"]);
+      }),
+    ),
+  );
+});
+
+describe("makeKeyedDrainableWorker", () => {
+  it.live("processes same-key items sequentially and different keys concurrently", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const processed: string[] = [];
+        const firstAStarted = yield* Deferred.make<void>();
+        const releaseFirstA = yield* Deferred.make<void>();
+        const bStarted = yield* Deferred.make<void>();
+
+        const worker = yield* makeKeyedDrainableWorker({
+          key: (item: { key: string; value: string }) => item.key,
+          process: (item) =>
+            Effect.gen(function* () {
+              if (item.value === "a1") {
+                yield* Deferred.succeed(firstAStarted, undefined).pipe(Effect.orDie);
+                yield* Deferred.await(releaseFirstA);
+              }
+              if (item.value === "b1") {
+                processed.push(item.value);
+                yield* Deferred.succeed(bStarted, undefined).pipe(Effect.orDie);
+                return;
+              }
+              processed.push(item.value);
+            }),
+        });
+
+        yield* worker.enqueue({ key: "a", value: "a1" });
+        yield* Deferred.await(firstAStarted);
+        yield* worker.enqueue({ key: "a", value: "a2" });
+        yield* worker.enqueue({ key: "b", value: "b1" });
+        yield* Deferred.await(bStarted);
+
+        expect(processed).toEqual(["b1"]);
+
+        yield* Deferred.succeed(releaseFirstA, undefined);
+        yield* worker.drain;
+
+        expect(processed).toEqual(["b1", "a1", "a2"]);
+      }),
+    ),
+  );
+
+  it.live("drains after failures decrement outstanding work", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const attempts = yield* Ref.make(0);
+        const worker = yield* makeKeyedDrainableWorker({
+          key: (item: string) => item,
+          process: () =>
+            Ref.update(attempts, (count) => count + 1).pipe(Effect.andThen(Effect.die("boom"))),
+        });
+
+        yield* worker.enqueue("a");
+        yield* worker.drain;
+
+        expect(yield* Ref.get(attempts)).toBe(1);
       }),
     ),
   );

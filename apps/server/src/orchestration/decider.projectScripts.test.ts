@@ -1,11 +1,13 @@
 import {
   CommandId,
+  CheckpointRef,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   MessageId,
   ProjectId,
   ThreadId,
   ProviderInstanceId,
+  TurnId,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { describe, expect, it } from "vitest";
@@ -17,8 +19,150 @@ import { createEmptyReadModel, projectEvent } from "./projector.ts";
 const asEventId = (value: string): EventId => EventId.make(value);
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
+const asThreadId = (value: string): ThreadId => ThreadId.make(value);
+const asTurnId = (value: string): TurnId => TurnId.make(value);
+const asCheckpointRef = (value: string): CheckpointRef => CheckpointRef.make(value);
 
 describe("decider project scripts", () => {
+  it("remaps globally keyed fork history ids", async () => {
+    const now = "2026-01-01T00:00:00.000Z";
+    const projectId = asProjectId("project-fork");
+    const sourceThreadId = asThreadId("thread-source");
+    const forkThreadId = asThreadId("thread-fork");
+    const sourceAssistantMessageId = asMessageId("message-assistant-source");
+    const sourcePlanId = "plan-source";
+    const sourceActivityId = asEventId("activity-source");
+
+    const readModel = {
+      ...createEmptyReadModel(now),
+      projects: [
+        {
+          id: projectId,
+          title: "Project",
+          workspaceRoot: "/tmp/project",
+          defaultModelSelection: null,
+          scripts: [],
+          worktreeGroupTitles: [],
+          createdAt: now,
+          updatedAt: now,
+          deletedAt: null,
+        },
+      ],
+      threads: [
+        {
+          id: sourceThreadId,
+          projectId,
+          title: "Source",
+          modelSelection: {
+            instanceId: ProviderInstanceId.make("codex"),
+            model: "gpt-5-codex",
+          },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required" as const,
+          branch: "feature/source",
+          worktreePath: "/tmp/project/.worktrees/source",
+          forkOrigin: null,
+          latestTurn: {
+            turnId: asTurnId("turn-source"),
+            state: "completed" as const,
+            requestedAt: now,
+            startedAt: now,
+            completedAt: now,
+            assistantMessageId: sourceAssistantMessageId,
+            sourceProposedPlan: {
+              threadId: sourceThreadId,
+              planId: sourcePlanId,
+            },
+          },
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          deletedAt: null,
+          messages: [
+            {
+              id: sourceAssistantMessageId,
+              role: "assistant" as const,
+              text: "Implemented it.",
+              attachments: [],
+              turnId: asTurnId("turn-source"),
+              streaming: false,
+              createdAt: now,
+              updatedAt: now,
+            },
+          ],
+          proposedPlans: [
+            {
+              id: sourcePlanId,
+              turnId: asTurnId("turn-source"),
+              planMarkdown: "Plan",
+              implementedAt: now,
+              implementationThreadId: sourceThreadId,
+              createdAt: now,
+              updatedAt: now,
+            },
+          ],
+          activities: [
+            {
+              id: sourceActivityId,
+              tone: "info" as const,
+              kind: "turn.completed",
+              summary: "completed",
+              payload: {},
+              turnId: asTurnId("turn-source"),
+              createdAt: now,
+            },
+          ],
+          checkpoints: [
+            {
+              turnId: asTurnId("turn-source"),
+              checkpointTurnCount: 1,
+              checkpointRef: asCheckpointRef("checkpoint-source"),
+              status: "ready" as const,
+              files: [],
+              assistantMessageId: sourceAssistantMessageId,
+              completedAt: now,
+            },
+          ],
+          session: null,
+        },
+      ],
+    };
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "thread.fork",
+          commandId: CommandId.make("cmd-thread-fork"),
+          threadId: forkThreadId,
+          forkSourceThreadId: sourceThreadId,
+          createdAt: now,
+        },
+        readModel,
+      }),
+    );
+
+    const event = Array.isArray(result) ? result[0] : result;
+    expect(event.type).toBe("thread.forked");
+    if (event.type !== "thread.forked") {
+      return;
+    }
+
+    const forkMessage = event.payload.messages[0];
+    const forkPlan = event.payload.proposedPlans[0];
+    const forkActivity = event.payload.activities[0];
+
+    expect(forkMessage?.id).not.toBe(sourceAssistantMessageId);
+    expect(forkPlan?.id).not.toBe(sourcePlanId);
+    expect(forkActivity?.id).not.toBe(sourceActivityId);
+    expect(event.payload.latestTurn?.assistantMessageId).toBe(forkMessage?.id);
+    expect(event.payload.latestTurn?.sourceProposedPlan).toEqual({
+      threadId: forkThreadId,
+      planId: forkPlan?.id,
+    });
+    expect(event.payload.checkpoints[0]?.assistantMessageId).toBe(forkMessage?.id);
+    expect(forkPlan?.implementationThreadId).toBe(forkThreadId);
+  });
+
   it("emits empty scripts on project.create", async () => {
     const now = "2026-01-01T00:00:00.000Z";
     const readModel = createEmptyReadModel(now);
@@ -40,6 +184,50 @@ describe("decider project scripts", () => {
     const event = Array.isArray(result) ? result[0] : result;
     expect(event.type).toBe("project.created");
     expect((event.payload as { scripts: unknown[] }).scripts).toEqual([]);
+  });
+
+  it("emits worktree group title regeneration requests", async () => {
+    const now = "2026-01-01T00:00:00.000Z";
+    const projectId = asProjectId("project-worktree-title");
+    const readModel = {
+      ...createEmptyReadModel(now),
+      projects: [
+        {
+          id: projectId,
+          title: "Project",
+          workspaceRoot: "/tmp/project",
+          defaultModelSelection: null,
+          scripts: [],
+          worktreeGroupTitles: [],
+          createdAt: now,
+          updatedAt: now,
+          deletedAt: null,
+        },
+      ],
+    };
+
+    const result = await Effect.runPromise(
+      decideOrchestrationCommand({
+        command: {
+          type: "project.worktree-group-title.regenerate",
+          commandId: CommandId.make("cmd-worktree-title-regenerate"),
+          projectId,
+          worktreePath: "/tmp/project/.worktrees/feature",
+          createdAt: now,
+        },
+        readModel,
+      }),
+    );
+
+    const event = Array.isArray(result) ? result[0] : result;
+    expect(event).toMatchObject({
+      type: "project.worktree-group-title-regeneration-requested",
+      payload: {
+        projectId,
+        worktreePath: "/tmp/project/.worktrees/feature",
+        createdAt: now,
+      },
+    });
   });
 
   it("propagates scripts in project.meta.update payload", async () => {

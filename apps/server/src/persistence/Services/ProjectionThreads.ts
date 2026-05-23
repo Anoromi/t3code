@@ -32,6 +32,10 @@ export const ProjectionThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
+  forkSourceThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  forkSourceTurnId: Schema.optional(Schema.NullOr(TurnId)),
+  forkSourceCheckpointTurnCount: Schema.optional(Schema.NullOr(NonNegativeInt)),
+  forkedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   latestTurnId: Schema.NullOr(TurnId),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -40,6 +44,7 @@ export const ProjectionThread = Schema.Struct({
   pendingApprovalCount: NonNegativeInt,
   pendingUserInputCount: NonNegativeInt,
   hasActionableProposedPlan: NonNegativeInt,
+  pendingTurnStartCount: Schema.optional(NonNegativeInt),
   deletedAt: Schema.NullOr(IsoDateTime),
 });
 export type ProjectionThread = typeof ProjectionThread.Type;

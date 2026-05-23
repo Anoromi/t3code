@@ -9,6 +9,7 @@ import { CheckpointReactor } from "../Services/CheckpointReactor.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import { ProviderRuntimeIngestionService } from "../Services/ProviderRuntimeIngestion.ts";
 import { ThreadDeletionReactor } from "../Services/ThreadDeletionReactor.ts";
+import { WorktreeGroupTitleReactor } from "../Services/WorktreeGroupTitleReactor.ts";
 import { OrchestrationReactor } from "../Services/OrchestrationReactor.ts";
 import { makeOrchestrationReactor } from "./OrchestrationReactor.ts";
 
@@ -22,7 +23,7 @@ describe("OrchestrationReactor", () => {
     runtime = null;
   });
 
-  it("starts provider ingestion, provider command, checkpoint, and thread deletion reactors", async () => {
+  it("starts provider ingestion, provider command, checkpoint, thread deletion, and worktree title reactors", async () => {
     const started: string[] = [];
 
     runtime = ManagedRuntime.make(
@@ -63,6 +64,15 @@ describe("OrchestrationReactor", () => {
             drain: Effect.void,
           }),
         ),
+        Layer.provideMerge(
+          Layer.succeed(WorktreeGroupTitleReactor, {
+            start: () => {
+              started.push("worktree-group-title-reactor");
+              return Effect.void;
+            },
+            drain: Effect.void,
+          }),
+        ),
       ),
     );
 
@@ -75,6 +85,7 @@ describe("OrchestrationReactor", () => {
       "provider-command-reactor",
       "checkpoint-reactor",
       "thread-deletion-reactor",
+      "worktree-group-title-reactor",
     ]);
 
     await Effect.runPromise(Scope.close(scope, Exit.void));

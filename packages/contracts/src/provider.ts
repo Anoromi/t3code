@@ -1,4 +1,6 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   ApprovalRequestId,
@@ -76,6 +78,38 @@ export const ProviderSendTurnInput = Schema.Struct({
   interactionMode: Schema.optional(ProviderInteractionMode),
 });
 export type ProviderSendTurnInput = typeof ProviderSendTurnInput.Type;
+
+const ProviderThreadForkInputCanonical = Schema.Struct({
+  forkSourceThreadId: ThreadId,
+  targetThreadId: ThreadId,
+});
+
+const ProviderThreadForkInputSource = Schema.Union([
+  ProviderThreadForkInputCanonical,
+  Schema.Struct({
+    sourceThreadId: ThreadId,
+    targetThreadId: ThreadId,
+  }),
+]);
+
+export const ProviderThreadForkInput = ProviderThreadForkInputSource.pipe(
+  Schema.decodeTo(
+    Schema.toType(ProviderThreadForkInputCanonical),
+    SchemaTransformation.transformOrFail({
+      decode: (input) =>
+        Effect.succeed(
+          "forkSourceThreadId" in input
+            ? input
+            : {
+                forkSourceThreadId: input.sourceThreadId,
+                targetThreadId: input.targetThreadId,
+              },
+        ),
+      encode: (input) => Effect.succeed(input),
+    }),
+  ),
+);
+export type ProviderThreadForkInput = typeof ProviderThreadForkInput.Type;
 
 export const ProviderTurnStartResult = Schema.Struct({
   threadId: ThreadId,

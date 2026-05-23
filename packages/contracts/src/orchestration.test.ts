@@ -18,6 +18,8 @@ import {
   OrchestrationSession,
   ProjectCreateCommand,
   ThreadMetaUpdatedPayload,
+  ThreadForkCommand,
+  ThreadForkOrigin,
   ThreadTurnStartCommand,
   ThreadCreatedPayload,
   ThreadTurnDiff,
@@ -32,6 +34,10 @@ const decodeProjectCreateCommand = Schema.decodeUnknownEffect(ProjectCreateComma
 const decodeProjectCreatedPayload = Schema.decodeUnknownEffect(ProjectCreatedPayload);
 const decodeProjectMetaUpdatedPayload = Schema.decodeUnknownEffect(ProjectMetaUpdatedPayload);
 const decodeThreadTurnStartCommand = Schema.decodeUnknownEffect(ThreadTurnStartCommand);
+const decodeThreadForkCommand = Schema.decodeUnknownEffect(ThreadForkCommand);
+const encodeThreadForkCommand = Schema.encodeEffect(ThreadForkCommand);
+const decodeThreadForkOrigin = Schema.decodeUnknownEffect(ThreadForkOrigin);
+const encodeThreadForkOrigin = Schema.encodeEffect(ThreadForkOrigin);
 const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
   ThreadTurnStartRequestedPayload,
 );
@@ -220,6 +226,90 @@ it.effect("decodes thread.turn.start defaults for provider and runtime mode", ()
     assert.strictEqual(parsed.modelSelection, undefined);
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
     assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
+  }),
+);
+
+it.effect("decodes canonical fork origin fields and encodes forkSource names", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadForkOrigin({
+      forkSourceThreadId: "thread-source",
+      forkSourceTurnId: "turn-source",
+      forkSourceCheckpointTurnCount: 3,
+      forkedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.deepStrictEqual(parsed, {
+      forkSourceThreadId: "thread-source",
+      forkSourceTurnId: "turn-source",
+      forkSourceCheckpointTurnCount: 3,
+      forkedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.deepStrictEqual(yield* encodeThreadForkOrigin(parsed), parsed);
+  }),
+);
+
+it.effect("decodes legacy fork origin source fields into forkSource names", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadForkOrigin({
+      sourceThreadId: "thread-source",
+      sourceTurnId: null,
+      sourceCheckpointTurnCount: null,
+      forkedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.deepStrictEqual(parsed, {
+      forkSourceThreadId: "thread-source",
+      forkSourceTurnId: null,
+      forkSourceCheckpointTurnCount: null,
+      forkedAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.deepStrictEqual(yield* encodeThreadForkOrigin(parsed), {
+      forkSourceThreadId: "thread-source",
+      forkSourceTurnId: null,
+      forkSourceCheckpointTurnCount: null,
+      forkedAt: "2026-01-01T00:00:00.000Z",
+    });
+  }),
+);
+
+it.effect("decodes thread.fork commands with canonical forkSourceThreadId", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadForkCommand({
+      type: "thread.fork",
+      commandId: "cmd-fork",
+      threadId: "thread-target",
+      forkSourceThreadId: "thread-source",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.forkSourceThreadId, "thread-source");
+    assert.deepStrictEqual(yield* encodeThreadForkCommand(parsed), {
+      type: "thread.fork",
+      commandId: "cmd-fork",
+      threadId: "thread-target",
+      forkSourceThreadId: "thread-source",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+  }),
+);
+
+it.effect("decodes legacy thread.fork sourceThreadId commands into forkSourceThreadId", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadForkCommand({
+      type: "thread.fork",
+      commandId: "cmd-fork",
+      threadId: "thread-target",
+      sourceThreadId: "thread-source",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.deepStrictEqual(parsed, {
+      type: "thread.fork",
+      commandId: "cmd-fork",
+      threadId: "thread-target",
+      forkSourceThreadId: "thread-source",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
   }),
 );
 

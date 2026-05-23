@@ -602,7 +602,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
 
       const refreshGitStatus = (cwd: string) =>
         vcsStatusBroadcaster
-          .refreshStatus(cwd)
+          .refreshStatusLocalFirst(cwd)
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       return WsRpcGroup.of({

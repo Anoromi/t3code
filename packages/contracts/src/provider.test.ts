@@ -6,12 +6,14 @@ import {
   ProviderSendTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
+  ProviderThreadForkInput,
 } from "./provider.ts";
 
 const decodeProviderSessionStartInput = Schema.decodeUnknownSync(ProviderSessionStartInput);
 const decodeProviderSendTurnInput = Schema.decodeUnknownSync(ProviderSendTurnInput);
 const decodeProviderSession = Schema.decodeUnknownSync(ProviderSession);
 const decodeProviderEvent = Schema.decodeUnknownSync(ProviderEvent);
+const decodeProviderThreadForkInput = Schema.decodeUnknownSync(ProviderThreadForkInput);
 
 function getOptionValue(
   options: ReadonlyArray<{ id: string; value: unknown }> | undefined,
@@ -150,6 +152,32 @@ describe("ProviderSendTurnInput", () => {
     expect(parsed.modelSelection?.instanceId).toBe("claudeAgent");
     expect(getOptionValue(parsed.modelSelection?.options, "effort")).toBe("ultrathink");
     expect(getOptionValue(parsed.modelSelection?.options, "fastMode")).toBe(true);
+  });
+});
+
+describe("ProviderThreadForkInput", () => {
+  it("decodes canonical forkSourceThreadId", () => {
+    const parsed = decodeProviderThreadForkInput({
+      forkSourceThreadId: "thread-source",
+      targetThreadId: "thread-target",
+    });
+
+    expect(parsed).toEqual({
+      forkSourceThreadId: "thread-source",
+      targetThreadId: "thread-target",
+    });
+  });
+
+  it("decodes legacy sourceThreadId into forkSourceThreadId", () => {
+    const parsed = decodeProviderThreadForkInput({
+      sourceThreadId: "thread-source",
+      targetThreadId: "thread-target",
+    });
+
+    expect(parsed).toEqual({
+      forkSourceThreadId: "thread-source",
+      targetThreadId: "thread-target",
+    });
   });
 });
 

@@ -1,3 +1,4 @@
+// @effect-diagnostics anyUnknownInErrorContext:off
 // @effect-diagnostics-next-line nodeBuiltinImport:off - NodeHttpServer.layer takes `NodeHttp.createServer` as arg
 import * as NodeHttp from "node:http";
 import { mkdtempSync } from "node:fs";

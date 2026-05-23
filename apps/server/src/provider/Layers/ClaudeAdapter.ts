@@ -31,11 +31,11 @@ import {
   ProviderInstanceId,
   ProviderItemId,
   type ProviderRuntimeEvent,
-  type ProviderRuntimeTurnStatus,
   type ProviderSendTurnInput,
   type ProviderSession,
   type ThreadTokenUsageSnapshot,
   type ProviderUserInputAnswers,
+  type RuntimeTurnState,
   type RuntimeContentStreamKind,
   RuntimeItemId,
   RuntimeRequestId,
@@ -699,7 +699,7 @@ const buildUserMessageEffect = Effect.fn("buildUserMessageEffect")(function* (
   return buildUserMessage({ sdkContent });
 });
 
-function turnStatusFromResult(result: SDKResultMessage): ProviderRuntimeTurnStatus {
+function turnStatusFromResult(result: SDKResultMessage): RuntimeTurnState {
   if (result.subtype === "success") {
     return "completed";
   }
@@ -1421,7 +1421,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
 
   const completeTurn = Effect.fn("completeTurn")(function* (
     context: ClaudeSessionContext,
-    status: ProviderRuntimeTurnStatus,
+    status: RuntimeTurnState,
     errorMessage?: string,
     result?: SDKResultMessage,
   ) {

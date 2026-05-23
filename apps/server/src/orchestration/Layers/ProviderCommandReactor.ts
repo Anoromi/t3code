@@ -3,6 +3,7 @@ import {
   CommandId,
   EventId,
   type ModelSelection,
+  MessageId,
   type OrchestrationEvent,
   ProviderDriverKind,
   type ProjectId,
@@ -22,7 +23,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
+import * as TxRef from "effect/TxRef";
+import { makeKeyedDrainableWorker } from "@t3tools/shared/DrainableWorker";
 
 import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { increment, orchestrationEventsProcessedTotal } from "../../observability/Metrics.ts";
@@ -55,6 +57,10 @@ type ProviderIntentEvent = Extract<
   }
 >;
 
+interface QueuedProviderIntentEvent {
+  readonly event: ProviderIntentEvent;
+}
+
 function toNonEmptyProviderInput(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : undefined;
@@ -83,6 +89,8 @@ const turnStartKeyForEvent = (event: ProviderIntentEvent): string =>
 
 const serverCommandId = (tag: string): CommandId =>
   CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
+const serverMessageId = (tag: string): MessageId =>
+  MessageId.make(`server:${tag}:${crypto.randomUUID()}`);
 
 const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
@@ -142,9 +150,39 @@ function isUnknownPendingApprovalRequestError(cause: Cause.Cause<ProviderService
 function isUnknownPendingUserInputRequestError(cause: Cause.Cause<ProviderServiceError>): boolean {
   const error = findProviderAdapterRequestError(cause);
   if (error) {
-    return error.detail.toLowerCase().includes("unknown pending user-input request");
+    const detail = error.detail.toLowerCase();
+    return (
+      detail.includes("unknown pending user-input request") ||
+      detail.includes("unknown pending user input request") ||
+      detail.includes("unknown pending codex user input request")
+    );
   }
-  return Cause.pretty(cause).toLowerCase().includes("unknown pending user-input request");
+  const message = Cause.pretty(cause).toLowerCase();
+  return (
+    message.includes("unknown pending user-input request") ||
+    message.includes("unknown pending user input request") ||
+    message.includes("unknown pending codex user input request")
+  );
+}
+
+function formatRecoveredUserInputMessage(input: {
+  readonly requestId: string;
+  readonly answers: Readonly<Record<string, unknown>>;
+}): string {
+  const lines = [
+    "Answering the previous user-input request after the app restarted and the original provider callback was lost.",
+    "",
+    `Request: ${input.requestId}`,
+    "",
+    "Answers:",
+  ];
+
+  for (const [key, value] of Object.entries(input.answers)) {
+    const formatted = Array.isArray(value) ? value.join(", ") : String(value ?? "");
+    lines.push(`- ${key}: ${formatted}`);
+  }
+
+  return lines.join("\n");
 }
 
 function stalePendingRequestDetail(
@@ -199,6 +237,7 @@ const make = Effect.gen(function* () {
     );
 
   const threadModelSelections = new Map<string, ModelSelection>();
+  const backgroundSessionProjectionCount = yield* TxRef.make(0);
 
   const appendProviderFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -297,6 +336,7 @@ const make = Effect.gen(function* () {
     createdAt: string,
     options?: {
       readonly modelSelection?: ModelSelection;
+      readonly projectSession?: "await" | "background";
     },
   ) {
     const thread = yield* resolveThread(threadId);
@@ -306,15 +346,25 @@ const make = Effect.gen(function* () {
 
     const desiredRuntimeMode = thread.runtimeMode;
     const requestedModelSelection = options?.modelSelection;
-    const resolveActiveSession = (threadId: ThreadId) =>
-      providerService
-        .listSessions()
-        .pipe(Effect.map((sessions) => sessions.find((session) => session.threadId === threadId)));
-
-    const activeSession = yield* resolveActiveSession(threadId);
+    const activeSession = Option.getOrUndefined(
+      yield* providerService.getActiveSessionForThread(threadId),
+    );
+    const projectedThreadSession =
+      thread.session !== null && thread.session.status !== "stopped" ? thread.session : null;
     const activeThreadSession =
-      thread.session !== null && thread.session.status !== "stopped" && activeSession
-        ? thread.session
+      activeSession !== undefined
+        ? (projectedThreadSession ?? {
+            threadId,
+            status: mapProviderSessionStatusToOrchestrationStatus(activeSession.status),
+            providerName: activeSession.provider,
+            ...(activeSession.providerInstanceId !== undefined
+              ? { providerInstanceId: activeSession.providerInstanceId }
+              : {}),
+            runtimeMode: activeSession.runtimeMode ?? desiredRuntimeMode,
+            activeTurnId: null,
+            lastError: activeSession.lastError ?? null,
+            updatedAt: activeSession.updatedAt,
+          })
         : null;
     if (
       activeThreadSession !== null &&
@@ -333,7 +383,9 @@ const make = Effect.gen(function* () {
       activeSession !== undefined &&
       activeSession.providerInstanceId !== undefined
         ? activeSession.providerInstanceId
-        : thread.modelSelection.instanceId;
+        : thread.session?.providerInstanceId !== undefined
+          ? thread.session.providerInstanceId
+          : thread.modelSelection.instanceId;
     const desiredModelSelection = requestedModelSelection ?? thread.modelSelection;
     const desiredInstanceId = desiredModelSelection.instanceId;
     const currentInfo = yield* providerService.getInstanceInfo(currentInstanceId).pipe(
@@ -372,7 +424,7 @@ const make = Effect.gen(function* () {
     }
     const preferredProvider: ProviderDriverKind = desiredDriverKind;
     if (
-      thread.session !== null &&
+      (thread.session !== null || activeThreadSession !== null) &&
       requestedModelSelection !== undefined &&
       requestedModelSelection.instanceId !== currentInstanceId
     ) {
@@ -439,11 +491,29 @@ const make = Effect.gen(function* () {
           createdAt,
         });
       });
+    const projectSessionToThread = (session: ProviderSession) => {
+      const projection = bindSessionToThread(session).pipe(Effect.catchCause(() => Effect.void));
+      return options?.projectSession === "background"
+        ? TxRef.update(backgroundSessionProjectionCount, (count) => count + 1).pipe(
+            Effect.tx,
+            Effect.andThen(
+              projection.pipe(
+                Effect.ensuring(
+                  TxRef.update(backgroundSessionProjectionCount, (count) => count - 1).pipe(
+                    Effect.tx,
+                  ),
+                ),
+                Effect.forkDetach({ startImmediately: true }),
+                Effect.asVoid,
+              ),
+            ),
+          )
+        : projection;
+    };
 
-    const existingSessionThreadId =
-      thread.session && thread.session.status !== "stopped" && activeSession ? thread.id : null;
-    if (existingSessionThreadId) {
-      const runtimeModeChanged = thread.runtimeMode !== thread.session?.runtimeMode;
+    if (activeThreadSession !== null && activeSession !== undefined) {
+      const existingSessionThreadId = thread.id;
+      const runtimeModeChanged = thread.runtimeMode !== activeThreadSession.runtimeMode;
       const cwdChanged = effectiveCwd !== activeSession?.cwd;
       const sessionModelSwitch = (yield* providerService.getCapabilities(desiredInstanceId))
         .sessionModelSwitch;
@@ -480,7 +550,7 @@ const make = Effect.gen(function* () {
         currentInstanceId,
         desiredInstanceId,
         desiredProvider: desiredModelSelection.instanceId,
-        currentRuntimeMode: thread.session?.runtimeMode,
+        currentRuntimeMode: activeThreadSession.runtimeMode,
         desiredRuntimeMode: thread.runtimeMode,
         runtimeModeChanged,
         previousCwd: activeSession?.cwd,
@@ -503,12 +573,12 @@ const make = Effect.gen(function* () {
         runtimeMode: restartedSession.runtimeMode,
         cwd: restartedSession.cwd,
       });
-      yield* bindSessionToThread(restartedSession);
+      yield* projectSessionToThread(restartedSession);
       return restartedSession.threadId;
     }
 
     const startedSession = yield* startProviderSession(undefined);
-    yield* bindSessionToThread(startedSession);
+    yield* projectSessionToThread(startedSession);
     return startedSession.threadId;
   });
 
@@ -529,18 +599,18 @@ const make = Effect.gen(function* () {
     yield* ensureSessionForThread(
       input.threadId,
       input.createdAt,
-      input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {},
+      input.modelSelection !== undefined
+        ? { modelSelection: input.modelSelection, projectSession: "background" }
+        : { projectSession: "background" },
     );
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
     }
     const normalizedInput = toNonEmptyProviderInput(input.messageText);
     const normalizedAttachments = input.attachments ?? [];
-    const activeSession = yield* providerService
-      .listSessions()
-      .pipe(
-        Effect.map((sessions) => sessions.find((session) => session.threadId === input.threadId)),
-      );
+    const activeSession = Option.getOrUndefined(
+      yield* providerService.getActiveSessionForThread(input.threadId),
+    );
     const sessionModelSwitch =
       activeSession === undefined
         ? "in-session"
@@ -615,7 +685,9 @@ const make = Effect.gen(function* () {
         branch: renamed.branch,
         worktreePath: cwd,
       });
-      yield* vcsStatusBroadcaster.refreshStatus(cwd).pipe(Effect.ignoreCause({ log: true }));
+      yield* vcsStatusBroadcaster
+        .refreshStatusLocalFirst(cwd)
+        .pipe(Effect.ignoreCause({ log: true }));
     }).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("provider command reactor failed to generate or rename worktree branch", {
@@ -784,9 +856,31 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    yield* providerService
-      .sendTurn(sendTurnRequest.value)
-      .pipe(Effect.catchCause(recoverTurnStartFailure), Effect.forkScoped);
+    yield* providerService.sendTurn(sendTurnRequest.value).pipe(
+      Effect.tap((turn) =>
+        resolveThread(event.payload.threadId).pipe(
+          Effect.flatMap((updatedThread) => {
+            const session = updatedThread?.session;
+            if (!session || session.status === "stopped") {
+              return Effect.void;
+            }
+            return setThreadSession({
+              threadId: event.payload.threadId,
+              session: {
+                ...session,
+                status: "running",
+                activeTurnId: turn.turnId,
+                lastError: null,
+                updatedAt: event.payload.createdAt,
+              },
+              createdAt: event.payload.createdAt,
+            });
+          }),
+        ),
+      ),
+      Effect.catchCause(recoverTurnStartFailure),
+      Effect.forkScoped,
+    );
   });
 
   const processTurnInterruptRequested = Effect.fn("processTurnInterruptRequested")(function* (
@@ -809,7 +903,35 @@ const make = Effect.gen(function* () {
     }
 
     // Orchestration turn ids are not provider turn ids, so interrupt by session.
-    yield* providerService.interruptTurn({ threadId: event.payload.threadId });
+    yield* providerService.interruptTurn({ threadId: event.payload.threadId }).pipe(
+      Effect.catchCause((cause) =>
+        appendProviderFailureActivity({
+          threadId: event.payload.threadId,
+          kind: "provider.turn.interrupt.failed",
+          summary: "Provider turn interrupt failed",
+          detail: formatFailureDetail(cause),
+          turnId: event.payload.turnId ?? null,
+          createdAt: event.payload.createdAt,
+        }),
+      ),
+    );
+
+    yield* setThreadSession({
+      threadId: thread.id,
+      session: {
+        threadId: thread.id,
+        status: "stopped",
+        providerName: thread.session?.providerName ?? null,
+        ...(thread.session?.providerInstanceId !== undefined
+          ? { providerInstanceId: thread.session.providerInstanceId }
+          : {}),
+        runtimeMode: thread.session?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+        activeTurnId: null,
+        lastError: thread.session?.lastError ?? null,
+        updatedAt: event.payload.createdAt,
+      },
+      createdAt: event.payload.createdAt,
+    });
   });
 
   const processApprovalResponseRequested = Effect.fn("processApprovalResponseRequested")(function* (
@@ -883,19 +1005,43 @@ const make = Effect.gen(function* () {
           answers: event.payload.answers,
         })
         .pipe(
-          Effect.catchCause((cause) =>
-            appendProviderFailureActivity({
+          Effect.catchCause((cause) => {
+            const isStalePendingRequest = isUnknownPendingUserInputRequestError(cause);
+            const detail = isStalePendingRequest
+              ? stalePendingRequestDetail("user-input", event.payload.requestId)
+              : Cause.pretty(cause);
+            return appendProviderFailureActivity({
               threadId: event.payload.threadId,
               kind: "provider.user-input.respond.failed",
               summary: "Provider user input response failed",
-              detail: isUnknownPendingUserInputRequestError(cause)
-                ? stalePendingRequestDetail("user-input", event.payload.requestId)
-                : Cause.pretty(cause),
+              detail,
               turnId: null,
               createdAt: event.payload.createdAt,
               requestId: event.payload.requestId,
-            }),
-          ),
+            }).pipe(
+              Effect.flatMap(() =>
+                isStalePendingRequest
+                  ? orchestrationEngine.dispatch({
+                      type: "thread.turn.start",
+                      commandId: serverCommandId("user-input-recovery-turn-start"),
+                      threadId: event.payload.threadId,
+                      message: {
+                        messageId: serverMessageId("user-input-recovery"),
+                        role: "user",
+                        text: formatRecoveredUserInputMessage({
+                          requestId: event.payload.requestId,
+                          answers: event.payload.answers,
+                        }),
+                        attachments: [],
+                      },
+                      runtimeMode: thread.runtimeMode,
+                      interactionMode: thread.interactionMode,
+                      createdAt: event.payload.createdAt,
+                    })
+                  : Effect.void,
+              ),
+            );
+          }),
         );
     },
   );
@@ -987,7 +1133,15 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const worker = yield* makeDrainableWorker(processDomainEventSafely);
+  const worker = yield* makeKeyedDrainableWorker({
+    key: (item: QueuedProviderIntentEvent) => item.event.payload.threadId,
+    maxConcurrentKeys: 8,
+    process: (item) => processDomainEventSafely(item.event),
+  });
+  const drainBackgroundSessionProjections = TxRef.get(backgroundSessionProjectionCount).pipe(
+    Effect.tap((count) => (count > 0 ? Effect.txRetry : Effect.void)),
+    Effect.tx,
+  );
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
@@ -999,7 +1153,7 @@ const make = Effect.gen(function* () {
         event.type === "thread.user-input-response-requested" ||
         event.type === "thread.session-stop-requested"
       ) {
-        return yield* worker.enqueue(event);
+        return yield* worker.enqueue({ event });
       }
     });
 
@@ -1010,7 +1164,7 @@ const make = Effect.gen(function* () {
 
   return {
     start,
-    drain: worker.drain,
+    drain: worker.drain.pipe(Effect.andThen(drainBackgroundSessionProjections)),
   } satisfies ProviderCommandReactorShape;
 });
 

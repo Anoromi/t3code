@@ -11,6 +11,7 @@ import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
+import { makeKeyedDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import type {
   GitManagerServiceError,
   VcsStatusInput,
@@ -72,7 +73,13 @@ export interface VcsStatusBroadcasterShape {
   readonly refreshLocalStatus: (
     cwd: string,
   ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
+  readonly refreshRemoteStatus: (
+    cwd: string,
+  ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
   readonly refreshStatus: (cwd: string) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
+  readonly refreshStatusLocalFirst: (
+    cwd: string,
+  ) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
   readonly streamStatus: (
     input: VcsStatusInput,
     options?: StreamStatusOptions,
@@ -108,6 +115,7 @@ export const layer = Layer.effect(
     );
     const cacheRef = yield* Ref.make(new Map<string, CachedVcsStatus>());
     const pollersRef = yield* SynchronizedRef.make(new Map<string, ActiveRemotePoller>());
+    const queuedRemoteRefreshes = yield* Ref.make(new Set<string>());
 
     const getCachedStatus = Effect.fn("VcsStatusBroadcaster.getCachedStatus")(function* (
       cwd: string,
@@ -243,6 +251,38 @@ export const layer = Layer.effect(
       return yield* updateCachedRemoteStatus(cwd, remote, { publish: true });
     });
 
+    const remoteRefreshWorker = yield* makeKeyedDrainableWorker({
+      key: (cwd: string) => cwd,
+      maxConcurrentKeys: 2,
+      process: (cwd) =>
+        refreshRemoteStatus(cwd).pipe(
+          Effect.catch(() => Effect.void),
+          Effect.ensuring(
+            Ref.update(queuedRemoteRefreshes, (pending) => {
+              const next = new Set(pending);
+              next.delete(cwd);
+              return next;
+            }),
+          ),
+        ),
+    });
+
+    const enqueueRemoteRefresh = Effect.fn("VcsStatusBroadcaster.enqueueRemoteRefresh")(function* (
+      cwd: string,
+    ) {
+      const shouldEnqueue = yield* Ref.modify(queuedRemoteRefreshes, (pending) => {
+        if (pending.has(cwd)) {
+          return [false, pending] as const;
+        }
+        const next = new Set(pending);
+        next.add(cwd);
+        return [true, next] as const;
+      });
+      if (shouldEnqueue) {
+        yield* remoteRefreshWorker.enqueue(cwd);
+      }
+    });
+
     const refreshStatus: VcsStatusBroadcasterShape["refreshStatus"] = Effect.fn(
       "VcsStatusBroadcaster.refreshStatus",
     )(function* (rawCwd) {
@@ -251,6 +291,16 @@ export const layer = Layer.effect(
         refreshLocalStatus(cwd),
         refreshRemoteStatus(cwd),
       ]);
+      return mergeGitStatusParts(local, remote);
+    });
+
+    const refreshStatusLocalFirst: VcsStatusBroadcasterShape["refreshStatusLocalFirst"] = Effect.fn(
+      "VcsStatusBroadcaster.refreshStatusLocalFirst",
+    )(function* (rawCwd) {
+      const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
+      const local = yield* refreshLocalStatus(cwd);
+      const remote = (yield* getCachedStatus(cwd))?.remote?.value ?? null;
+      yield* enqueueRemoteRefresh(cwd);
       return mergeGitStatusParts(local, remote);
     });
 
@@ -389,7 +439,9 @@ export const layer = Layer.effect(
     return VcsStatusBroadcaster.of({
       getStatus,
       refreshLocalStatus,
+      refreshRemoteStatus,
       refreshStatus,
+      refreshStatusLocalFirst,
       streamStatus,
     });
   }),

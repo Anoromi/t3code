@@ -1,8 +1,12 @@
 import type {
   OrchestrationCommand,
   OrchestrationEvent,
+  OrchestrationLatestTurn,
+  OrchestrationProposedPlanId,
   OrchestrationReadModel,
+  OrchestrationThread,
 } from "@t3tools/contracts";
+import { EventId, MessageId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
@@ -38,6 +42,185 @@ function withEventBase(
     correlationId: input.commandId,
     metadata: input.metadata ?? {},
   };
+}
+
+function isThreadRunning(thread: OrchestrationThread): boolean {
+  return (
+    thread.session?.status === "running" ||
+    thread.session?.status === "starting" ||
+    thread.latestTurn?.state === "running"
+  );
+}
+
+function hasPersistedForkHistory(thread: OrchestrationThread): boolean {
+  return (
+    thread.latestTurn !== null ||
+    thread.checkpoints.length > 0 ||
+    thread.messages.length > 0 ||
+    thread.activities.length > 0 ||
+    thread.proposedPlans.length > 0
+  );
+}
+
+function filterForkActivities(
+  activities: OrchestrationThread["activities"],
+): OrchestrationThread["activities"] {
+  const openApprovalRequestIds = new Set<string>();
+  const openUserInputRequestIds = new Set<string>();
+
+  const requestIdFromPayload = (payload: unknown): string | null =>
+    payload !== null &&
+    typeof payload === "object" &&
+    "requestId" in payload &&
+    typeof payload.requestId === "string"
+      ? payload.requestId
+      : null;
+
+  for (const activity of activities) {
+    const requestId = requestIdFromPayload(activity.payload);
+    if (requestId === null) continue;
+    if (activity.kind === "approval.requested") {
+      openApprovalRequestIds.add(requestId);
+      continue;
+    }
+    if (activity.kind === "approval.resolved") {
+      openApprovalRequestIds.delete(requestId);
+      continue;
+    }
+    if (activity.kind === "user-input.requested") {
+      openUserInputRequestIds.add(requestId);
+      continue;
+    }
+    if (activity.kind === "user-input.resolved") {
+      openUserInputRequestIds.delete(requestId);
+    }
+  }
+
+  return activities.filter((activity) => {
+    const requestId = requestIdFromPayload(activity.payload);
+    if (requestId === null) return true;
+    if (activity.kind === "approval.requested" && openApprovalRequestIds.has(requestId)) {
+      return false;
+    }
+    if (activity.kind === "user-input.requested" && openUserInputRequestIds.has(requestId)) {
+      return false;
+    }
+    return true;
+  });
+}
+
+function forkEventId(): EventId {
+  return EventId.make(crypto.randomUUID());
+}
+
+function forkMessageId(): MessageId {
+  return MessageId.make(crypto.randomUUID());
+}
+
+function forkProposedPlanId(): OrchestrationProposedPlanId {
+  return crypto.randomUUID() as OrchestrationProposedPlanId;
+}
+
+function remapForkLatestTurn(
+  latestTurn: OrchestrationThread["latestTurn"],
+  messageIdMap: ReadonlyMap<string, MessageId>,
+  planIdMap: ReadonlyMap<string, OrchestrationProposedPlanId>,
+  sourceThreadId: OrchestrationThread["id"],
+  forkThreadId: OrchestrationThread["id"],
+): OrchestrationLatestTurn | null {
+  if (latestTurn === null) {
+    return null;
+  }
+
+  const assistantMessageId =
+    latestTurn.assistantMessageId === null
+      ? null
+      : (messageIdMap.get(latestTurn.assistantMessageId) ?? latestTurn.assistantMessageId);
+  const sourceProposedPlan =
+    latestTurn.sourceProposedPlan === undefined
+      ? undefined
+      : {
+          threadId:
+            latestTurn.sourceProposedPlan.threadId === sourceThreadId
+              ? forkThreadId
+              : latestTurn.sourceProposedPlan.threadId,
+          planId:
+            planIdMap.get(latestTurn.sourceProposedPlan.planId) ??
+            latestTurn.sourceProposedPlan.planId,
+        };
+
+  return {
+    ...latestTurn,
+    assistantMessageId,
+    ...(sourceProposedPlan !== undefined ? { sourceProposedPlan } : {}),
+  };
+}
+
+function remapForkPayload(
+  sourceThread: OrchestrationThread,
+  forkThreadId: OrchestrationThread["id"],
+): Pick<
+  OrchestrationThread,
+  "latestTurn" | "messages" | "proposedPlans" | "activities" | "checkpoints"
+> {
+  const messageIdMap = new Map<string, MessageId>();
+  const planIdMap = new Map<string, OrchestrationProposedPlanId>();
+
+  const messages = sourceThread.messages.map((message) => {
+    const id = forkMessageId();
+    messageIdMap.set(message.id, id);
+    return {
+      ...message,
+      id,
+    };
+  });
+
+  const proposedPlans = sourceThread.proposedPlans.map((plan) => {
+    const id = forkProposedPlanId();
+    planIdMap.set(plan.id, id);
+    return {
+      ...plan,
+      id,
+      implementationThreadId:
+        plan.implementationThreadId === sourceThread.id
+          ? forkThreadId
+          : plan.implementationThreadId,
+    };
+  });
+
+  const activities = filterForkActivities(sourceThread.activities).map((activity) => ({
+    ...activity,
+    id: forkEventId(),
+  }));
+
+  const checkpoints = sourceThread.checkpoints.map((checkpoint) => ({
+    ...checkpoint,
+    assistantMessageId:
+      checkpoint.assistantMessageId === null
+        ? null
+        : (messageIdMap.get(checkpoint.assistantMessageId) ?? checkpoint.assistantMessageId),
+  }));
+
+  return {
+    latestTurn: remapForkLatestTurn(
+      sourceThread.latestTurn,
+      messageIdMap,
+      planIdMap,
+      sourceThread.id,
+      forkThreadId,
+    ),
+    messages,
+    proposedPlans,
+    activities,
+    checkpoints,
+  };
+}
+
+function invariantError(commandType: string, detail: string): OrchestrationCommandInvariantError {
+  return new OrchestrationCommandInvariantError({
+    commandType,
+    detail,
+  });
 }
 
 type PlannedOrchestrationEvent = Omit<OrchestrationEvent, "sequence">;
@@ -218,6 +401,87 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+
+    case "project.worktree-group-title.regenerate": {
+      yield* requireProject({
+        readModel,
+        command,
+        projectId: command.projectId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "project",
+          aggregateId: command.projectId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "project.worktree-group-title-regeneration-requested",
+        payload: {
+          projectId: command.projectId,
+          worktreePath: command.worktreePath,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
+    case "thread.fork": {
+      const sourceThread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.forkSourceThreadId,
+      });
+      yield* requireThreadAbsent({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      if (isThreadRunning(sourceThread)) {
+        return yield* invariantError(
+          command.type,
+          `Thread '${command.forkSourceThreadId}' is still processing and cannot be forked yet.`,
+        );
+      }
+      if (!hasPersistedForkHistory(sourceThread)) {
+        return yield* invariantError(
+          command.type,
+          `Thread '${command.forkSourceThreadId}' has no persisted history to fork.`,
+        );
+      }
+      const forkPayload = remapForkPayload(sourceThread, command.threadId);
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.forked",
+        payload: {
+          threadId: command.threadId,
+          projectId: sourceThread.projectId,
+          title: sourceThread.title,
+          modelSelection: sourceThread.modelSelection,
+          runtimeMode: sourceThread.runtimeMode,
+          interactionMode: sourceThread.interactionMode,
+          branch: sourceThread.branch,
+          worktreePath: sourceThread.worktreePath,
+          forkOrigin: {
+            forkSourceThreadId: sourceThread.id,
+            forkSourceTurnId: sourceThread.latestTurn?.turnId ?? null,
+            forkSourceCheckpointTurnCount:
+              sourceThread.checkpoints.at(-1)?.checkpointTurnCount ?? null,
+            forkedAt: command.createdAt,
+          },
+          latestTurn: forkPayload.latestTurn,
+          messages: forkPayload.messages,
+          proposedPlans: forkPayload.proposedPlans,
+          activities: forkPayload.activities,
+          checkpoints: forkPayload.checkpoints,
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -607,11 +871,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.message.assistant.complete": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      const existingMessage = thread.messages.find((message) => message.id === command.messageId);
       return {
         ...withEventBase({
           aggregateKind: "thread",
@@ -624,7 +889,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           messageId: command.messageId,
           role: "assistant",
-          text: "",
+          text: existingMessage?.text ?? "",
           turnId: command.turnId ?? null,
           streaming: false,
           createdAt: command.createdAt,
