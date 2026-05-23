@@ -2,18 +2,21 @@
 
 import { spawnSync } from "node:child_process";
 import {
+  accessSync,
+  constants,
   copyFileSync,
   cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readlinkSync,
   readFileSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join, resolve } from "node:path";
+import { delimiter, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
@@ -26,6 +29,86 @@ export const desktopDir = resolve(__dirname, "..");
 const repoRoot = resolve(desktopDir, "..", "..");
 const defaultIconPath = join(desktopDir, "resources", "icon.icns");
 const developmentMacIconPngPath = join(repoRoot, "assets", "dev", "blueprint-macos-1024.png");
+const require = createRequire(import.meta.url);
+
+function resolveElectronPackageDir() {
+  const packageJsonPath = require.resolve("electron/package.json");
+  return dirname(packageJsonPath);
+}
+
+function resolveCommandFromPath(command, env = process.env) {
+  const pathValue = env.PATH;
+  if (!pathValue) {
+    return null;
+  }
+
+  for (const entry of pathValue.split(delimiter)) {
+    if (!entry) {
+      continue;
+    }
+
+    const candidate = join(entry, command);
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // Keep searching PATH.
+    }
+  }
+
+  return null;
+}
+
+function resolveElectronExecutableFromPackageDir(packageDir) {
+  const pathFile = join(packageDir, "path.txt");
+  if (!existsSync(pathFile)) {
+    return null;
+  }
+
+  const executablePath = readFileSync(pathFile, "utf8").trim();
+  if (executablePath.length === 0) {
+    return null;
+  }
+
+  return join(packageDir, "dist", executablePath);
+}
+
+function resolveElectronInstallScriptNodeCommand(packageDir) {
+  const cliEntryPath = join(packageDir, "cli.js");
+  if (existsSync(cliEntryPath)) {
+    try {
+      const symlinkTarget = readlinkSync(cliEntryPath);
+      if (symlinkTarget) {
+        const command = resolve(packageDir, symlinkTarget);
+        if (existsSync(command)) {
+          return command;
+        }
+      }
+    } catch {
+      // `cli.js` may be a regular file under npm installs.
+    }
+  }
+
+  return process.env.T3CODE_NODE_EXECUTABLE?.trim() || "node";
+}
+
+function ensureElectronInstalled(packageDir) {
+  const installResult = spawnSync(
+    resolveElectronInstallScriptNodeCommand(packageDir),
+    [join(packageDir, "install.js")],
+    {
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        ELECTRON_SKIP_BINARY_DOWNLOAD: "",
+      },
+    },
+  );
+
+  if (installResult.status !== 0) {
+    throw new Error(`Electron install failed with exit code ${installResult.status ?? "unknown"}`);
+  }
+}
 
 function setPlistString(plistPath, key, value) {
   const replaceResult = spawnSync("plutil", ["-replace", key, "-string", value, plistPath], {
@@ -163,8 +246,15 @@ function buildMacLauncher(electronBinaryPath) {
 }
 
 export function resolveElectronPath() {
-  const require = createRequire(import.meta.url);
-  const electronBinaryPath = require("electron");
+  const packageDir = resolveElectronPackageDir();
+  let electronBinaryPath = resolveElectronExecutableFromPackageDir(packageDir);
+  if (!electronBinaryPath) {
+    ensureElectronInstalled(packageDir);
+    electronBinaryPath = resolveElectronExecutableFromPackageDir(packageDir);
+  }
+  if (!electronBinaryPath) {
+    throw new Error(`Electron executable missing after install in ${packageDir}`);
+  }
 
   if (process.platform !== "darwin") {
     return electronBinaryPath;
@@ -177,4 +267,30 @@ export function resolveElectronPath() {
   }
 
   return buildMacLauncher(electronBinaryPath);
+}
+
+export function resolveElectronLaunchCommand(env = process.env) {
+  const electronPath = resolveElectronPath();
+  const nixGlMode = env.T3CODE_DESKTOP_NIXGL?.trim().toLowerCase();
+  const nixGlDisabled = nixGlMode === "0" || nixGlMode === "false" || nixGlMode === "off";
+  const nixGlRequired = nixGlMode === "1" || nixGlMode === "true" || nixGlMode === "on";
+  const shouldTryNixGl =
+    process.platform === "linux" &&
+    !nixGlDisabled &&
+    (nixGlRequired || !existsSync("/run/current-system"));
+
+  if (!shouldTryNixGl) {
+    return { command: electronPath, argsPrefix: [] };
+  }
+
+  const nixGlPath = resolveCommandFromPath("nixGL", env);
+  if (nixGlPath) {
+    return { command: nixGlPath, argsPrefix: [electronPath] };
+  }
+
+  if (nixGlRequired) {
+    throw new Error("T3CODE_DESKTOP_NIXGL is enabled, but nixGL was not found in PATH.");
+  }
+
+  return { command: electronPath, argsPrefix: [] };
 }

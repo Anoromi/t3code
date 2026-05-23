@@ -2,7 +2,9 @@ import { spawn, spawnSync } from "node:child_process";
 import { watch } from "node:fs";
 import { join } from "node:path";
 
-import { desktopDir, resolveElectronPath } from "./electron-launcher.mjs";
+import { desktopDir, resolveElectronLaunchCommand } from "./electron-launcher.mjs";
+import { movePidToHyprWorkspace, parseHyprWorkspaceEnv } from "./hypr-workspace.mjs";
+import { resolveDesktopOzoneArgs, resolveDesktopOzoneEnv } from "./runtime-args.mjs";
 import { waitForResources } from "./wait-for-resources.mjs";
 
 const devServerUrl = process.env.VITE_DEV_SERVER_URL?.trim();
@@ -15,7 +17,6 @@ const port = Number.parseInt(devServer.port, 10);
 if (!Number.isInteger(port) || port <= 0) {
   throw new Error(`VITE_DEV_SERVER_URL must include an explicit port: ${devServerUrl}`);
 }
-
 const requiredFiles = [
   "dist-electron/main.cjs",
   "dist-electron/preload.cjs",
@@ -36,8 +37,9 @@ await waitForResources({
   tcpPort: port,
 });
 
-const childEnv = { ...process.env };
+const childEnv = { ...process.env, ...resolveDesktopOzoneEnv(process.env) };
 delete childEnv.ELECTRON_RUN_AS_NODE;
+const hyprWorkspace = parseHyprWorkspaceEnv(childEnv);
 
 let shuttingDown = false;
 let restartTimer = null;
@@ -59,17 +61,25 @@ function cleanupStaleDevApps() {
     return;
   }
 
-  spawnSync("pkill", ["-f", "--", `--t3code-dev-root=${desktopDir}`], { stdio: "ignore" });
+  const processMatch = `--t3code-dev-root=${desktopDir}`;
+  spawnSync("pkill", ["-TERM", "-f", "--", processMatch], { stdio: "ignore" });
+  spawnSync("pkill", ["-KILL", "-f", "--", processMatch], { stdio: "ignore" });
 }
 
 function startApp() {
   if (shuttingDown || currentApp !== null) {
     return;
   }
+  const electronCommand = resolveElectronLaunchCommand(childEnv);
 
   const app = spawn(
-    resolveElectronPath(),
-    [`--t3code-dev-root=${desktopDir}`, "dist-electron/main.cjs"],
+    electronCommand.command,
+    [
+      ...electronCommand.argsPrefix,
+      ...resolveDesktopOzoneArgs(childEnv),
+      `--t3code-dev-root=${desktopDir}`,
+      "dist-electron/main.cjs",
+    ],
     {
       cwd: desktopDir,
       env: childEnv,
@@ -78,6 +88,14 @@ function startApp() {
   );
 
   currentApp = app;
+
+  if (hyprWorkspace !== null) {
+    // Hypr may register the new Electron window slightly after the child process spawns.
+    void movePidToHyprWorkspace({
+      workspace: hyprWorkspace,
+      pid: app.pid,
+    });
+  }
 
   app.once("error", () => {
     if (currentApp === app) {

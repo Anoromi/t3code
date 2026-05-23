@@ -1,0 +1,641 @@
+// @effect-diagnostics globalDate:off nodeBuiltinImport:off
+import { mkdir, mkdtemp, readFile, rm, stat, unlink, utimes, writeFile } from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
+import {
+  serializeEnvSnapshot,
+  T3CODE_LOCAL_LAUNCH_ENV_FILE,
+} from "@t3tools/shared/launchEnvironment";
+
+import {
+  evaluateLayerFreshness,
+  hashRepoRoot,
+  resolveExecutableFromPath,
+  resolveLayerDefinitions,
+  resolveStateDir,
+  runLocalDesktopLaunch,
+  type CommandRunner,
+  type LayerDefinition,
+  writeLayerStamp,
+} from "./local-desktop-launch.ts";
+
+const createdTempDirs: string[] = [];
+const ORIGINAL_ENV = {
+  T3CODE_BUN_EXECUTABLE: process.env.T3CODE_BUN_EXECUTABLE,
+  T3CODE_NODE_EXECUTABLE: process.env.T3CODE_NODE_EXECUTABLE,
+  T3CODE_HOME: process.env.T3CODE_HOME,
+  PATH: process.env.PATH,
+  PKG_CONFIG_PATH: process.env.PKG_CONFIG_PATH,
+  OPENSSL_DIR: process.env.OPENSSL_DIR,
+  SSL_CERT_FILE: process.env.SSL_CERT_FILE,
+  IN_NIX_SHELL: process.env.IN_NIX_SHELL,
+  T3CODE_DESKTOP_OZONE_PLATFORM: process.env.T3CODE_DESKTOP_OZONE_PLATFORM,
+  ELECTRON_OZONE_PLATFORM_HINT: process.env.ELECTRON_OZONE_PLATFORM_HINT,
+  NIXOS_OZONE_WL: process.env.NIXOS_OZONE_WL,
+  WAYLAND_DISPLAY: process.env.WAYLAND_DISPLAY,
+  XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR,
+  XDG_SESSION_TYPE: process.env.XDG_SESSION_TYPE,
+  HYPRLAND_INSTANCE_SIGNATURE: process.env.HYPRLAND_INSTANCE_SIGNATURE,
+  DISPLAY: process.env.DISPLAY,
+  [T3CODE_LOCAL_LAUNCH_ENV_FILE]: process.env[T3CODE_LOCAL_LAUNCH_ENV_FILE],
+};
+
+async function createTempDir(prefix: string): Promise<string> {
+  const directory = await mkdtemp(path.join(os.tmpdir(), prefix));
+  createdTempDirs.push(directory);
+  return directory;
+}
+
+async function ensureFile(
+  rootDir: string,
+  relativePath: string,
+  contents = relativePath,
+): Promise<void> {
+  const absolutePath = path.join(rootDir, relativePath);
+  await mkdir(path.dirname(absolutePath), { recursive: true });
+  await writeFile(absolutePath, contents, "utf8");
+}
+
+async function ensureDirectory(rootDir: string, relativePath: string): Promise<void> {
+  await mkdir(path.join(rootDir, relativePath), { recursive: true });
+}
+
+async function touchPath(rootDir: string, relativePath: string, timeMs: number): Promise<void> {
+  const absolutePath = path.join(rootDir, relativePath);
+  const time = new Date(timeMs);
+  await utimes(absolutePath, time, time);
+}
+
+async function createFixtureRepo(): Promise<string> {
+  const repoRoot = await createTempDir("local-desktop-launch-repo-");
+  const fixtureFiles = [
+    "package.json",
+    "bun.lock",
+    "turbo.json",
+    "scripts/package.json",
+    "apps/web/package.json",
+    "apps/web/src/index.tsx",
+    "apps/server/package.json",
+    "apps/server/src/bin.ts",
+    "apps/desktop/package.json",
+    "apps/desktop/src/main.ts",
+    "packages/client-runtime/package.json",
+    "packages/client-runtime/src/index.ts",
+    "packages/contracts/package.json",
+    "packages/contracts/src/index.ts",
+    "packages/shared/package.json",
+    "packages/shared/src/index.ts",
+  ] as const;
+
+  for (const relativePath of fixtureFiles) {
+    await ensureFile(repoRoot, relativePath);
+  }
+
+  return repoRoot;
+}
+
+async function createLayerOutputs(repoRoot: string, layer: LayerDefinition): Promise<void> {
+  for (const relativeOutputPath of layer.requiredOutputs) {
+    const absoluteOutputPath = path.join(repoRoot, relativeOutputPath);
+    if (path.extname(relativeOutputPath)) {
+      await ensureFile(repoRoot, relativeOutputPath, `${layer.name}:${relativeOutputPath}`);
+      continue;
+    }
+    await mkdir(absoluteOutputPath, { recursive: true });
+  }
+}
+
+async function getLayer(repoRoot: string, name: LayerDefinition["name"]): Promise<LayerDefinition> {
+  const layers = await resolveLayerDefinitions(repoRoot);
+  const layer = layers.find((candidate) => candidate.name === name);
+  if (!layer) {
+    throw new Error(`Missing layer ${name}`);
+  }
+  return layer;
+}
+
+async function seedFreshLayer(
+  repoRoot: string,
+  t3Home: string,
+  name: LayerDefinition["name"],
+): Promise<void> {
+  const layer = await getLayer(repoRoot, name);
+  await createLayerOutputs(repoRoot, layer);
+  await writeLayerStamp(repoRoot, resolveStateDir(repoRoot, t3Home), layer);
+}
+
+async function seedFreshAllLayers(repoRoot: string, t3Home: string): Promise<void> {
+  const layers = await resolveLayerDefinitions(repoRoot);
+  for (const layer of layers) {
+    await createLayerOutputs(repoRoot, layer);
+    await writeLayerStamp(repoRoot, resolveStateDir(repoRoot, t3Home), layer);
+  }
+}
+
+function createCommandRunner(
+  repoRoot: string,
+  failCommandPrefix?: string,
+): {
+  readonly commands: string[];
+  readonly invocations: Array<{ command: string; env?: NodeJS.ProcessEnv }>;
+  readonly runner: CommandRunner;
+} {
+  const commands: string[] = [];
+  const invocations: Array<{ command: string; env?: NodeJS.ProcessEnv }> = [];
+
+  const runner: CommandRunner = async (command, options) => {
+    const rendered = command.join(" ");
+    commands.push(rendered);
+    invocations.push({
+      command: rendered,
+      ...(options.env ? { env: options.env } : {}),
+    });
+
+    if (failCommandPrefix && rendered.startsWith(failCommandPrefix)) {
+      const error = new Error(`Simulated failure for ${rendered}`) as Error & { exitCode?: number };
+      error.exitCode = 23;
+      throw error;
+    }
+
+    if (rendered === "bun install --frozen-lockfile --linker=hoisted --ignore-scripts") {
+      await ensureDirectory(repoRoot, "node_modules");
+      await ensureDirectory(repoRoot, ".bun");
+      return;
+    }
+
+    if (rendered === "bun run --cwd apps/web build") {
+      await ensureFile(repoRoot, "apps/web/dist/index.html", "web build");
+      return;
+    }
+
+    if (rendered === "bun run --cwd apps/server build") {
+      await ensureFile(repoRoot, "apps/server/dist/bin.mjs", "server build");
+      await ensureFile(repoRoot, "apps/server/dist/client/index.html", "server client build");
+      return;
+    }
+
+    if (rendered === "bun run --cwd apps/desktop build") {
+      await ensureFile(repoRoot, "apps/desktop/dist-electron/main.cjs", "desktop main");
+      await ensureFile(repoRoot, "apps/desktop/dist-electron/preload.cjs", "desktop preload");
+      return;
+    }
+
+    if (
+      rendered.endsWith(" apps/desktop/scripts/start-electron.mjs") ||
+      rendered.includes(" apps/desktop/scripts/start-electron.mjs ")
+    ) {
+      return;
+    }
+
+    throw new Error(`Unexpected command: ${rendered}`);
+  };
+
+  return { commands, invocations, runner };
+}
+
+beforeEach(() => {
+  process.env.T3CODE_BUN_EXECUTABLE = "/nix/store/test-bun/bin/bun";
+  process.env.T3CODE_NODE_EXECUTABLE = "/nix/store/test-node/bin/node";
+  delete process.env[T3CODE_LOCAL_LAUNCH_ENV_FILE];
+  delete process.env.T3CODE_HOME;
+  delete process.env.PKG_CONFIG_PATH;
+  delete process.env.OPENSSL_DIR;
+  delete process.env.SSL_CERT_FILE;
+  delete process.env.IN_NIX_SHELL;
+  delete process.env.T3CODE_DESKTOP_OZONE_PLATFORM;
+  delete process.env.ELECTRON_OZONE_PLATFORM_HINT;
+  delete process.env.NIXOS_OZONE_WL;
+  delete process.env.WAYLAND_DISPLAY;
+  delete process.env.XDG_RUNTIME_DIR;
+  delete process.env.XDG_SESSION_TYPE;
+  delete process.env.HYPRLAND_INSTANCE_SIGNATURE;
+  delete process.env.DISPLAY;
+});
+
+afterEach(async () => {
+  await Promise.all(
+    createdTempDirs.splice(0).map(async (directory) => {
+      await rm(directory, { recursive: true, force: true });
+    }),
+  );
+
+  for (const [key, value] of Object.entries(ORIGINAL_ENV)) {
+    if (value === undefined) {
+      delete process.env[key];
+      continue;
+    }
+    process.env[key] = value;
+  }
+});
+
+describe("local-desktop-launch freshness", () => {
+  it("marks a layer stale when its stamp is missing", async () => {
+    const repoRoot = await createFixtureRepo();
+    const t3Home = await createTempDir("local-desktop-launch-home-");
+    const webLayer = await getLayer(repoRoot, "web");
+
+    await createLayerOutputs(repoRoot, webLayer);
+
+    const freshness = await evaluateLayerFreshness(
+      repoRoot,
+      resolveStateDir(repoRoot, t3Home),
+      webLayer,
+    );
+
+    expect(freshness).toMatchObject({
+      fresh: false,
+      reason: "stamp missing",
+    });
+  });
+
+  it("marks a layer stale when a required output is missing", async () => {
+    const repoRoot = await createFixtureRepo();
+    const t3Home = await createTempDir("local-desktop-launch-home-");
+    const webLayer = await getLayer(repoRoot, "web");
+
+    await writeLayerStamp(repoRoot, resolveStateDir(repoRoot, t3Home), webLayer);
+
+    const freshness = await evaluateLayerFreshness(
+      repoRoot,
+      resolveStateDir(repoRoot, t3Home),
+      webLayer,
+    );
+
+    expect(freshness).toMatchObject({
+      fresh: false,
+      reason: "apps/web/dist/index.html missing",
+    });
+  });
+
+  it("marks a layer stale when an input file is newer than the stamp", async () => {
+    const repoRoot = await createFixtureRepo();
+    const t3Home = await createTempDir("local-desktop-launch-home-");
+    const webLayer = await getLayer(repoRoot, "web");
+
+    await createLayerOutputs(repoRoot, webLayer);
+    const stampPath = await writeLayerStamp(repoRoot, resolveStateDir(repoRoot, t3Home), webLayer);
+    const stampStats = await stat(stampPath);
+
+    await touchPath(repoRoot, "apps/web/src/index.tsx", stampStats.mtimeMs + 5_000);
+
+    const freshness = await evaluateLayerFreshness(
+      repoRoot,
+      resolveStateDir(repoRoot, t3Home),
+      webLayer,
+    );
+
+    expect(freshness).toMatchObject({
+      fresh: false,
+      reason: "apps/web/src/index.tsx newer than stamp",
+    });
+  });
+
+  it("treats older inputs and present outputs as fresh", async () => {
+    const repoRoot = await createFixtureRepo();
+    const t3Home = await createTempDir("local-desktop-launch-home-");
+    const webLayer = await getLayer(repoRoot, "web");
+
+    await createLayerOutputs(repoRoot, webLayer);
+    await writeLayerStamp(repoRoot, resolveStateDir(repoRoot, t3Home), webLayer);
+
+    const freshness = await evaluateLayerFreshness(
+      repoRoot,
+      resolveStateDir(repoRoot, t3Home),
+      webLayer,
+    );
+
+    expect(freshness).toMatchObject({
+      fresh: true,
+      reason: "fresh",
+    });
+  });
+
+  it("ignores generated directories when checking freshness", async () => {
+    const repoRoot = await createFixtureRepo();
+    const t3Home = await createTempDir("local-desktop-launch-home-");
+    const webLayer = await getLayer(repoRoot, "web");
+
+    await createLayerOutputs(repoRoot, webLayer);
+    const stampPath = await writeLayerStamp(repoRoot, resolveStateDir(repoRoot, t3Home), webLayer);
+    const stampStats = await stat(stampPath);
+
+    await ensureFile(repoRoot, "apps/web/node_modules/generated.js", "generated");
+    await touchPath(repoRoot, "apps/web/node_modules/generated.js", stampStats.mtimeMs + 5_000);
+
+    const freshness = await evaluateLayerFreshness(
+      repoRoot,
+      resolveStateDir(repoRoot, t3Home),
+      webLayer,
+    );
+
+    expect(freshness).toMatchObject({
+      fresh: true,
+      reason: "fresh",
+    });
+  });
+
+  it("marks the server layer stale when web dist is newer than the server stamp", async () => {
+    const repoRoot = await createFixtureRepo();
+    const t3Home = await createTempDir("local-desktop-launch-home-");
+    const serverLayer = await getLayer(repoRoot, "server");
+
+    await createLayerOutputs(repoRoot, await getLayer(repoRoot, "web"));
+    await createLayerOutputs(repoRoot, serverLayer);
+    const stampPath = await writeLayerStamp(
+      repoRoot,
+      resolveStateDir(repoRoot, t3Home),
+      serverLayer,
+    );
+    const stampStats = await stat(stampPath);
+
+    await touchPath(repoRoot, "apps/web/dist/index.html", stampStats.mtimeMs + 5_000);
+
+    const freshness = await evaluateLayerFreshness(
+      repoRoot,
+      resolveStateDir(repoRoot, t3Home),
+      serverLayer,
+    );
+
+    expect(freshness).toMatchObject({
+      fresh: false,
+      reason: "apps/web/dist/index.html newer than stamp",
+    });
+  });
+
+  it("separates state directories by repo root hash", async () => {
+    const t3Home = await createTempDir("local-desktop-launch-home-");
+    const firstRepoRoot = await createFixtureRepo();
+    const secondRepoRoot = await createFixtureRepo();
+
+    expect(resolveStateDir(firstRepoRoot, t3Home)).not.toEqual(
+      resolveStateDir(secondRepoRoot, t3Home),
+    );
+    expect(hashRepoRoot(firstRepoRoot)).not.toEqual(hashRepoRoot(secondRepoRoot));
+  });
+});
+
+describe("runLocalDesktopLaunch", () => {
+  it("builds every layer on a cold launch", async () => {
+    const repoRoot = await createFixtureRepo();
+    const t3Home = await createTempDir("local-desktop-launch-home-");
+    const { commands, runner } = createCommandRunner(repoRoot);
+
+    const exitCode = await runLocalDesktopLaunch({
+      repoRoot,
+      t3Home,
+      commandRunner: runner,
+      forwardedArgs: ["--inspect"],
+      log: () => undefined,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(commands).toEqual([
+      "bun install --frozen-lockfile --linker=hoisted --ignore-scripts",
+      "bun run --cwd apps/web build",
+      "bun run --cwd apps/server build",
+      "bun run --cwd apps/desktop build",
+      "/nix/store/test-node/bin/node apps/desktop/scripts/start-electron.mjs --inspect",
+    ]);
+
+    const stateDir = resolveStateDir(repoRoot, t3Home);
+    for (const layerName of ["install", "web", "server", "desktop"] as const) {
+      const stamp = JSON.parse(
+        await readFile(path.join(stateDir, `${layerName}.json`), "utf8"),
+      ) as {
+        launcherVersion: number;
+      };
+      expect(stamp.launcherVersion).toBe(1);
+    }
+  });
+
+  it("reuses cached outputs on the next launch", async () => {
+    const repoRoot = await createFixtureRepo();
+    const t3Home = await createTempDir("local-desktop-launch-home-");
+
+    await seedFreshAllLayers(repoRoot, t3Home);
+
+    const { commands, runner } = createCommandRunner(repoRoot);
+    const exitCode = await runLocalDesktopLaunch({
+      repoRoot,
+      t3Home,
+      commandRunner: runner,
+      log: () => undefined,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(commands).toEqual([
+      "/nix/store/test-node/bin/node apps/desktop/scripts/start-electron.mjs",
+    ]);
+  });
+
+  it("rebuilds web and server when a web source file changes", async () => {
+    const repoRoot = await createFixtureRepo();
+    const t3Home = await createTempDir("local-desktop-launch-home-");
+
+    await seedFreshAllLayers(repoRoot, t3Home);
+    const webStampPath = path.join(resolveStateDir(repoRoot, t3Home), "web.json");
+    const webStampStats = await stat(webStampPath);
+    await touchPath(repoRoot, "apps/web/src/index.tsx", webStampStats.mtimeMs + 5_000);
+
+    const { commands, runner } = createCommandRunner(repoRoot);
+    const exitCode = await runLocalDesktopLaunch({
+      repoRoot,
+      t3Home,
+      commandRunner: runner,
+      log: () => undefined,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(commands).toEqual([
+      "bun run --cwd apps/web build",
+      "bun run --cwd apps/server build",
+      "/nix/store/test-node/bin/node apps/desktop/scripts/start-electron.mjs",
+    ]);
+  });
+
+  it("rebuilds only desktop when a desktop source file changes", async () => {
+    const repoRoot = await createFixtureRepo();
+    const t3Home = await createTempDir("local-desktop-launch-home-");
+
+    await seedFreshAllLayers(repoRoot, t3Home);
+    const desktopStampPath = path.join(resolveStateDir(repoRoot, t3Home), "desktop.json");
+    const desktopStampStats = await stat(desktopStampPath);
+    await touchPath(repoRoot, "apps/desktop/src/main.ts", desktopStampStats.mtimeMs + 5_000);
+
+    const { commands, runner } = createCommandRunner(repoRoot);
+    const exitCode = await runLocalDesktopLaunch({
+      repoRoot,
+      t3Home,
+      commandRunner: runner,
+      log: () => undefined,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(commands).toEqual([
+      "bun run --cwd apps/desktop build",
+      "/nix/store/test-node/bin/node apps/desktop/scripts/start-electron.mjs",
+    ]);
+  });
+
+  it("reruns install and downstream builds when the lockfile changes", async () => {
+    const repoRoot = await createFixtureRepo();
+    const t3Home = await createTempDir("local-desktop-launch-home-");
+
+    await seedFreshAllLayers(repoRoot, t3Home);
+    const installStampPath = path.join(resolveStateDir(repoRoot, t3Home), "install.json");
+    const installStampStats = await stat(installStampPath);
+    await touchPath(repoRoot, "bun.lock", installStampStats.mtimeMs + 5_000);
+
+    const { commands, runner } = createCommandRunner(repoRoot);
+    const exitCode = await runLocalDesktopLaunch({
+      repoRoot,
+      t3Home,
+      commandRunner: runner,
+      log: () => undefined,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(commands).toEqual([
+      "bun install --frozen-lockfile --linker=hoisted --ignore-scripts",
+      "bun run --cwd apps/web build",
+      "bun run --cwd apps/server build",
+      "bun run --cwd apps/desktop build",
+      "/nix/store/test-node/bin/node apps/desktop/scripts/start-electron.mjs",
+    ]);
+  });
+
+  it("fails closed and leaves the web stamp untouched when the web build fails", async () => {
+    const repoRoot = await createFixtureRepo();
+    const t3Home = await createTempDir("local-desktop-launch-home-");
+
+    await seedFreshLayer(repoRoot, t3Home, "install");
+
+    const { commands, runner } = createCommandRunner(repoRoot, "bun run --cwd apps/web build");
+    const exitCode = await runLocalDesktopLaunch({
+      repoRoot,
+      t3Home,
+      commandRunner: runner,
+      log: () => undefined,
+    });
+
+    expect(exitCode).toBe(23);
+    expect(commands).toEqual(["bun run --cwd apps/web build"]);
+    await expect(stat(path.join(resolveStateDir(repoRoot, t3Home), "web.json"))).rejects.toThrow();
+  });
+
+  it("rebuilds a layer when a required output is deleted", async () => {
+    const repoRoot = await createFixtureRepo();
+    const t3Home = await createTempDir("local-desktop-launch-home-");
+
+    await seedFreshAllLayers(repoRoot, t3Home);
+    await unlink(path.join(repoRoot, "apps/desktop/dist-electron/preload.cjs"));
+
+    const { commands, runner } = createCommandRunner(repoRoot);
+    const exitCode = await runLocalDesktopLaunch({
+      repoRoot,
+      t3Home,
+      commandRunner: runner,
+      log: () => undefined,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(commands).toEqual([
+      "bun run --cwd apps/desktop build",
+      "/nix/store/test-node/bin/node apps/desktop/scripts/start-electron.mjs",
+    ]);
+  });
+
+  it("launches the desktop with the captured env plus the active nix runtime keys", async () => {
+    const repoRoot = await createFixtureRepo();
+    const t3Home = await createTempDir("local-desktop-launch-home-");
+    const launchEnvPath = path.join(await createTempDir("launch-env-"), "captured.env");
+    await writeFile(
+      launchEnvPath,
+      serializeEnvSnapshot({
+        PATH: "/home/user/.cargo/bin:/usr/bin",
+        PKG_CONFIG_PATH: "/home/user/.local/lib/pkgconfig",
+        HOME: "/home/user",
+      }),
+    );
+    process.env[T3CODE_LOCAL_LAUNCH_ENV_FILE] = launchEnvPath;
+    process.env.T3CODE_HOME = "/home/user/.t3";
+    process.env.PKG_CONFIG_PATH = "/nix/store/t3code-dev/lib/pkgconfig";
+    process.env.OPENSSL_DIR = "/nix/store/t3code-dev";
+    process.env.SSL_CERT_FILE = "/nix/store/cacert/etc/ssl/certs/ca-bundle.crt";
+    process.env.IN_NIX_SHELL = "impure";
+    process.env.T3CODE_DESKTOP_OZONE_PLATFORM = "wayland";
+    process.env.ELECTRON_OZONE_PLATFORM_HINT = "wayland";
+    process.env.NIXOS_OZONE_WL = "1";
+    process.env.WAYLAND_DISPLAY = "wayland-1";
+    process.env.XDG_RUNTIME_DIR = "/run/user/1000";
+    process.env.XDG_SESSION_TYPE = "wayland";
+    process.env.HYPRLAND_INSTANCE_SIGNATURE = "hypr-test";
+    process.env.DISPLAY = ":0";
+
+    const { invocations, runner } = createCommandRunner(repoRoot);
+    const exitCode = await runLocalDesktopLaunch({
+      repoRoot,
+      t3Home,
+      commandRunner: runner,
+      log: () => undefined,
+    });
+
+    expect(exitCode).toBe(0);
+    const desktopStart = invocations.at(-1);
+    expect(desktopStart?.command).toBe(
+      "/nix/store/test-node/bin/node apps/desktop/scripts/start-electron.mjs",
+    );
+    expect(desktopStart?.env).toMatchObject({
+      PATH: "/home/user/.cargo/bin:/usr/bin",
+      PKG_CONFIG_PATH: "/nix/store/t3code-dev/lib/pkgconfig",
+      HOME: "/home/user",
+      OPENSSL_DIR: "/nix/store/t3code-dev",
+      SSL_CERT_FILE: "/nix/store/cacert/etc/ssl/certs/ca-bundle.crt",
+      IN_NIX_SHELL: "impure",
+      T3CODE_HOME: "/home/user/.t3",
+      T3CODE_DESKTOP_OZONE_PLATFORM: "wayland",
+      ELECTRON_OZONE_PLATFORM_HINT: "wayland",
+      NIXOS_OZONE_WL: "1",
+      WAYLAND_DISPLAY: "wayland-1",
+      XDG_RUNTIME_DIR: "/run/user/1000",
+      XDG_SESSION_TYPE: "wayland",
+      HYPRLAND_INSTANCE_SIGNATURE: "hypr-test",
+      DISPLAY: ":0",
+      [T3CODE_LOCAL_LAUNCH_ENV_FILE]: launchEnvPath,
+      T3CODE_BUN_EXECUTABLE: "/nix/store/test-bun/bin/bun",
+      T3CODE_NODE_EXECUTABLE: "/nix/store/test-node/bin/node",
+    });
+  });
+
+  it("falls back to the current env when the launch snapshot is unavailable", async () => {
+    const repoRoot = await createFixtureRepo();
+    const t3Home = await createTempDir("local-desktop-launch-home-");
+    process.env[T3CODE_LOCAL_LAUNCH_ENV_FILE] = "/tmp/missing-launch-env";
+    process.env.PATH = "/current/path";
+
+    const logs: string[] = [];
+    const { invocations, runner } = createCommandRunner(repoRoot);
+    const exitCode = await runLocalDesktopLaunch({
+      repoRoot,
+      t3Home,
+      commandRunner: runner,
+      log: (line) => logs.push(line),
+    });
+
+    expect(exitCode).toBe(0);
+    expect(logs).toContain(
+      "[local-launch] launch env snapshot unavailable; falling back to current process env",
+    );
+    expect(invocations.at(-1)?.env?.PATH).toBe("/current/path");
+  });
+});
+
+describe("resolveExecutableFromPath", () => {
+  it("returns an absolute path when the command exists in PATH", () => {
+    const resolved = resolveExecutableFromPath("sh", { PATH: "/bin:/usr/bin" });
+    expect(path.isAbsolute(resolved)).toBe(true);
+    expect(resolved.endsWith("/sh")).toBe(true);
+  });
+});
