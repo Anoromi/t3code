@@ -15,8 +15,10 @@ build/
 release/
 release-mock/
 .t3
+.impeccable/
 .idea/
 apps/web/.playwright
+apps/web/index.impeccable.html
 apps/web/playwright-report
 apps/web/src/components/__screenshots__
 .vitest-*

@@ -54,6 +54,61 @@ export const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6
 
 export const DEFAULT_CODEX_FAST_MODE = false;
 export const DEFAULT_CODEX_REASONING_EFFORT: CodexReasoningEffort = "medium";
+
+export const ReadAloudVoice = Schema.Literals([
+  "af_sarah",
+  "af_bella",
+  "af_nicole",
+  "am_adam",
+  "am_michael",
+]);
+export type ReadAloudVoice = typeof ReadAloudVoice.Type;
+export const DEFAULT_READ_ALOUD_VOICE: ReadAloudVoice = "af_sarah";
+
+export const ReadAloudIndicatorType = Schema.Literals(["dot", "rail", "icon"]);
+export type ReadAloudIndicatorType = typeof ReadAloudIndicatorType.Type;
+export const DEFAULT_READ_ALOUD_INDICATOR_TYPE: ReadAloudIndicatorType = "dot";
+
+export const ReadAloudHighlightStyle = Schema.Literals([
+  "soft-wash",
+  "underline-rail",
+  "cursor-capsule",
+  "left-marker",
+  "muted-amber",
+]);
+export type ReadAloudHighlightStyle = typeof ReadAloudHighlightStyle.Type;
+export const DEFAULT_READ_ALOUD_HIGHLIGHT_STYLE: ReadAloudHighlightStyle = "cursor-capsule";
+
+const ReadAloudHighlightStyleInput = Schema.Literals([
+  "soft-wash",
+  "underline-rail",
+  "cursor-capsule",
+  "left-marker",
+  "muted-amber",
+  "focus-bracket",
+  "reading-window",
+]);
+type ReadAloudHighlightStyleInput = typeof ReadAloudHighlightStyleInput.Type;
+
+function normalizeReadAloudHighlightStyle(
+  style: ReadAloudHighlightStyleInput,
+): ReadAloudHighlightStyle {
+  return style === "focus-bracket" || style === "reading-window"
+    ? DEFAULT_READ_ALOUD_HIGHLIGHT_STYLE
+    : style;
+}
+
+const ClientReadAloudHighlightStyle = ReadAloudHighlightStyleInput.pipe(
+  Schema.decodeTo(
+    Schema.toType(ReadAloudHighlightStyle),
+    SchemaTransformation.transform<ReadAloudHighlightStyle, ReadAloudHighlightStyleInput>({
+      decode: normalizeReadAloudHighlightStyle,
+      encode: (style) => style,
+    }),
+  ),
+);
+
+export const DEFAULT_READ_ALOUD_TARGET_WPM = 350;
 export const GroupedProjectHyprnavState = Schema.Struct({
   mode: GroupedProjectHyprnavMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_GROUPED_PROJECT_HYPRNAV_MODE)),
@@ -79,6 +134,18 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROJECT_HYPRNAV_SETTINGS)),
   ),
   diffIgnoreWhitespace: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  readAloudIndicatorType: ReadAloudIndicatorType.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_READ_ALOUD_INDICATOR_TYPE)),
+  ),
+  readAloudHighlightStyle: ClientReadAloudHighlightStyle.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_READ_ALOUD_HIGHLIGHT_STYLE)),
+  ),
+  readAloudTargetWpm: Schema.Number.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_READ_ALOUD_TARGET_WPM)),
+  ),
+  readAloudVoice: ReadAloudVoice.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_READ_ALOUD_VOICE)),
+  ),
   diffWordWrap: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   // Model favorites. Historically keyed by provider kind, now
   // widened to `ProviderInstanceId` so users can favorite a specific model

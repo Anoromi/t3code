@@ -4,8 +4,9 @@ import { page } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
-const { openInPreferredEditorMock, readLocalApiMock } = vi.hoisted(() => ({
+const { openInPreferredEditorMock, readAloudContextMock, readLocalApiMock } = vi.hoisted(() => ({
   openInPreferredEditorMock: vi.fn(async () => "vscode"),
+  readAloudContextMock: vi.fn<() => unknown>(() => null),
   readLocalApiMock: vi.fn(() => ({
     server: { getConfig: vi.fn(async () => ({ availableEditors: ["vscode"] })) },
     shell: { openInEditor: vi.fn(async () => undefined) },
@@ -23,11 +24,17 @@ vi.mock("../localApi", () => ({
   readLocalApi: readLocalApiMock,
 }));
 
-import ChatMarkdown from "./ChatMarkdown";
+vi.mock("./readAloud/ThreadReadAloudProvider", () => ({
+  useThreadReadAloudContext: readAloudContextMock,
+}));
+
+import ChatMarkdown, { buildReadAloudCodeFocusKey } from "./ChatMarkdown";
 
 describe("ChatMarkdown", () => {
   afterEach(() => {
     openInPreferredEditorMock.mockClear();
+    readAloudContextMock.mockReset();
+    readAloudContextMock.mockReturnValue(null);
     readLocalApiMock.mockClear();
     localStorage.clear();
     document.body.innerHTML = "";
@@ -134,6 +141,53 @@ describe("ChatMarkdown", () => {
       await expect.element(link).toBeInTheDocument();
       await expect.element(link).toHaveAttribute("href", "https://openai.com/docs");
       await expect.element(link).toHaveAttribute("target", "_blank");
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("renders stable read-aloud focus keys for code blocks", async () => {
+    const screen = await render(
+      <ChatMarkdown
+        text={"```sh\nbun run dev\n```\n\n```ts\nconst value = 1\n```"}
+        cwd="/repo/project"
+        readAloudScopeId="message:test"
+      />,
+    );
+
+    try {
+      const blocks = [...document.querySelectorAll(".chat-markdown-codeblock")];
+      expect(blocks).toHaveLength(2);
+      expect(blocks[0]).toHaveAttribute("data-read-aloud-code-focus-key", "message:test:code:0");
+      expect(blocks[1]).toHaveAttribute("data-read-aloud-code-focus-key", "message:test:code:1");
+      expect(blocks[0]).not.toHaveAttribute("data-read-aloud-code-active");
+      expect(blocks[1]).not.toHaveAttribute("data-read-aloud-code-active");
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("renders active code state from read-aloud context", async () => {
+    readAloudContextMock.mockReturnValue({
+      activeCodeFocusKey: buildReadAloudCodeFocusKey({
+        scopeId: "message:test",
+        codeBlockIndex: 1,
+      }),
+      onMarkdownContextMenu: vi.fn(),
+    });
+    const screen = await render(
+      <ChatMarkdown
+        text={"```sh\nbun run dev\n```\n\n```sh\nbun run lint\n```"}
+        cwd="/repo/project"
+        readAloudScopeId="message:test"
+      />,
+    );
+
+    try {
+      const blocks = [...document.querySelectorAll(".chat-markdown-codeblock")];
+      expect(blocks).toHaveLength(2);
+      expect(blocks[0]).not.toHaveAttribute("data-read-aloud-code-active");
+      expect(blocks[1]).toHaveAttribute("data-read-aloud-code-active", "true");
     } finally {
       await screen.unmount();
     }

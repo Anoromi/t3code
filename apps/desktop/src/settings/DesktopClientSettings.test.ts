@@ -35,6 +35,10 @@ const clientSettings: ClientSettings = {
   sidebarProjectSortOrder: "manual",
   sidebarThreadSortOrder: "created_at",
   sidebarThreadPreviewCount: 6,
+  readAloudIndicatorType: "dot",
+  readAloudHighlightStyle: "cursor-capsule",
+  readAloudTargetWpm: 350,
+  readAloudVoice: "af_sarah",
   timestampFormat: "24-hour",
 };
 

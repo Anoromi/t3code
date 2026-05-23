@@ -27,6 +27,7 @@ import {
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { readEnvironmentApi } from "~/environmentApi";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { fnv1a32 } from "~/lib/diffRendering";
 
 export const ProposedPlanCard = memo(function ProposedPlanCard({
   planMarkdown,
@@ -62,6 +63,8 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
   const collapsedPreview = canCollapse
     ? buildCollapsedProposedPlanPreviewMarkdown(planMarkdown, { maxLines: 10 })
     : null;
+  const expandedReadAloudScopeId = `proposed-plan-card:expanded:${fnv1a32(displayedPlanMarkdown).toString(36)}`;
+  const collapsedReadAloudScopeId = `proposed-plan-card:collapsed:${fnv1a32(collapsedPreview ?? "").toString(36)}`;
   const downloadFilename = buildProposedPlanMarkdownFilename(planMarkdown);
   const saveContents = normalizePlanMarkdownForExport(planMarkdown);
 
@@ -163,9 +166,19 @@ export const ProposedPlanCard = memo(function ProposedPlanCard({
       <div className="mt-4">
         <div className={cn("relative", canCollapse && !expanded && "max-h-104 overflow-hidden")}>
           {canCollapse && !expanded ? (
-            <ChatMarkdown text={collapsedPreview ?? ""} cwd={cwd} isStreaming={false} />
+            <ChatMarkdown
+              text={collapsedPreview ?? ""}
+              cwd={cwd}
+              isStreaming={false}
+              readAloudScopeId={collapsedReadAloudScopeId}
+            />
           ) : (
-            <ChatMarkdown text={displayedPlanMarkdown} cwd={cwd} isStreaming={false} />
+            <ChatMarkdown
+              text={displayedPlanMarkdown}
+              cwd={cwd}
+              isStreaming={false}
+              readAloudScopeId={expandedReadAloudScopeId}
+            />
           )}
           {canCollapse && !expanded ? (
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-24 bg-linear-to-t from-card/95 via-card/80 to-transparent" />

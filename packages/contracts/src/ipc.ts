@@ -39,6 +39,7 @@ import type {
   ServerTraceDiagnosticsResult,
   ServerUpsertKeybindingResult,
 } from "./server.ts";
+import type { ReadAloudSynthesizeInput, ReadAloudSynthesizeResult } from "./rpc.ts";
 import type {
   TerminalClearInput,
   TerminalCloseInput,
@@ -618,5 +619,8 @@ export interface EnvironmentApi {
         onResubscribe?: () => void;
       },
     ) => () => void;
+  };
+  readAloud?: {
+    synthesize: (input: ReadAloudSynthesizeInput) => Promise<ReadAloudSynthesizeResult>;
   };
 }

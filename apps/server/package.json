@@ -23,6 +23,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@anoromi/local-ai-tools-protocol": "^0.3.0",
     "@anthropic-ai/claude-agent-sdk": "^0.2.111",
     "@effect/platform-bun": "catalog:",
     "@effect/platform-node": "catalog:",

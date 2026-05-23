@@ -2,8 +2,18 @@ import { describe, expect, it } from "vitest";
 import * as Schema from "effect/Schema";
 
 import { ProviderInstanceId } from "./providerInstance.ts";
-import { DEFAULT_SERVER_SETTINGS, ServerSettings, ServerSettingsPatch } from "./settings.ts";
+import {
+  ClientSettingsSchema,
+  DEFAULT_READ_ALOUD_HIGHLIGHT_STYLE,
+  DEFAULT_READ_ALOUD_INDICATOR_TYPE,
+  DEFAULT_READ_ALOUD_TARGET_WPM,
+  DEFAULT_READ_ALOUD_VOICE,
+  DEFAULT_SERVER_SETTINGS,
+  ServerSettings,
+  ServerSettingsPatch,
+} from "./settings.ts";
 
+const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
@@ -61,6 +71,39 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
         providerInstances: { "1bad": { driver: "codex" } },
       }),
     ).toThrow();
+  });
+});
+
+describe("ClientSettings read aloud", () => {
+  it("defaults read-aloud settings", () => {
+    const parsed = decodeClientSettings({});
+
+    expect(parsed.readAloudTargetWpm).toBe(DEFAULT_READ_ALOUD_TARGET_WPM);
+    expect(parsed.readAloudVoice).toBe(DEFAULT_READ_ALOUD_VOICE);
+    expect(parsed.readAloudIndicatorType).toBe(DEFAULT_READ_ALOUD_INDICATOR_TYPE);
+    expect(parsed.readAloudHighlightStyle).toBe(DEFAULT_READ_ALOUD_HIGHLIGHT_STYLE);
+  });
+
+  it("decodes explicit read-aloud settings", () => {
+    const parsed = decodeClientSettings({
+      readAloudTargetWpm: 500,
+      readAloudVoice: "af_bella",
+      readAloudIndicatorType: "rail",
+      readAloudHighlightStyle: "cursor-capsule",
+    });
+
+    expect(parsed.readAloudTargetWpm).toBe(500);
+    expect(parsed.readAloudVoice).toBe("af_bella");
+    expect(parsed.readAloudIndicatorType).toBe("rail");
+    expect(parsed.readAloudHighlightStyle).toBe("cursor-capsule");
+  });
+
+  it("migrates removed read-aloud highlight styles to the default", () => {
+    const parsed = decodeClientSettings({
+      readAloudHighlightStyle: "reading-window",
+    });
+
+    expect(parsed.readAloudHighlightStyle).toBe(DEFAULT_READ_ALOUD_HIGHLIGHT_STYLE);
   });
 });
 

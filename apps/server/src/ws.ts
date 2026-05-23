@@ -33,6 +33,7 @@ import {
   ORCHESTRATION_WS_METHODS,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
+  ReadAloudSynthesizeError,
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
   ThreadId,
@@ -96,10 +97,115 @@ import {
   type SessionCredentialChange,
 } from "./auth/Services/SessionCredentialService.ts";
 import { respondToAuthError } from "./auth/http.ts";
+import {
+  readAloudLocalAiToolsSession,
+  type ReadAloudTimingChunk,
+} from "./readAloud/localAiToolsSession.ts";
+import { readAloudAssetCache } from "./readAloud/readAloudAssetCache.ts";
+import { renderReadAloudTempo, scaleReadAloudTimings } from "./readAloud/readAloudTempo.ts";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 const isWorkspacePathOutsideRootError = Schema.is(WorkspacePathOutsideRootError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+const READ_ALOUD_MAX_TEXT_LENGTH = 8_000;
+const READ_ALOUD_MIN_WPM = 120;
+const READ_ALOUD_MAX_WPM = 1_000;
+
+function readAloudCacheKey(input: { readonly text: string; readonly voice: string }): string {
+  return createHash("sha256").update(input.voice).update("\0").update(input.text).digest("hex");
+}
+
+function clampReadAloudWpm(targetWpm: number): number {
+  if (!Number.isFinite(targetWpm)) {
+    return 350;
+  }
+  return Math.round(Math.min(READ_ALOUD_MAX_WPM, Math.max(READ_ALOUD_MIN_WPM, targetWpm)));
+}
+
+function isNodeErrorWithCode(error: unknown, code: string): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    typeof error.code === "string" &&
+    error.code === code
+  );
+}
+
+async function synthesizeReadAloud(input: {
+  readonly chunkId: string;
+  readonly text: string;
+  readonly voice: string;
+  readonly targetWpm: number;
+  readonly rawCacheKey?: string;
+}): Promise<{
+  audioDataUrl: string;
+  timings: ReadAloudTimingChunk[];
+  generatedWpm: number | null;
+  renderedWpm: number;
+  tempoFactor: number;
+  rawCacheKey: string;
+}> {
+  const targetWpm = clampReadAloudWpm(input.targetWpm);
+  const expectedRawKey = readAloudCacheKey(input);
+  const requestedRaw =
+    input.rawCacheKey && input.rawCacheKey === expectedRawKey
+      ? readAloudAssetCache.getRaw(input.rawCacheKey)
+      : null;
+  let raw = requestedRaw ?? readAloudAssetCache.getRaw(expectedRawKey);
+  if (!raw) {
+    const result = await readAloudLocalAiToolsSession.synthesize({
+      text: input.text,
+      voice: input.voice,
+      speed: 1,
+    });
+    raw = {
+      rawCacheKey: expectedRawKey,
+      generationId: input.chunkId,
+      audioPath: result.audioPath,
+      timings: result.timings,
+      audioSeconds: result.audioSeconds,
+      wordCount: result.wordCount,
+      actualWpm: result.actualWpm,
+      createdAtMs: Date.now(),
+      lastAccessedAtMs: Date.now(),
+    };
+    readAloudAssetCache.putRaw(expectedRawKey, raw);
+  }
+
+  const cachedTempo = readAloudAssetCache.getTempo(raw.rawCacheKey, targetWpm);
+  const tempo =
+    cachedTempo ??
+    (await renderReadAloudTempo({
+      rawAudioPath: raw.audioPath,
+      text: input.text,
+      audioSeconds: raw.audioSeconds,
+      wordCount: raw.wordCount,
+      targetWpm,
+      outputPath: join(dirname(raw.audioPath), `speech-${targetWpm}.wav`),
+    }));
+  if (!cachedTempo) {
+    readAloudAssetCache.putTempo(raw.rawCacheKey, targetWpm, tempo);
+  }
+
+  let audioBytes: Buffer;
+  try {
+    audioBytes = await readFile(tempo.audioPath);
+  } catch (error) {
+    if (!isNodeErrorWithCode(error, "ENOENT")) {
+      throw error;
+    }
+    throw error;
+  }
+  void readAloudAssetCache.prune().catch(() => undefined);
+  return {
+    audioDataUrl: `data:audio/wav;base64,${audioBytes.toString("base64")}`,
+    timings: scaleReadAloudTimings(raw.timings, tempo.tempoFactor),
+    generatedWpm: raw.actualWpm,
+    renderedWpm: tempo.renderedWpm,
+    tempoFactor: tempo.tempoFactor,
+    rawCacheKey: raw.rawCacheKey,
+  };
+}
 
 function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
   OrchestrationEvent,
@@ -956,6 +1062,39 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId, desktopControl: Desktop
             {
               "rpc.aggregate": "source-control",
             },
+          ),
+        [WS_METHODS.readAloudSynthesize]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.readAloudSynthesize,
+            Effect.tryPromise({
+              try: async () => {
+                const text = input.text.trim();
+                if (text.length === 0) {
+                  throw new Error("No readable text at this position");
+                }
+                if (text.length > READ_ALOUD_MAX_TEXT_LENGTH) {
+                  throw new Error("Read-aloud chunk is too long");
+                }
+                return synthesizeReadAloud({
+                  chunkId: input.chunkId,
+                  text,
+                  voice: input.voice,
+                  targetWpm: input.targetWpm,
+                  ...(input.rawCacheKey ? { rawCacheKey: input.rawCacheKey } : {}),
+                });
+              },
+              catch: (cause) =>
+                new ReadAloudSynthesizeError({
+                  message:
+                    cause instanceof Error && cause.message.includes("Command not found")
+                      ? "Local AI Tools failed to start"
+                      : cause instanceof Error
+                        ? cause.message
+                        : "Local AI Tools failed to start",
+                  cause,
+                }),
+            }),
+            { "rpc.aggregate": "readAloud" },
           ),
         [WS_METHODS.projectsSearchEntries]: (input) =>
           observeRpcEffect(

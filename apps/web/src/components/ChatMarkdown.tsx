@@ -21,6 +21,7 @@ import { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
+import { useThreadReadAloudContext } from "./readAloud/ThreadReadAloudProvider";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { openInPreferredEditor } from "../editorPreferences";
@@ -62,6 +63,7 @@ interface ChatMarkdownProps {
   cwd: string | undefined;
   isStreaming?: boolean;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  readAloudScopeId?: string;
 }
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
@@ -74,6 +76,21 @@ const highlightedCodeCache = new LRUCache<string>(
   MAX_HIGHLIGHT_CACHE_MEMORY_BYTES,
 );
 const highlighterPromiseCache = new Map<string, Promise<DiffsHighlighter>>();
+
+export function buildReadAloudCodeFocusKey(scopeId: string, codeBlockIndex: number): string;
+export function buildReadAloudCodeFocusKey(input: {
+  readonly scopeId: string;
+  readonly codeBlockIndex: number;
+}): string;
+export function buildReadAloudCodeFocusKey(
+  scopeIdOrInput: string | { readonly scopeId: string; readonly codeBlockIndex: number },
+  codeBlockIndex = 0,
+): string {
+  if (typeof scopeIdOrInput === "string") {
+    return `${scopeIdOrInput}:code:${codeBlockIndex}`;
+  }
+  return `${scopeIdOrInput.scopeId}:code:${scopeIdOrInput.codeBlockIndex}`;
+}
 
 function extractFenceLanguage(className: string | undefined): string {
   const match = className?.match(CODE_FENCE_LANGUAGE_REGEX);
@@ -146,7 +163,17 @@ function getHighlighterPromise(language: string): Promise<DiffsHighlighter> {
   return promise;
 }
 
-function MarkdownCodeBlock({ code, children }: { code: string; children: ReactNode }) {
+function MarkdownCodeBlock({
+  code,
+  children,
+  readAloudCodeFocusKey,
+  active = false,
+}: {
+  code: string;
+  children: ReactNode;
+  readAloudCodeFocusKey?: string;
+  active?: boolean;
+}) {
   const [copied, setCopied] = useState(false);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleCopy = useCallback(() => {
@@ -179,7 +206,11 @@ function MarkdownCodeBlock({ code, children }: { code: string; children: ReactNo
   );
 
   return (
-    <div className="chat-markdown-codeblock leading-snug">
+    <div
+      className="chat-markdown-codeblock leading-snug"
+      data-read-aloud-code-focus-key={readAloudCodeFocusKey}
+      data-read-aloud-code-active={active ? "true" : undefined}
+    >
       <button
         type="button"
         className="chat-markdown-copy-button"
@@ -517,9 +548,13 @@ function ChatMarkdown({
   cwd,
   isStreaming = false,
   skills = EMPTY_MARKDOWN_SKILLS,
+  readAloudScopeId,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
+  const readAloud = useThreadReadAloudContext();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
+  const codeBlockIndexRef = useRef(0);
+  codeBlockIndexRef.current = 0;
   const markdownFileLinkMetaByHref = useMemo(() => {
     const metaByHref = new Map<
       string,
@@ -585,9 +620,21 @@ function ChatMarkdown({
         if (!codeBlock) {
           return <pre {...props}>{children}</pre>;
         }
+        const codeBlockIndex = codeBlockIndexRef.current;
+        codeBlockIndexRef.current += 1;
+        const readAloudCodeFocusKey = readAloudScopeId
+          ? buildReadAloudCodeFocusKey(readAloudScopeId, codeBlockIndex)
+          : undefined;
 
         return (
-          <MarkdownCodeBlock code={codeBlock.code}>
+          <MarkdownCodeBlock
+            code={codeBlock.code}
+            {...(readAloudCodeFocusKey ? { readAloudCodeFocusKey } : {})}
+            active={
+              readAloudCodeFocusKey != null &&
+              readAloud?.activeCodeFocusKey === readAloudCodeFocusKey
+            }
+          >
             <CodeHighlightErrorBoundary fallback={<pre {...props}>{children}</pre>}>
               <Suspense fallback={<pre {...props}>{children}</pre>}>
                 <SuspenseShikiCodeBlock
@@ -607,13 +654,18 @@ function ChatMarkdown({
       fileLinkParentSuffixByPath,
       isStreaming,
       markdownFileLinkMetaByHref,
+      readAloud?.activeCodeFocusKey,
+      readAloudScopeId,
       resolvedTheme,
       skills,
     ],
   );
 
   return (
-    <div className="chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/80">
+    <div
+      className="chat-markdown w-full min-w-0 text-sm leading-relaxed text-foreground/80"
+      onContextMenu={(event) => readAloud?.onMarkdownContextMenu(event, event.currentTarget)}
+    >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={markdownComponents}

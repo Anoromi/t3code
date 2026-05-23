@@ -1,5 +1,13 @@
 @import "tailwindcss";
 
+@font-face {
+  font-family: "Fast Sans";
+  src: url("./assets/fonts/Fast_Sans.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 @custom-variant dark (&:is(.dark, .dark *));
 /* Window Controls Overlay: active when Electron exposes native titlebar control geometry. */
 @custom-variant wco (&:is(.wco, .wco *));
@@ -201,12 +209,15 @@
 
 body {
   font-family:
+    "Fast Sans",
     "DM Sans",
     -apple-system,
     BlinkMacSystemFont,
     "Segoe UI",
     system-ui,
     sans-serif;
+  font-feature-settings: "calt" 1;
+  font-variant-ligatures: contextual;
   margin: 0;
   padding: 0;
 }
@@ -525,7 +536,36 @@ label:has(> select#reasoning-effort) select {
 }
 
 .chat-markdown .chat-markdown-shiki .shiki {
-  background: color-mix(in srgb, var(--muted) 78%, var(--background)) !important;
+  background: color-mix(in srgb, var(--muted) 78%, var(--background));
+}
+
+.chat-markdown .chat-markdown-codeblock[data-read-aloud-code-active="true"],
+.chat-markdown-codeblock[data-read-aloud-code-active="true"] {
+  position: relative;
+  background: var(--t3-read-aloud-code-bg, color-mix(in srgb, var(--primary) 5%, transparent));
+  outline: var(
+    --t3-read-aloud-code-border,
+    1px solid color-mix(in srgb, var(--primary) 28%, transparent)
+  );
+  outline-offset: -1px;
+  border-radius: var(--t3-read-aloud-code-radius, 0.75rem);
+  box-shadow: var(
+    --t3-read-aloud-code-shadow,
+    inset 0 -1px 0 color-mix(in srgb, var(--primary) 62%, transparent)
+  );
+}
+
+.chat-markdown .chat-markdown-codeblock[data-read-aloud-code-active="true"] .shiki,
+.chat-markdown .chat-markdown-codeblock[data-read-aloud-code-active="true"] pre {
+  position: relative;
+  z-index: 1;
+  background: transparent;
+}
+
+.chat-markdown
+  .chat-markdown-codeblock[data-read-aloud-code-active="true"]
+  .chat-markdown-copy-button {
+  z-index: 2;
 }
 
 .chat-markdown table {

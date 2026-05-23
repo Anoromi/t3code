@@ -1,0 +1,9 @@
+{
+  "name": "impeccable",
+  "version": "0.0.0-local",
+  "private": true,
+  "bin": {
+    "impeccable": "./bin/impeccable.mjs"
+  },
+  "type": "module"
+}

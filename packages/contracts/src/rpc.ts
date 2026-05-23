@@ -4,7 +4,7 @@ import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import { AuthAccessStreamEvent } from "./auth.ts";
-import { PositiveInt, ThreadId } from "./baseSchemas.ts";
+import { PositiveInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
@@ -164,6 +164,9 @@ export const WS_METHODS = {
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
+
+  // Read aloud
+  readAloudSynthesize: "readAloud.synthesize",
 } as const;
 
 export const DesktopRequestCorkdiffAppFocusInput = Schema.Struct({
@@ -180,6 +183,43 @@ export const DesktopControlEvent = Schema.Struct({
   workspaceId: Schema.optional(PositiveInt),
 });
 export type DesktopControlEvent = typeof DesktopControlEvent.Type;
+
+export const ReadAloudSynthesizeInput = Schema.Struct({
+  chunkId: TrimmedNonEmptyString,
+  text: TrimmedNonEmptyString,
+  voice: TrimmedNonEmptyString,
+  targetWpm: Schema.Number,
+  rawCacheKey: Schema.optional(TrimmedNonEmptyString),
+});
+export type ReadAloudSynthesizeInput = typeof ReadAloudSynthesizeInput.Type;
+
+export const ReadAloudTimingChunk = Schema.Struct({
+  index: Schema.Number,
+  text: Schema.String,
+  start: Schema.Number,
+  end: Schema.Number,
+  duration: Schema.Number,
+  timing_basis: Schema.String,
+});
+export type ReadAloudTimingChunk = typeof ReadAloudTimingChunk.Type;
+
+export const ReadAloudSynthesizeResult = Schema.Struct({
+  audioDataUrl: TrimmedNonEmptyString,
+  timings: Schema.Array(ReadAloudTimingChunk),
+  generatedWpm: Schema.NullOr(Schema.Number),
+  renderedWpm: Schema.Number,
+  tempoFactor: Schema.Number,
+  rawCacheKey: TrimmedNonEmptyString,
+});
+export type ReadAloudSynthesizeResult = typeof ReadAloudSynthesizeResult.Type;
+
+export class ReadAloudSynthesizeError extends Schema.TaggedErrorClass<ReadAloudSynthesizeError>()(
+  "ReadAloudSynthesizeError",
+  {
+    message: Schema.String,
+    cause: Schema.Unknown,
+  },
+) {}
 
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
   payload: ServerUpsertKeybindingInput,
@@ -504,6 +544,12 @@ export const WsSubscribeDesktopControlRpc = Rpc.make(WS_METHODS.subscribeDesktop
   stream: true,
 });
 
+export const WsReadAloudSynthesizeRpc = Rpc.make(WS_METHODS.readAloudSynthesize, {
+  payload: ReadAloudSynthesizeInput,
+  success: ReadAloudSynthesizeResult,
+  error: ReadAloudSynthesizeError,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -548,6 +594,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeAuthAccessRpc,
   WsDesktopRequestCorkdiffAppFocusRpc,
   WsSubscribeDesktopControlRpc,
+  WsReadAloudSynthesizeRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,

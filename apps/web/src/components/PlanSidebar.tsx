@@ -28,6 +28,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "./ui/menu";
 import { readEnvironmentApi } from "~/environmentApi";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { fnv1a32 } from "~/lib/diffRendering";
 
 function stepStatusIcon(status: string): React.ReactNode {
   if (status === "completed") {
@@ -81,6 +82,7 @@ const PlanSidebar = memo(function PlanSidebar({
   const planMarkdown = activeProposedPlan?.planMarkdown ?? null;
   const displayedPlanMarkdown = planMarkdown ? stripDisplayedPlanMarkdown(planMarkdown) : null;
   const planTitle = planMarkdown ? proposedPlanTitle(planMarkdown) : null;
+  const readAloudScopeId = `plan-sidebar:${fnv1a32(displayedPlanMarkdown ?? "").toString(36)}`;
 
   const handleCopyPlan = useCallback(() => {
     if (!planMarkdown) return;
@@ -257,6 +259,7 @@ const PlanSidebar = memo(function PlanSidebar({
                     text={displayedPlanMarkdown ?? ""}
                     cwd={markdownCwd}
                     isStreaming={false}
+                    readAloudScopeId={readAloudScopeId}
                   />
                 </div>
               ) : null}

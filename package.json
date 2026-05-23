@@ -76,6 +76,7 @@
     "@effect/language-service": "catalog:",
     "@oxlint/plugins": "^1.63.0",
     "@types/node": "catalog:",
+    "impeccable": "workspace:*",
     "oxfmt": "^0.40.0",
     "oxlint": "^1.63.0",
     "turbo": "^2.3.3",
