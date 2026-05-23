@@ -56,6 +56,11 @@
       "dependsOn": ["^build"],
       "cache": false,
       "outputs": []
+    },
+    "smoke-test": {
+      "dependsOn": ["build"],
+      "cache": false,
+      "outputs": []
     }
   }
 }

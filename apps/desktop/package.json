@@ -12,6 +12,7 @@
     "start": "node scripts/start-electron.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --passWithNoTests",
+    "test:playwright": "playwright test",
     "smoke-test": "node scripts/smoke-test.mjs"
   },
   "dependencies": {
@@ -27,6 +28,7 @@
   "devDependencies": {
     "@effect/language-service": "catalog:",
     "@effect/vitest": "catalog:",
+    "@playwright/test": "^1.58.2",
     "@types/node": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:",

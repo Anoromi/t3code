@@ -13,7 +13,6 @@ const child = spawn(electronBin, [mainJs], {
   stdio: ["pipe", "pipe", "pipe"],
   env: {
     ...process.env,
-    VITE_DEV_SERVER_URL: "",
     ELECTRON_ENABLE_LOGGING: "1",
   },
 });
