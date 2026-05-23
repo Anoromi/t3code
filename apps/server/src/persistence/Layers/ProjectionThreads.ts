@@ -25,11 +25,91 @@ type ProjectionThreadDbRow = typeof ProjectionThreadDbRow.Type;
 
 const makeProjectionThreadRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
+  const projectionThreadColumns = yield* sql<{ readonly name: string }>`
+    PRAGMA table_info(projection_threads)
+  `;
+  const hasLegacyModelColumn = projectionThreadColumns.some((column) => column.name === "model");
 
   const upsertProjectionThreadRow = SqlSchema.void({
     Request: ProjectionThread,
-    execute: (row) =>
-      sql`
+    execute: (row) => {
+      if (hasLegacyModelColumn) {
+        return sql`
+        INSERT INTO projection_threads (
+          thread_id,
+          project_id,
+          title,
+          model,
+          model_selection_json,
+          runtime_mode,
+          interaction_mode,
+          branch,
+          worktree_path,
+          fork_source_thread_id,
+          fork_source_turn_id,
+          fork_source_checkpoint_turn_count,
+          forked_at,
+          latest_turn_id,
+          created_at,
+          updated_at,
+          archived_at,
+          latest_user_message_at,
+          pending_approval_count,
+          pending_user_input_count,
+          has_actionable_proposed_plan,
+          deleted_at
+        )
+        VALUES (
+          ${row.threadId},
+          ${row.projectId},
+          ${row.title},
+          ${row.modelSelection.model},
+          ${JSON.stringify(row.modelSelection)},
+          ${row.runtimeMode},
+          ${row.interactionMode},
+          ${row.branch},
+          ${row.worktreePath},
+          ${row.forkSourceThreadId ?? null},
+          ${row.forkSourceTurnId ?? null},
+          ${row.forkSourceCheckpointTurnCount ?? null},
+          ${row.forkedAt ?? null},
+          ${row.latestTurnId},
+          ${row.createdAt},
+          ${row.updatedAt},
+          ${row.archivedAt},
+          ${row.latestUserMessageAt},
+          ${row.pendingApprovalCount},
+          ${row.pendingUserInputCount},
+          ${row.hasActionableProposedPlan},
+          ${row.deletedAt}
+        )
+        ON CONFLICT (thread_id)
+        DO UPDATE SET
+          project_id = excluded.project_id,
+          title = excluded.title,
+          model = excluded.model,
+          model_selection_json = excluded.model_selection_json,
+          runtime_mode = excluded.runtime_mode,
+          interaction_mode = excluded.interaction_mode,
+          branch = excluded.branch,
+          worktree_path = excluded.worktree_path,
+          fork_source_thread_id = excluded.fork_source_thread_id,
+          fork_source_turn_id = excluded.fork_source_turn_id,
+          fork_source_checkpoint_turn_count = excluded.fork_source_checkpoint_turn_count,
+          forked_at = excluded.forked_at,
+          latest_turn_id = excluded.latest_turn_id,
+          created_at = excluded.created_at,
+          updated_at = excluded.updated_at,
+          archived_at = excluded.archived_at,
+          latest_user_message_at = excluded.latest_user_message_at,
+          pending_approval_count = excluded.pending_approval_count,
+          pending_user_input_count = excluded.pending_user_input_count,
+          has_actionable_proposed_plan = excluded.has_actionable_proposed_plan,
+          deleted_at = excluded.deleted_at
+      `;
+      }
+
+      return sql`
         INSERT INTO projection_threads (
           thread_id,
           project_id,
@@ -98,7 +178,8 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           pending_user_input_count = excluded.pending_user_input_count,
           has_actionable_proposed_plan = excluded.has_actionable_proposed_plan,
           deleted_at = excluded.deleted_at
-      `,
+      `;
+    },
   });
 
   const getProjectionThreadRow = SqlSchema.findOneOption({

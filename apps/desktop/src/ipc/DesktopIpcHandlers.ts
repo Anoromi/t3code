@@ -34,12 +34,18 @@ import {
 } from "./methods/updates.ts";
 import {
   confirm,
+  focusAppWindow,
   getAppBranding,
   getLocalEnvironmentBootstrap,
+  listOpenWorktreeTerminals,
+  lockHyprnavEnvironment,
   openExternal,
+  openWorktreeTerminal,
   pickFolder,
   setTheme,
   showContextMenu,
+  syncHyprnavEnvironment,
+  toggleExternalCorkdiff,
 } from "./methods/window.ts";
 
 export const installDesktopIpcHandlers = Effect.gen(function* () {
@@ -75,6 +81,12 @@ export const installDesktopIpcHandlers = Effect.gen(function* () {
   yield* ipc.handle(setTheme);
   yield* ipc.handle(showContextMenu);
   yield* ipc.handle(openExternal);
+  yield* ipc.handle(toggleExternalCorkdiff);
+  yield* ipc.handle(openWorktreeTerminal);
+  yield* ipc.handle(listOpenWorktreeTerminals);
+  yield* ipc.handle(syncHyprnavEnvironment);
+  yield* ipc.handle(lockHyprnavEnvironment);
+  yield* ipc.handle(focusAppWindow);
 
   yield* ipc.handle(getUpdateState);
   yield* ipc.handle(setUpdateChannel);

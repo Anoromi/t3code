@@ -4,8 +4,11 @@ import type {
   OrchestrationLatestTurn,
   OrchestrationProposedPlanId,
   RepositoryIdentity,
+  ProjectHyprnavOverride,
   OrchestrationSessionStatus,
   OrchestrationThreadActivity,
+  OrchestrationWorktreeGroupTitle as ContractOrchestrationWorktreeGroupTitle,
+  ThreadForkOrigin,
   ProjectScript as ContractProjectScript,
   ThreadId,
   ProjectId,
@@ -26,6 +29,7 @@ export const DEFAULT_THREAD_TERMINAL_HEIGHT = 280;
 export const DEFAULT_THREAD_TERMINAL_ID = "default";
 export const MAX_TERMINALS_PER_GROUP = 4;
 export type ProjectScript = ContractProjectScript;
+export type WorktreeGroupTitle = ContractOrchestrationWorktreeGroupTitle;
 
 export interface ThreadTerminalGroup {
   id: string;
@@ -77,8 +81,11 @@ export interface TurnDiffSummary {
   status?: string | undefined;
   files: TurnDiffFileChange[];
   checkpointRef?: CheckpointRef | undefined;
+  visibleCheckpointRef?: CheckpointRef | undefined;
   assistantMessageId?: MessageId | undefined;
   checkpointTurnCount?: number | undefined;
+  visibleBaseCheckpointTurnCount?: number | null | undefined;
+  visibility?: "visible" | "hidden" | "silent" | undefined;
 }
 
 export interface Project {
@@ -91,6 +98,8 @@ export interface Project {
   createdAt?: string | undefined;
   updatedAt?: string | undefined;
   scripts: ProjectScript[];
+  hyprnav?: ProjectHyprnavOverride;
+  worktreeGroupTitles?: ReadonlyArray<WorktreeGroupTitle>;
 }
 
 export interface Thread {
@@ -113,6 +122,7 @@ export interface Thread {
   pendingSourceProposedPlan?: OrchestrationLatestTurn["sourceProposedPlan"];
   branch: string | null;
   worktreePath: string | null;
+  forkOrigin?: ThreadForkOrigin | null | undefined;
   turnDiffSummaries: TurnDiffSummary[];
   activities: OrchestrationThreadActivity[];
 }
@@ -132,6 +142,7 @@ export interface ThreadShell {
   updatedAt?: string | undefined;
   branch: string | null;
   worktreePath: string | null;
+  forkOrigin?: ThreadForkOrigin | null | undefined;
 }
 
 export interface ThreadTurnState {

@@ -473,6 +473,8 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             workspaceRoot: event.payload.workspaceRoot,
             defaultModelSelection: event.payload.defaultModelSelection,
             scripts: event.payload.scripts,
+            hyprnav: event.payload.hyprnav ?? null,
+            worktreeGroupTitles: event.payload.worktreeGroupTitles,
             createdAt: event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
             deletedAt: null,
@@ -496,6 +498,10 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               ? { defaultModelSelection: event.payload.defaultModelSelection }
               : {}),
             ...(event.payload.scripts !== undefined ? { scripts: event.payload.scripts } : {}),
+            ...(event.payload.hyprnav !== undefined ? { hyprnav: event.payload.hyprnav } : {}),
+            ...(event.payload.worktreeGroupTitles !== undefined
+              ? { worktreeGroupTitles: event.payload.worktreeGroupTitles }
+              : {}),
             updatedAt: event.payload.updatedAt,
           });
           return;

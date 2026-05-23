@@ -42,6 +42,10 @@ import {
   type PtyExitEvent,
   type PtyProcess,
 } from "../Services/PTY.ts";
+import {
+  appendPendingTerminalProcessEvent,
+  MAX_COALESCED_OUTPUT_CHARS,
+} from "./terminalOutputCoalescing.ts";
 
 const DEFAULT_HISTORY_LINE_LIMIT = 5_000;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 40;
@@ -91,6 +95,10 @@ interface TerminalStartInput {
   cols: number;
   rows: number;
   env?: Record<string, string>;
+  command?: {
+    shell: string;
+    args?: string[];
+  };
 }
 
 interface TerminalSessionState {
@@ -178,7 +186,11 @@ function enqueueProcessEvent(
     return false;
   }
 
-  session.pendingProcessEvents.push(event);
+  appendPendingTerminalProcessEvent(
+    session.pendingProcessEvents,
+    event,
+    MAX_COALESCED_OUTPUT_CHARS,
+  );
   if (session.processEventDrainRunning) {
     return false;
   }
@@ -246,6 +258,23 @@ function shellCandidateFromCommand(
     return { shell: command, args: ["-o", "nopromptsp"] };
   }
   return { shell: command };
+}
+
+function normalizeLaunchCommand(
+  command:
+    | {
+        file: string;
+        args?: readonly string[] | undefined;
+      }
+    | undefined,
+): ShellCandidate | null {
+  if (!command) {
+    return null;
+  }
+  return {
+    shell: command.file,
+    ...(command.args ? { args: [...command.args] } : {}),
+  };
 }
 
 function windowsSystemRoot(env: NodeJS.ProcessEnv): string {
@@ -1431,7 +1460,22 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
             Effect.gen(function* () {
               const shellCandidates = resolveShellCandidates(shellResolver, platform, baseEnv);
               const terminalEnv = createTerminalSpawnEnv(baseEnv, session.runtimeEnv);
-              const spawnResult = yield* trySpawn(shellCandidates, terminalEnv, session);
+              const spawnResult = input.command
+                ? yield* Effect.map(
+                    options.ptyAdapter.spawn({
+                      shell: input.command.shell,
+                      ...(input.command.args ? { args: input.command.args } : {}),
+                      cwd: session.cwd,
+                      cols: session.cols,
+                      rows: session.rows,
+                      env: terminalEnv,
+                    }),
+                    (process) => ({
+                      process,
+                      shellLabel: formatShellCandidate(input.command!),
+                    }),
+                  )
+                : yield* trySpawn(shellCandidates, terminalEnv, session);
               ptyProcess = spawnResult.process;
               startedShell = spawnResult.shellLabel;
 
@@ -1713,6 +1757,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
             });
 
             yield* evictInactiveSessionsIfNeeded();
+            const launchCommand = normalizeLaunchCommand(input.command);
             yield* startSession(
               session,
               {
@@ -1723,6 +1768,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
                 cols,
                 rows,
                 ...(input.env ? { env: input.env } : {}),
+                ...(launchCommand ? { command: launchCommand } : {}),
               },
               "started",
             );
@@ -1767,6 +1813,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           }
 
           if (!liveSession.process) {
+            const launchCommand = normalizeLaunchCommand(input.command);
             yield* startSession(
               liveSession,
               {
@@ -1777,6 +1824,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
                 cols: targetCols,
                 rows: targetRows,
                 ...(input.env ? { env: input.env } : {}),
+                ...(launchCommand ? { command: launchCommand } : {}),
               },
               "started",
             );
@@ -1910,6 +1958,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
           session.pendingProcessEventIndex = 0;
           session.processEventDrainRunning = false;
           yield* persistHistory(input.threadId, terminalId, session.history);
+          const launchCommand = normalizeLaunchCommand(input.command);
           yield* startSession(
             session,
             {
@@ -1920,6 +1969,7 @@ export const makeTerminalManagerWithOptions = Effect.fn("makeTerminalManagerWith
               cols,
               rows,
               ...(input.env ? { env: input.env } : {}),
+              ...(launchCommand ? { command: launchCommand } : {}),
             },
             "restarted",
           );

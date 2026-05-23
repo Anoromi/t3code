@@ -35,6 +35,10 @@
       "types": "./src/launchEnvironment.ts",
       "import": "./src/launchEnvironment.ts"
     },
+    "./editorLaunch": {
+      "types": "./src/editorLaunch.ts",
+      "import": "./src/editorLaunch.ts"
+    },
     "./semver": {
       "types": "./src/semver.ts",
       "import": "./src/semver.ts"
@@ -94,6 +98,14 @@
     "./keybindings": {
       "types": "./src/keybindings.ts",
       "import": "./src/keybindings.ts"
+    },
+    "./worktree": {
+      "types": "./src/worktree.ts",
+      "import": "./src/worktree.ts"
+    },
+    "./desktopDaemon": {
+      "types": "./src/desktopDaemon.ts",
+      "import": "./src/desktopDaemon.ts"
     }
   },
   "scripts": {

@@ -406,3 +406,8 @@ export function __resetServerAuthBootstrapForTests() {
   bootstrapPromise = null;
   resolvedAuthenticatedGateState = null;
 }
+
+export function invalidateServerAuthBootstrapCache() {
+  bootstrapPromise = null;
+  resolvedAuthenticatedGateState = null;
+}

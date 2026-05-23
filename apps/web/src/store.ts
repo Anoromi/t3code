@@ -227,6 +227,9 @@ function mapProject(
     createdAt: project.createdAt,
     updatedAt: project.updatedAt,
     scripts: mapProjectScripts(project.scripts),
+    hyprnav: project.hyprnav ?? null,
+    worktreeGroupTitles:
+      "worktreeGroupTitles" in project ? (project.worktreeGroupTitles ?? []) : [],
   };
 }
 
@@ -1160,6 +1163,8 @@ function applyEnvironmentOrchestrationEvent(
           repositoryIdentity: event.payload.repositoryIdentity ?? null,
           defaultModelSelection: event.payload.defaultModelSelection,
           scripts: event.payload.scripts,
+          ...(event.payload.hyprnav !== undefined ? { hyprnav: event.payload.hyprnav } : {}),
+          worktreeGroupTitles: event.payload.worktreeGroupTitles,
           createdAt: event.payload.createdAt,
           updatedAt: event.payload.updatedAt,
           deletedAt: null,
@@ -1223,6 +1228,10 @@ function applyEnvironmentOrchestrationEvent(
           : {}),
         ...(event.payload.scripts !== undefined
           ? { scripts: mapProjectScripts(event.payload.scripts) }
+          : {}),
+        ...(event.payload.hyprnav !== undefined ? { hyprnav: event.payload.hyprnav } : {}),
+        ...(event.payload.worktreeGroupTitles !== undefined
+          ? { worktreeGroupTitles: event.payload.worktreeGroupTitles }
           : {}),
         updatedAt: event.payload.updatedAt,
       };

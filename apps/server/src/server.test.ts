@@ -5,6 +5,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 
 import {
   CommandId,
+  DEFAULT_PROJECT_HYPRNAV_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   EventId,
@@ -56,6 +57,7 @@ const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
 import type { ServerConfigShape } from "./config.ts";
 import { deriveServerPaths, ServerConfig } from "./config.ts";
+import { DesktopControlLive } from "./desktopControl.ts";
 import { makeRoutesLayer } from "./server.ts";
 import { resolveAttachmentRelativePath } from "./attachmentPaths.ts";
 import {
@@ -151,6 +153,7 @@ const makeDefaultOrchestrationReadModel = () => {
         workspaceRoot: "/tmp/default-project",
         defaultModelSelection,
         scripts: [],
+        hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
         createdAt: now,
         updatedAt: now,
         deletedAt: null,
@@ -724,6 +727,7 @@ const buildAppUnderTest = (options?: {
         }),
       ),
       Layer.provideMerge(makeAuthTestLayer()),
+      Layer.provideMerge(DesktopControlLive),
       Layer.provide(workspaceAndProjectServicesLayer),
       Layer.provideMerge(FetchHttpClient.layer),
       Layer.provide(layerConfig),
@@ -2503,6 +2507,46 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("preserves explicit null hyprnav during websocket project.meta.update dispatch", () =>
+    Effect.gen(function* () {
+      const dispatchedCommands: Array<OrchestrationCommand> = [];
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command);
+                return { sequence: dispatchedCommands.length };
+              }),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const response = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "project.meta.update",
+            commandId: CommandId.make("cmd-project-meta-update-null-hyprnav"),
+            projectId: defaultProjectId,
+            hyprnav: null,
+          }),
+        ),
+      );
+
+      assert.equal(response.sequence, 1);
+      assert.deepStrictEqual(dispatchedCommands, [
+        {
+          type: "project.meta.update",
+          commandId: CommandId.make("cmd-project-meta-update-null-hyprnav"),
+          projectId: defaultProjectId,
+          hyprnav: null,
+        },
+      ]);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("routes websocket rpc projects.writeFile errors", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -3214,6 +3258,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             workspaceRoot: "/tmp/project-a",
             defaultModelSelection,
             scripts: [],
+            hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
             createdAt: now,
             updatedAt: now,
             deletedAt: null,
@@ -3380,6 +3425,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   workspaceRoot: "/tmp/default-project",
                   defaultModelSelection,
                   scripts: [],
+                  hyprnav: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
                   createdAt: "2026-04-05T00:00:00.000Z",
                   updatedAt: "2026-04-05T00:00:00.000Z",
                 },

@@ -61,6 +61,8 @@ import type {
   OrchestrationShellStreamItem,
   OrchestrationSubscribeThreadInput,
   OrchestrationThreadStreamItem,
+  ProjectHyprnavScope,
+  ProjectHyprnavSettings,
 } from "./orchestration.ts";
 import { EnvironmentId } from "./baseSchemas.ts";
 import { AuthBearerBootstrapResult, AuthSessionState, AuthWebSocketTokenResult } from "./auth.ts";
@@ -369,6 +371,38 @@ export const PickFolderOptionsSchema = Schema.Struct({
   initialPath: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 
+export interface DesktopHyprnavScopedSlot {
+  slot: number;
+  scope: ProjectHyprnavScope;
+}
+
+export interface DesktopHyprnavCorkdiffConnectionInput {
+  serverUrl: string;
+  token: string | null;
+}
+
+export interface DesktopHyprnavSyncInput {
+  projectRoot: string;
+  worktreePath?: string | null | undefined;
+  threadId?: string | null | undefined;
+  threadTitle?: string | null | undefined;
+  hyprnav: ProjectHyprnavSettings;
+  preferredEditor?: EditorId | null | undefined;
+  clearBindings?: readonly DesktopHyprnavScopedSlot[] | undefined;
+  clearNames?: readonly DesktopHyprnavScopedSlot[] | undefined;
+  corkdiffConnection?: DesktopHyprnavCorkdiffConnectionInput | null | undefined;
+  lock: boolean;
+}
+
+export interface DesktopHyprnavLockInput {
+  envId: string;
+}
+
+export interface DesktopHyprnavSyncResult {
+  status: "ok" | "unavailable" | "error";
+  message: string | null;
+}
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   getLocalEnvironmentBootstrap: () => DesktopEnvironmentBootstrap | null;
@@ -414,6 +448,26 @@ export interface DesktopBridge {
     position?: { x: number; y: number },
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
+  toggleExternalCorkdiff?: (input: {
+    cwd: string;
+    serverUrl: string;
+    token: string | null;
+    threadId: string;
+  }) => Promise<{
+    workspaceId: number;
+    reused: boolean;
+  }>;
+  openWorktreeTerminal?: (input: { cwd: string }) => Promise<{
+    worktreePath: string;
+  }>;
+  listOpenWorktreeTerminals?: () => Promise<
+    ReadonlyArray<{
+      worktreePath: string;
+    }>
+  >;
+  syncHyprnavEnvironment?: (input: DesktopHyprnavSyncInput) => Promise<DesktopHyprnavSyncResult>;
+  lockHyprnavEnvironment?: (input: DesktopHyprnavLockInput) => Promise<DesktopHyprnavSyncResult>;
+  focusAppWindow?: () => Promise<void>;
   onMenuAction: (listener: (action: string) => void) => () => void;
   getUpdateState: () => Promise<DesktopUpdateState>;
   setUpdateChannel: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateState>;

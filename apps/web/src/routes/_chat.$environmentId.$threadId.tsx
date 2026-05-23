@@ -1,5 +1,6 @@
+import { scopeProjectRef } from "@t3tools/client-runtime";
 import { createFileRoute, retainSearchParams, useNavigate } from "@tanstack/react-router";
-import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import ChatView from "../components/ChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
@@ -16,12 +17,29 @@ import {
   parseDiffRouteSearch,
   stripDiffSearchParams,
 } from "../diffRouteSearch";
+import { resolveAndPersistPreferredEditor } from "../editorPreferences";
+import { isElectron } from "../env";
+import { usePrimaryEnvironmentId } from "../environments/primary";
 import { useMediaQuery } from "../hooks/useMediaQuery";
+import { useSettings } from "../hooks/useSettings";
+import {
+  projectHyprnavNeedsCorkdiffConnection,
+  resolveProjectHyprnavSettings,
+  resolveActiveHyprnavSyncTarget,
+} from "../hyprnavSettings";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
-import { selectEnvironmentState, selectThreadExistsByRef, useStore } from "../store";
+import { useServerAvailableEditors } from "../rpc/serverState";
+import {
+  selectEnvironmentState,
+  selectProjectByRef,
+  selectThreadExistsByRef,
+  useStore,
+} from "../store";
 import { createThreadSelectorByRef } from "../storeSelectors";
 import { resolveThreadRouteRef, buildThreadRouteParams } from "../threadRoutes";
+import { toastManager } from "../components/ui/toast";
 import { RightPanelSheet } from "../components/RightPanelSheet";
+import { resolveExternalCorkdiffConnection } from "../lib/externalCorkdiff";
 import { Sidebar, SidebarInset, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
 
 const DiffPanel = lazy(() => import("../components/DiffPanel"));
@@ -148,6 +166,13 @@ function ChatThreadRouteView() {
     (store) => selectEnvironmentState(store, threadRef?.environmentId ?? null).bootstrapComplete,
   );
   const serverThread = useStore(useMemo(() => createThreadSelectorByRef(threadRef), [threadRef]));
+  const serverThreadProjectRef = serverThread
+    ? scopeProjectRef(serverThread.environmentId, serverThread.projectId)
+    : null;
+  const serverThreadProject = useStore((store) =>
+    selectProjectByRef(store, serverThreadProjectRef),
+  );
+  const availableEditors = useServerAvailableEditors();
   const threadExists = useStore((store) => selectThreadExistsByRef(store, threadRef));
   const environmentHasServerThreads = useStore(
     (store) => selectEnvironmentState(store, threadRef?.environmentId ?? null).threadIds.length > 0,
@@ -167,9 +192,39 @@ function ChatThreadRouteView() {
   const routeThreadExists = threadExists || draftThreadExists;
   const serverThreadStarted = threadHasStarted(serverThread);
   const environmentHasAnyThreads = environmentHasServerThreads || environmentHasDraftThreads;
-  const diffOpen = search.diff === "1";
+  const diffOpen = !isElectron && search.diff === "1";
   const shouldUseDiffSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const defaultProjectHyprnavSettings = useSettings(
+    (settings) => settings.defaultProjectHyprnavSettings,
+  );
+  const localDesktopEnvironmentId = isElectron ? primaryEnvironmentId : null;
+  const hyprnavSyncTarget = resolveActiveHyprnavSyncTarget({
+    localEnvironmentId: localDesktopEnvironmentId,
+    activeThread: serverThread,
+    project: serverThreadProject,
+  });
+  const effectiveProjectHyprnav = serverThreadProject
+    ? resolveProjectHyprnavSettings(serverThreadProject.hyprnav, defaultProjectHyprnavSettings)
+    : null;
   const currentThreadKey = threadRef ? `${threadRef.environmentId}:${threadRef.threadId}` : null;
+  const needsPreferredEditor =
+    effectiveProjectHyprnav?.bindings.some(
+      (binding) => binding.action === "open-favorite-editor",
+    ) ?? false;
+  const needsCorkdiffConnection = effectiveProjectHyprnav
+    ? projectHyprnavNeedsCorkdiffConnection(effectiveProjectHyprnav)
+    : false;
+  const hyprnavSettingsKey = effectiveProjectHyprnav ? JSON.stringify(effectiveProjectHyprnav) : "";
+  const availableEditorKey = needsPreferredEditor ? availableEditors.join(",") : "";
+  const hyprnavTargetKey = hyprnavSyncTarget
+    ? `${hyprnavSyncTarget.projectRoot}:${hyprnavSyncTarget.worktreePath ?? ""}:${hyprnavSyncTarget.threadId}:${hyprnavSyncTarget.threadTitle}`
+    : null;
+  const hyprnavSyncRequestKey =
+    currentThreadKey && hyprnavTargetKey
+      ? `${currentThreadKey}:${hyprnavTargetKey}:${availableEditorKey}:${needsCorkdiffConnection ? "corkdiff" : "plain"}:${hyprnavSettingsKey}`
+      : null;
+  const lastHyprnavSyncRequestKeyRef = useRef<string | null>(null);
   const [diffPanelMountState, setDiffPanelMountState] = useState(() => ({
     threadKey: currentThreadKey,
     hasOpenedDiff: diffOpen,
@@ -231,11 +286,106 @@ function ChatThreadRouteView() {
     finalizePromotedDraftThreadByRef(threadRef);
   }, [draftThread?.promotedTo, serverThreadStarted, threadRef]);
 
+  useEffect(() => {
+    if (!isElectron || !hyprnavSyncTarget || !hyprnavSyncRequestKey || !effectiveProjectHyprnav) {
+      return;
+    }
+
+    const syncHyprnavEnvironment = window.desktopBridge?.syncHyprnavEnvironment;
+    if (typeof syncHyprnavEnvironment !== "function") {
+      return;
+    }
+
+    if (lastHyprnavSyncRequestKeyRef.current === hyprnavSyncRequestKey) {
+      return;
+    }
+    lastHyprnavSyncRequestKeyRef.current = hyprnavSyncRequestKey;
+
+    let cancelled = false;
+    void (async () => {
+      const preferredEditor = needsPreferredEditor
+        ? resolveAndPersistPreferredEditor(availableEditors)
+        : null;
+      const corkdiffConnection = needsCorkdiffConnection
+        ? await (async () => {
+            const bootstrap = window.desktopBridge?.getLocalEnvironmentBootstrap() ?? null;
+            const bridgeWsUrl = bootstrap?.wsBaseUrl ?? null;
+            if (!bridgeWsUrl) {
+              throw new Error("Desktop websocket URL is unavailable.");
+            }
+
+            return await resolveExternalCorkdiffConnection({
+              wsBaseUrl: bridgeWsUrl,
+              httpBaseUrl: bootstrap?.httpBaseUrl ?? null,
+            });
+          })()
+        : null;
+
+      return await syncHyprnavEnvironment({
+        projectRoot: hyprnavSyncTarget.projectRoot,
+        worktreePath: hyprnavSyncTarget.worktreePath,
+        threadId: hyprnavSyncTarget.threadId,
+        threadTitle: hyprnavSyncTarget.threadTitle,
+        hyprnav: effectiveProjectHyprnav,
+        preferredEditor,
+        clearBindings: [],
+        clearNames: [],
+        corkdiffConnection,
+        lock: true,
+      });
+    })()
+      .then((result) => {
+        if (cancelled || result.status === "ok") {
+          return;
+        }
+        toastManager.add({
+          type: "warning",
+          title: "Hyprnav sync failed",
+          description: result.message ?? "Hyprnav could not sync the active worktree.",
+        });
+      })
+      .catch((error: unknown) => {
+        if (cancelled) {
+          return;
+        }
+        toastManager.add({
+          type: "warning",
+          title: "Hyprnav sync failed",
+          description:
+            error instanceof Error ? error.message : "Hyprnav could not sync the active worktree.",
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    availableEditors,
+    hyprnavSyncTarget,
+    hyprnavSyncRequestKey,
+    hyprnavSettingsKey,
+    needsCorkdiffConnection,
+    needsPreferredEditor,
+    effectiveProjectHyprnav,
+  ]);
+
   if (!threadRef || !bootstrapComplete || !routeThreadExists) {
     return null;
   }
 
   const shouldRenderDiffContent = diffOpen || hasOpenedDiff;
+
+  if (isElectron) {
+    return (
+      <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
+        <ChatView
+          environmentId={threadRef.environmentId}
+          threadId={threadRef.threadId}
+          routeKind="server"
+        />
+      </SidebarInset>
+    );
+  }
 
   if (!shouldUseDiffSheet) {
     return (

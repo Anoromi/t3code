@@ -1,5 +1,6 @@
 import {
   CommandId,
+  DEFAULT_PROJECT_HYPRNAV_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   type DesktopBridge,
   EnvironmentId,
@@ -605,7 +606,9 @@ describe("wsApi", () => {
       dismissedProviderUpdateNotificationKeys: [],
       diffIgnoreWhitespace: true,
       diffWordWrap: true,
+      defaultProjectHyprnavSettings: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
       favorites: [],
+      groupedProjectHyprnavStateByLogicalProjectKey: {},
       providerModelPreferences: {},
       sidebarProjectGroupingMode: "repository_path" as const,
       sidebarProjectGroupingOverrides: {
@@ -668,7 +671,9 @@ describe("wsApi", () => {
       dismissedProviderUpdateNotificationKeys: [],
       diffIgnoreWhitespace: true,
       diffWordWrap: true,
+      defaultProjectHyprnavSettings: DEFAULT_PROJECT_HYPRNAV_SETTINGS,
       favorites: [],
+      groupedProjectHyprnavStateByLogicalProjectKey: {},
       providerModelPreferences: {},
       sidebarProjectGroupingMode: "repository_path" as const,
       sidebarProjectGroupingOverrides: {

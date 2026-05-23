@@ -6,6 +6,7 @@ import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 
 import * as NetService from "@t3tools/shared/Net";
+import { resolveDesktopDaemonPaths } from "@t3tools/shared/desktopDaemon";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
@@ -21,6 +22,8 @@ import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
+import * as DesktopWindow from "../window/DesktopWindow.ts";
+import { acquireDesktopDaemonController } from "../desktopDaemon.ts";
 
 const DEFAULT_DESKTOP_BACKEND_PORT = 3773;
 const MAX_TCP_PORT = 65_535;
@@ -47,6 +50,14 @@ class DesktopDevelopmentBackendPortRequiredError extends Data.TaggedError(
 )<{}> {
   override get message() {
     return "T3CODE_PORT is required in desktop development.";
+  }
+}
+
+class DesktopDaemonAcquireError extends Data.TaggedError("DesktopDaemonAcquireError")<{
+  readonly cause: unknown;
+}> {
+  override get message() {
+    return `Failed to acquire desktop daemon controller: ${String(this.cause)}`;
   }
 }
 
@@ -193,6 +204,7 @@ const startup = Effect.gen(function* () {
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const updates = yield* DesktopUpdates.DesktopUpdates;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
 
   yield* shellEnvironment.installIntoProcess;
   const userDataPath = yield* appIdentity.resolveUserDataPath;
@@ -213,6 +225,39 @@ const startup = Effect.gen(function* () {
   );
   yield* logStartupInfo("app ready");
   yield* appIdentity.configure;
+
+  const daemonController = yield* Effect.tryPromise({
+    try: () =>
+      acquireDesktopDaemonController({
+        paths: resolveDesktopDaemonPaths(environment.stateDir, environment.platform),
+        onFocus: () =>
+          // @effect-diagnostics-next-line runEffectInsideEffect:off
+          Effect.runPromise(
+            desktopWindow.activate.pipe(
+              Effect.catch((error) =>
+                logStartupError("failed to focus main window from desktop daemon", {
+                  message: error.message,
+                }),
+              ),
+            ),
+          ),
+        platform: environment.platform,
+      }),
+    catch: (error) => new DesktopDaemonAcquireError({ cause: error }),
+  }).pipe(Effect.catchCause((cause) => fatalStartupCause("desktop-daemon", cause)));
+
+  if (daemonController.kind === "secondary") {
+    yield* logStartupInfo("focused existing desktop instance");
+    const shutdown = yield* DesktopLifecycle.DesktopShutdown;
+    yield* shutdown.request;
+    yield* electronApp.quit;
+    return;
+  }
+
+  yield* Effect.addFinalizer(() =>
+    Effect.promise(() => daemonController.close()).pipe(Effect.ignore),
+  );
+
   yield* applicationMenu.configure;
   yield* electronProtocol.registerDesktopFileProtocol;
   yield* updates.configure;

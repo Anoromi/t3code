@@ -288,6 +288,27 @@ it.layer(
     }),
   );
 
+  it.effect("spawns explicit terminal launch commands without shell fallback", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+
+      yield* manager.open(
+        openInput({
+          command: {
+            file: "bun",
+            args: ["run", "dev"],
+          },
+        }),
+      );
+
+      expect(ptyAdapter.spawnInputs).toHaveLength(1);
+      expect(ptyAdapter.spawnInputs[0]).toMatchObject({
+        shell: "bun",
+        args: ["run", "dev"],
+      });
+    }),
+  );
+
   const makeDirectory = (filePath: string) =>
     Effect.flatMap(Effect.service(FileSystem.FileSystem), (fs) =>
       fs.makeDirectory(filePath, { recursive: true }),

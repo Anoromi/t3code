@@ -1,7 +1,13 @@
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off anyUnknownInErrorContext:off
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
+
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -13,6 +19,7 @@ import {
   type AuthAccessStreamEvent,
   AuthSessionId,
   CommandId,
+  type DesktopControlEvent,
   EventId,
   type OrchestrationCommand,
   type GitActionProgressEvent,
@@ -39,6 +46,7 @@ import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import { CheckpointDiffQuery } from "./checkpointing/Services/CheckpointDiffQuery.ts";
 import { ServerConfig } from "./config.ts";
+import { DesktopControl, type DesktopControlShape } from "./desktopControl.ts";
 import { Keybindings } from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
 import { normalizeDispatchCommand } from "./orchestration/Normalizer.ts";
@@ -157,7 +165,7 @@ function toAuthAccessStreamEvent(
   }
 }
 
-const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
+const makeWsRpcLayer = (currentSessionId: AuthSessionId, desktopControl: DesktopControlShape) =>
   WsRpcGroup.toLayer(
     Effect.gen(function* () {
       const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
@@ -1137,6 +1145,31 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             ),
             { "rpc.aggregate": "terminal" },
           ),
+        [WS_METHODS.desktopRequestCorkdiffAppFocus]: ({ threadId }) =>
+          observeRpcEffect(
+            WS_METHODS.desktopRequestCorkdiffAppFocus,
+            desktopControl
+              .publish({
+                type: "corkdiff.focusAppRequested",
+                threadId,
+              })
+              .pipe(Effect.as({ accepted: true as const })),
+            { "rpc.aggregate": "desktop" },
+          ),
+        [WS_METHODS.subscribeDesktopControl]: (_input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeDesktopControl,
+            Stream.callback<DesktopControlEvent>((queue) =>
+              Effect.acquireRelease(
+                desktopControl.stream.pipe(
+                  Stream.runForEach((event) => Queue.offer(queue, event)),
+                  Effect.forkScoped,
+                ),
+                (fiber) => Fiber.interrupt(fiber),
+              ),
+            ),
+            { "rpc.aggregate": "desktop" },
+          ),
         [WS_METHODS.subscribeServerConfig]: (_input) =>
           observeRpcStreamEffect(
             WS_METHODS.subscribeServerConfig,
@@ -1248,12 +1281,13 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         const request = yield* HttpServerRequest.HttpServerRequest;
         const serverAuth = yield* ServerAuth;
         const sessions = yield* SessionCredentialService;
+        const desktopControl = yield* DesktopControl;
         const session = yield* serverAuth.authenticateWebSocketUpgrade(request);
         const rpcWebSocketHttpEffect = yield* RpcServer.toHttpEffectWebsocket(WsRpcGroup, {
           disableTracing: true,
         }).pipe(
           Effect.provide(
-            makeWsRpcLayer(session.sessionId).pipe(
+            makeWsRpcLayer(session.sessionId, desktopControl).pipe(
               Layer.provideMerge(RpcSerialization.layerJson),
               Layer.provide(ProviderMaintenanceRunner.layer),
               Layer.provide(

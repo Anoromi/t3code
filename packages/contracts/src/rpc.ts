@@ -4,6 +4,7 @@ import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import { AuthAccessStreamEvent } from "./auth.ts";
+import { PositiveInt, ThreadId } from "./baseSchemas.ts";
 import {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
@@ -157,11 +158,28 @@ export const WS_METHODS = {
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
+  subscribeDesktopControl: "subscribeDesktopControl",
+  desktopRequestCorkdiffAppFocus: "desktop.requestCorkdiffAppFocus",
   subscribeTerminalEvents: "subscribeTerminalEvents",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
 } as const;
+
+export const DesktopRequestCorkdiffAppFocusInput = Schema.Struct({
+  threadId: ThreadId,
+});
+
+export const DesktopRequestCorkdiffAppFocusResult = Schema.Struct({
+  accepted: Schema.Literal(true),
+});
+
+export const DesktopControlEvent = Schema.Struct({
+  type: Schema.Literal("corkdiff.focusAppRequested"),
+  threadId: ThreadId,
+  workspaceId: Schema.optional(PositiveInt),
+});
+export type DesktopControlEvent = typeof DesktopControlEvent.Type;
 
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
   payload: ServerUpsertKeybindingInput,
@@ -472,6 +490,20 @@ export const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess,
   stream: true,
 });
 
+export const WsDesktopRequestCorkdiffAppFocusRpc = Rpc.make(
+  WS_METHODS.desktopRequestCorkdiffAppFocus,
+  {
+    payload: DesktopRequestCorkdiffAppFocusInput,
+    success: DesktopRequestCorkdiffAppFocusResult,
+  },
+);
+
+export const WsSubscribeDesktopControlRpc = Rpc.make(WS_METHODS.subscribeDesktopControl, {
+  payload: Schema.Struct({}),
+  success: DesktopControlEvent,
+  stream: true,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -514,6 +546,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,
+  WsDesktopRequestCorkdiffAppFocusRpc,
+  WsSubscribeDesktopControlRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetTurnDiffRpc,
   WsOrchestrationGetFullThreadDiffRpc,

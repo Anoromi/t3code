@@ -44,6 +44,11 @@ import Migration0028 from "./Migrations/028_ProjectionThreadSessionInstanceId.ts
 import Migration0029 from "./Migrations/029_ProjectionThreadDetailOrderingIndexes.ts";
 import Migration0030 from "./Migrations/030_ProjectionThreadShellArchiveIndexes.ts";
 import Migration0031 from "./Migrations/031_ProjectionThreadsForkOrigin.ts";
+import Migration0032 from "./Migrations/032_ProjectionProjectsHyprnavSettings.ts";
+import Migration0033 from "./Migrations/033_NormalizeProjectHyprnavScopes.ts";
+import Migration0034 from "./Migrations/034_RestoreInheritedProjectHyprnavNulls.ts";
+import Migration0035 from "./Migrations/035_RepairProviderInstanceIdProjectionColumns.ts";
+import Migration0036 from "./Migrations/036_RepairProjectionThreadLatestTurnIds.ts";
 import Migration0037 from "./Migrations/037_ProviderSessionRuntimeIndexes.ts";
 
 /**
@@ -88,6 +93,11 @@ export const migrationEntries = [
   [29, "ProjectionThreadDetailOrderingIndexes", Migration0029],
   [30, "ProjectionThreadShellArchiveIndexes", Migration0030],
   [31, "ProjectionThreadsForkOrigin", Migration0031],
+  [32, "ProjectionProjectsHyprnavSettings", Migration0032],
+  [33, "NormalizeProjectHyprnavScopes", Migration0033],
+  [34, "RestoreInheritedProjectHyprnavNulls", Migration0034],
+  [35, "RepairProviderInstanceIdProjectionColumns", Migration0035],
+  [36, "RepairProjectionThreadLatestTurnIds", Migration0036],
   [37, "ProviderSessionRuntimeIndexes", Migration0037],
 ] as const;
 
