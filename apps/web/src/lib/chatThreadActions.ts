@@ -1,5 +1,10 @@
 import { scopeProjectRef } from "@t3tools/client-runtime";
-import type { EnvironmentId, ProjectId, ScopedProjectRef } from "@t3tools/contracts";
+import type {
+  CodexReasoningEffort,
+  EnvironmentId,
+  ProjectId,
+  ScopedProjectRef,
+} from "@t3tools/contracts";
 import type { DraftThreadEnvMode } from "../composerDraftStore";
 
 interface ThreadContextLike {
@@ -20,6 +25,8 @@ interface NewThreadHandler {
       branch?: string | null;
       worktreePath?: string | null;
       envMode?: DraftThreadEnvMode;
+      codexFastMode?: boolean;
+      codexReasoningEffort?: CodexReasoningEffort;
     },
   ): Promise<void>;
 }
@@ -31,6 +38,8 @@ export interface ChatThreadActionContext {
   readonly activeThread: ThreadContextLike | undefined;
   readonly defaultProjectRef: ScopedProjectRef | null;
   readonly defaultThreadEnvMode: DraftThreadEnvMode;
+  readonly defaultCodexFastMode?: boolean;
+  readonly defaultCodexReasoningEffort?: CodexReasoningEffort;
   readonly handleNewThread: NewThreadHandler;
 }
 
@@ -57,12 +66,16 @@ function buildContextualThreadOptions(context: ChatThreadActionContext): NewThre
     envMode:
       context.activeDraftThread?.envMode ??
       (context.activeThread?.worktreePath ? "worktree" : "local"),
+    codexFastMode: context.defaultCodexFastMode ?? false,
+    codexReasoningEffort: context.defaultCodexReasoningEffort ?? "high",
   };
 }
 
 function buildDefaultThreadOptions(context: ChatThreadActionContext): NewThreadOptions {
   return {
     envMode: context.defaultThreadEnvMode,
+    codexFastMode: context.defaultCodexFastMode ?? false,
+    codexReasoningEffort: context.defaultCodexReasoningEffort ?? "high",
   };
 }
 

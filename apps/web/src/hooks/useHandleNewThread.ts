@@ -1,5 +1,12 @@
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime";
-import { DEFAULT_RUNTIME_MODE, type ScopedProjectRef } from "@t3tools/contracts";
+import {
+  DEFAULT_CODEX_REASONING_EFFORT,
+  DEFAULT_RUNTIME_MODE,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type CodexReasoningEffort,
+  type ScopedProjectRef,
+} from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
@@ -10,11 +17,7 @@ import {
 } from "../composerDraftStore";
 import { newDraftId, newThreadId } from "../lib/utils";
 import { orderItemsByPreferredIds } from "../components/Sidebar.logic";
-import {
-  deriveLogicalProjectKeyFromSettings,
-  getProjectOrderKey,
-  selectProjectGroupingSettings,
-} from "../logicalProject";
+import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
 import { selectProjectsAcrossEnvironments, useStore } from "../store";
 import { createThreadSelectorByRef } from "../storeSelectors";
 import { resolveThreadRouteTarget } from "../threadRoutes";
@@ -23,7 +26,12 @@ import { useSettings } from "./useSettings";
 
 function useNewThreadState() {
   const projects = useStore(useShallow((store) => selectProjectsAcrossEnvironments(store)));
-  const projectGroupingSettings = useSettings(selectProjectGroupingSettings);
+  const projectGroupingSettings = useSettings((settings) => ({
+    defaultCodexFastMode: settings.defaultCodexFastMode,
+    defaultCodexReasoningEffort: settings.defaultCodexReasoningEffort,
+    sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
+    sidebarProjectGroupingOverrides: settings.sidebarProjectGroupingOverrides,
+  }));
   const router = useRouter();
   const getCurrentRouteTarget = useCallback(() => {
     const currentRouteParams = router.state.matches[router.state.matches.length - 1]?.params ?? {};
@@ -37,13 +45,17 @@ function useNewThreadState() {
         branch?: string | null;
         worktreePath?: string | null;
         envMode?: DraftThreadEnvMode;
+        codexFastMode?: boolean;
+        codexReasoningEffort?: CodexReasoningEffort;
       },
     ): Promise<void> => {
       const {
         getDraftSessionByLogicalProjectKey,
         getDraftSession,
         getDraftThread,
+        getComposerDraft,
         applyStickyState,
+        setProviderModelOptions,
         setDraftThreadContext,
         setLogicalProjectDraftThreadId,
       } = useComposerDraftStore.getState();
@@ -128,6 +140,27 @@ function useNewThreadState() {
           runtimeMode: DEFAULT_RUNTIME_MODE,
         });
         applyStickyState(draftId);
+        const codexFastMode =
+          options?.codexFastMode ?? projectGroupingSettings.defaultCodexFastMode;
+        const codexReasoningEffort =
+          options?.codexReasoningEffort ?? projectGroupingSettings.defaultCodexReasoningEffort;
+        const seededDraft = getComposerDraft(draftId);
+        if (
+          seededDraft?.activeProvider !== "claudeAgent" &&
+          (codexFastMode === true || codexReasoningEffort !== DEFAULT_CODEX_REASONING_EFFORT)
+        ) {
+          const nextOptions = [
+            ...(seededDraft?.modelSelectionByProvider[ProviderInstanceId.make("codex")]?.options ??
+              []),
+            ...(codexFastMode === true ? [{ id: "fastMode", value: true }] : []),
+            ...(codexReasoningEffort !== DEFAULT_CODEX_REASONING_EFFORT
+              ? [{ id: "reasoningEffort", value: codexReasoningEffort }]
+              : []),
+          ];
+          setProviderModelOptions(draftId, ProviderDriverKind.make("codex"), nextOptions, {
+            persistSticky: true,
+          });
+        }
 
         await router.navigate({
           to: "/draft/$draftId",
@@ -170,7 +203,7 @@ export function useHandleNewThread() {
     return orderItemsByPreferredIds({
       items: projects,
       preferredIds: projectOrder,
-      getId: getProjectOrderKey,
+      getId: (project) => scopedProjectKey(scopeProjectRef(project.environmentId, project.id)),
     });
   }, [projectOrder, projects]);
   const handleNewThread = useNewThreadState();

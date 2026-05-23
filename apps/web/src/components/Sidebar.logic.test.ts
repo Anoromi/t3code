@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProviderDriverKind } from "@t3tools/contracts";
 
 import {
+  buildSidebarProjectThreadEntries,
   createThreadJumpHintVisibilityController,
+  flattenSidebarProjectThreadIds,
   getSidebarThreadIdsToPrewarm,
   getVisibleSidebarThreadIds,
   resolveAdjacentThreadId,
@@ -64,6 +66,70 @@ describe("hasUnseenCompletion", () => {
         session: null,
       }),
     ).toBe(true);
+  });
+});
+
+describe("buildSidebarProjectThreadEntries", () => {
+  it("groups sibling threads that share a worktree", () => {
+    const worktreePath = "/tmp/project/.worktrees/feature-a";
+    const entries = buildSidebarProjectThreadEntries(
+      makeProject({
+        worktreeGroupTitles: [
+          {
+            worktreePath,
+            title: "Feature A",
+            status: "ready",
+            sourceThreadId: ThreadId.make("thread-a"),
+            generationId: "generation-a",
+            updatedAt: "2026-03-09T10:10:00.000Z",
+          },
+        ],
+      }),
+      [
+        makeThread({
+          id: ThreadId.make("thread-a"),
+          worktreePath,
+        }),
+        makeThread({
+          id: ThreadId.make("thread-b"),
+          worktreePath,
+        }),
+        makeThread({
+          id: ThreadId.make("thread-c"),
+          worktreePath: null,
+        }),
+      ],
+    );
+
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({
+      kind: "worktree-group",
+      label: "Feature A",
+      worktreeTitleStatus: "ready",
+      worktreePath,
+    });
+    expect(flattenSidebarProjectThreadIds(entries)).toEqual([
+      ThreadId.make("thread-a"),
+      ThreadId.make("thread-b"),
+      ThreadId.make("thread-c"),
+    ]);
+  });
+
+  it("keeps single worktree threads ungrouped", () => {
+    const entries = buildSidebarProjectThreadEntries(makeProject(), [
+      makeThread({
+        id: ThreadId.make("thread-a"),
+        worktreePath: "/tmp/project/.worktrees/feature-a",
+      }),
+    ]);
+
+    expect(entries).toEqual([
+      {
+        kind: "thread",
+        positionCreatedAt: "2026-03-09T10:00:00.000Z",
+        thread: expect.objectContaining({ id: ThreadId.make("thread-a") }),
+      },
+    ]);
   });
 });
 
@@ -516,6 +582,22 @@ describe("resolveThreadStatusPill", () => {
     expect(
       resolveThreadStatusPill({
         thread: baseThread,
+      }),
+    ).toMatchObject({ label: "Working", pulse: true });
+  });
+
+  it("shows working when a turn start is queued before the provider reports a turn id", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          hasPendingTurnStart: true,
+          session: {
+            ...baseThread.session,
+            status: "ready",
+            orchestrationStatus: "ready",
+          },
+        },
       }),
     ).toMatchObject({ label: "Working", pulse: true });
   });

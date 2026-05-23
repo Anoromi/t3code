@@ -4,6 +4,8 @@ import {
   MODEL_SLUG_ALIASES_BY_PROVIDER,
   type ModelCapabilities,
   type ModelSelection,
+  type ClaudeModelOptions,
+  type CodexModelOptions,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderOptionDescriptor,
@@ -11,6 +13,7 @@ import {
 } from "@t3tools/contracts";
 
 const DEFAULT_PROVIDER_DRIVER_KIND = ProviderDriverKind.make("codex");
+const CODEX_REASONING_EFFORT_OPTIONS = ["xhigh", "high", "medium", "low"] as const;
 
 export interface SelectableModelOption {
   slug: string;
@@ -18,10 +21,24 @@ export interface SelectableModelOption {
 }
 
 export function createModelCapabilities(input: {
-  optionDescriptors: ReadonlyArray<ProviderOptionDescriptor>;
+  optionDescriptors?: ReadonlyArray<ProviderOptionDescriptor>;
+  reasoningEffortLevels?: ModelCapabilities["reasoningEffortLevels"];
+  promptInjectedEffortLevels?: ModelCapabilities["promptInjectedEffortLevels"];
+  contextWindowOptions?: ModelCapabilities["contextWindowOptions"];
+  supportsFastMode?: boolean;
+  supportsThinkingToggle?: boolean;
 }): ModelCapabilities {
   return {
-    optionDescriptors: input.optionDescriptors.map(cloneDescriptor),
+    optionDescriptors: (input.optionDescriptors ?? []).map(cloneDescriptor),
+    ...(input.reasoningEffortLevels ? { reasoningEffortLevels: input.reasoningEffortLevels } : {}),
+    ...(input.promptInjectedEffortLevels
+      ? { promptInjectedEffortLevels: input.promptInjectedEffortLevels }
+      : {}),
+    ...(input.contextWindowOptions ? { contextWindowOptions: input.contextWindowOptions } : {}),
+    ...(input.supportsFastMode !== undefined ? { supportsFastMode: input.supportsFastMode } : {}),
+    ...(input.supportsThinkingToggle !== undefined
+      ? { supportsThinkingToggle: input.supportsThinkingToggle }
+      : {}),
   };
 }
 
@@ -226,6 +243,96 @@ export function getModelSelectionOptionDescriptors(
     caps,
     selections: modelSelection.options,
   });
+}
+
+export function hasEffortLevel(caps: ModelCapabilities, value: string): boolean {
+  return caps.reasoningEffortLevels?.some((level) => level.value === value) ?? false;
+}
+
+export function getDefaultEffort(caps: ModelCapabilities): string | null {
+  return caps.reasoningEffortLevels?.find((level) => level.isDefault)?.value ?? null;
+}
+
+export function resolveEffort(
+  caps: ModelCapabilities,
+  raw: string | null | undefined,
+): string | undefined {
+  const defaultValue = getDefaultEffort(caps);
+  const trimmed = typeof raw === "string" ? raw.trim() : null;
+  if (
+    trimmed &&
+    !(caps.promptInjectedEffortLevels ?? []).includes(trimmed) &&
+    hasEffortLevel(caps, trimmed)
+  ) {
+    return trimmed;
+  }
+  return defaultValue ?? undefined;
+}
+
+export function hasContextWindowOption(caps: ModelCapabilities, value: string): boolean {
+  return caps.contextWindowOptions?.some((option) => option.value === value) ?? false;
+}
+
+export function getDefaultContextWindow(caps: ModelCapabilities): string | null {
+  return caps.contextWindowOptions?.find((option) => option.isDefault)?.value ?? null;
+}
+
+export function resolveContextWindow(
+  caps: ModelCapabilities,
+  raw: string | null | undefined,
+): string | undefined {
+  const defaultValue = getDefaultContextWindow(caps);
+  if (!raw) return defaultValue ?? undefined;
+  return hasContextWindowOption(caps, raw) ? raw : (defaultValue ?? undefined);
+}
+
+export function normalizeCodexModelOptionsWithCapabilities(
+  caps: ModelCapabilities,
+  modelOptions: CodexModelOptions | null | undefined,
+): CodexModelOptions | undefined {
+  const reasoningEffort = resolveEffort(caps, modelOptions?.reasoningEffort);
+  const fastMode = caps.supportsFastMode ? modelOptions?.fastMode : undefined;
+  const nextOptions: CodexModelOptions = {
+    ...(reasoningEffort
+      ? { reasoningEffort: reasoningEffort as CodexModelOptions["reasoningEffort"] }
+      : {}),
+    ...(fastMode !== undefined ? { fastMode } : {}),
+  };
+  return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
+}
+
+export function normalizeCodexModelOptionsWithoutCapabilities(
+  modelOptions: CodexModelOptions | null | undefined,
+): CodexModelOptions | undefined {
+  const reasoningEffort = modelOptions?.reasoningEffort;
+  const nextOptions: {
+    reasoningEffort?: CodexModelOptions["reasoningEffort"];
+    fastMode?: CodexModelOptions["fastMode"];
+  } = {};
+  if (reasoningEffort && CODEX_REASONING_EFFORT_OPTIONS.includes(reasoningEffort)) {
+    nextOptions.reasoningEffort = reasoningEffort;
+  }
+  if (typeof modelOptions?.fastMode === "boolean") {
+    nextOptions.fastMode = modelOptions.fastMode;
+  }
+  return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
+}
+
+export function normalizeClaudeModelOptionsWithCapabilities(
+  caps: ModelCapabilities,
+  modelOptions: ClaudeModelOptions | null | undefined,
+): ClaudeModelOptions | undefined {
+  const effort = resolveEffort(caps, modelOptions?.effort);
+  const thinking = caps.supportsThinkingToggle ? modelOptions?.thinking : undefined;
+  const fastMode = caps.supportsFastMode ? modelOptions?.fastMode : undefined;
+  const contextWindow = resolveContextWindow(caps, modelOptions?.contextWindow);
+  const nextOptions: ClaudeModelOptions = {
+    ...(thinking !== undefined ? { thinking } : {}),
+    ...(effort ? { effort: effort as ClaudeModelOptions["effort"] } : {}),
+    ...(fastMode !== undefined ? { fastMode } : {}),
+    ...(contextWindow !== undefined ? { contextWindow } : {}),
+  };
+  return Object.keys(nextOptions).length > 0 ? nextOptions : undefined;
 }
 
 export function isClaudeUltrathinkPrompt(text: string | null | undefined): boolean {

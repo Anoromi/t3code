@@ -136,6 +136,7 @@ export function showContextMenuFallback<T extends string>(
 
     overlay.addEventListener("mousedown", () => cleanup(null));
     document.addEventListener("keydown", onKeyDown);
+
     document.body.appendChild(overlay);
     openMenu(items, position?.x ?? 0, position?.y ?? 0, 0);
   });

@@ -20,6 +20,13 @@ export const THREAD_JUMP_KEYBINDING_COMMANDS = [
 ] as const;
 export type ThreadJumpKeybindingCommand = (typeof THREAD_JUMP_KEYBINDING_COMMANDS)[number];
 
+export const THREAD_KEYBINDING_COMMANDS = [
+  "thread.previous",
+  "thread.next",
+  ...THREAD_JUMP_KEYBINDING_COMMANDS,
+] as const;
+export type ThreadKeybindingCommand = (typeof THREAD_KEYBINDING_COMMANDS)[number];
+
 export const MODEL_PICKER_JUMP_KEYBINDING_COMMANDS = [
   "modelPicker.jump.1",
   "modelPicker.jump.2",
@@ -34,13 +41,6 @@ export const MODEL_PICKER_JUMP_KEYBINDING_COMMANDS = [
 export type ModelPickerJumpKeybindingCommand =
   (typeof MODEL_PICKER_JUMP_KEYBINDING_COMMANDS)[number];
 
-export const THREAD_KEYBINDING_COMMANDS = [
-  "thread.previous",
-  "thread.next",
-  ...THREAD_JUMP_KEYBINDING_COMMANDS,
-] as const;
-export type ThreadKeybindingCommand = (typeof THREAD_KEYBINDING_COMMANDS)[number];
-
 export const MODEL_PICKER_KEYBINDING_COMMANDS = [
   "modelPicker.toggle",
   ...MODEL_PICKER_JUMP_KEYBINDING_COMMANDS,
@@ -52,11 +52,16 @@ const STATIC_KEYBINDING_COMMANDS = [
   "terminal.split",
   "terminal.new",
   "terminal.close",
+  "terminal.worktree.open",
   "diff.toggle",
   "commandPalette.toggle",
+  "commandBar.toggle",
+  "navigation.commandMenu",
   "chat.new",
   "chat.newLocal",
+  "chat.composer.focus",
   "editor.openFavorite",
+  "thread.interrupt",
   ...MODEL_PICKER_KEYBINDING_COMMANDS,
   ...THREAD_KEYBINDING_COMMANDS,
 ] as const;

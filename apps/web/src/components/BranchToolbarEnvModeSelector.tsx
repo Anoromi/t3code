@@ -21,6 +21,7 @@ interface BranchToolbarEnvModeSelectorProps {
   envLocked: boolean;
   effectiveEnvMode: EnvMode;
   activeWorktreePath: string | null;
+  triggerLabel?: string;
   onEnvModeChange: (mode: EnvMode) => void;
 }
 
@@ -28,6 +29,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
   envLocked,
   effectiveEnvMode,
   activeWorktreePath,
+  triggerLabel,
   onEnvModeChange,
 }: BranchToolbarEnvModeSelectorProps) {
   const envModeItems = useMemo(
@@ -71,7 +73,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         ) : (
           <FolderIcon className="size-3" />
         )}
-        <SelectValue />
+        <SelectValue>{triggerLabel}</SelectValue>
       </SelectTrigger>
       <SelectPopup>
         <SelectGroup>

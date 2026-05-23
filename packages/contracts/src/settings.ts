@@ -3,7 +3,11 @@ import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
-import { DEFAULT_GIT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
+import {
+  CodexReasoningEffort,
+  DEFAULT_GIT_TEXT_GENERATION_MODEL,
+  ProviderOptionSelections,
+} from "./model.ts";
 import {
   DEFAULT_PROJECT_HYPRNAV_SETTINGS,
   ModelSelection,
@@ -48,6 +52,8 @@ export const SidebarThreadPreviewCount = Schema.Int.check(
 export type SidebarThreadPreviewCount = typeof SidebarThreadPreviewCount.Type;
 export const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6;
 
+export const DEFAULT_CODEX_FAST_MODE = false;
+export const DEFAULT_CODEX_REASONING_EFFORT: CodexReasoningEffort = "medium";
 export const GroupedProjectHyprnavState = Schema.Struct({
   mode: GroupedProjectHyprnavMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_GROUPED_PROJECT_HYPRNAV_MODE)),
@@ -62,6 +68,12 @@ export const ClientSettingsSchema = Schema.Struct({
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   dismissedProviderUpdateNotificationKeys: Schema.Array(TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  defaultCodexFastMode: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CODEX_FAST_MODE)),
+  ),
+  defaultCodexReasoningEffort: CodexReasoningEffort.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_CODEX_REASONING_EFFORT)),
   ),
   defaultProjectHyprnavSettings: ProjectHyprnavSettings.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROJECT_HYPRNAV_SETTINGS)),
@@ -504,6 +516,8 @@ export const ClientSettingsPatch = Schema.Struct({
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
   diffWordWrap: Schema.optionalKey(Schema.Boolean),
+  defaultCodexFastMode: Schema.optionalKey(Schema.Boolean),
+  defaultCodexReasoningEffort: Schema.optionalKey(CodexReasoningEffort),
   favorites: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({

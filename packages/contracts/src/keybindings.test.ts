@@ -1,6 +1,6 @@
 import { assert, it } from "@effect/vitest";
-import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import {
   KeybindingsConfig,
@@ -35,6 +35,12 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedClose.command, "terminal.close");
 
+    const parsedWorktreeTerminal = yield* decode(KeybindingRule, {
+      key: "mod+t",
+      command: "terminal.worktree.open",
+    });
+    assert.strictEqual(parsedWorktreeTerminal.command, "terminal.worktree.open");
+
     const parsedDiffToggle = yield* decode(KeybindingRule, {
       key: "mod+d",
       command: "diff.toggle",
@@ -47,23 +53,35 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedCommandPalette.command, "commandPalette.toggle");
 
+    const parsedCommandBar = yield* decode(KeybindingRule, {
+      key: "mod+p",
+      command: "commandBar.toggle",
+    });
+    assert.strictEqual(parsedCommandBar.command, "commandBar.toggle");
+
+    const parsedNavigationCommandMenu = yield* decode(KeybindingRule, {
+      key: "mod+e",
+      command: "navigation.commandMenu",
+    });
+    assert.strictEqual(parsedNavigationCommandMenu.command, "navigation.commandMenu");
+
     const parsedLocal = yield* decode(KeybindingRule, {
       key: "mod+shift+n",
       command: "chat.newLocal",
     });
     assert.strictEqual(parsedLocal.command, "chat.newLocal");
 
-    const parsedModelPickerToggle = yield* decode(KeybindingRule, {
-      key: "mod+shift+m",
-      command: "modelPicker.toggle",
+    const parsedComposerFocus = yield* decode(KeybindingRule, {
+      key: "mod+s",
+      command: "chat.composer.focus",
     });
-    assert.strictEqual(parsedModelPickerToggle.command, "modelPicker.toggle");
+    assert.strictEqual(parsedComposerFocus.command, "chat.composer.focus");
 
-    const parsedModelPickerJump = yield* decode(KeybindingRule, {
-      key: "mod+1",
-      command: "modelPicker.jump.1",
+    const parsedThreadInterrupt = yield* decode(KeybindingRule, {
+      key: "mod+shift+c",
+      command: "thread.interrupt",
     });
-    assert.strictEqual(parsedModelPickerJump.command, "modelPicker.jump.1");
+    assert.strictEqual(parsedThreadInterrupt.command, "thread.interrupt");
 
     const parsedThreadPrevious = yield* decode(KeybindingRule, {
       key: "mod+shift+[",

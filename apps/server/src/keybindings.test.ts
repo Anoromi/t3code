@@ -204,6 +204,11 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       assert.equal(defaultsByCommand.get("thread.next"), "mod+shift+]");
       assert.equal(defaultsByCommand.get("thread.jump.1"), "mod+1");
       assert.equal(defaultsByCommand.get("thread.jump.9"), "mod+9");
+      assert.equal(defaultsByCommand.get("terminal.worktree.open"), "mod+t");
+      assert.equal(defaultsByCommand.get("commandBar.toggle"), "mod+p");
+      assert.equal(defaultsByCommand.get("navigation.commandMenu"), "mod+e");
+      assert.equal(defaultsByCommand.get("chat.composer.focus"), "mod+s");
+      assert.equal(defaultsByCommand.get("thread.interrupt"), "mod+shift+c");
       assert.equal(defaultsByCommand.get("modelPicker.toggle"), "mod+shift+m");
       assert.equal(defaultsByCommand.get("modelPicker.jump.1"), "mod+1");
       assert.equal(defaultsByCommand.get("modelPicker.jump.9"), "mod+9");
@@ -313,8 +318,8 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         keybindingsConfigPath,
         [
           '[{"key":"mod+shift+t","command":"terminal.toggle"},',
-          '{"key":"ctrl+s","command":"chat.composer.focus"},',
-          '{"key":"ctrl+shift+c","command":"thread.interrupt"}]',
+          '{"key":"mod+s","command":"chat.composer.bad"},',
+          '{"key":"mod+shift+c","command":"thread.bad"}]',
         ].join(""),
       );
 
@@ -326,8 +331,8 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
       const byCommand = new Map(persisted.map((entry) => [entry.command, entry]));
 
-      assert.isFalse(persisted.some((entry) => String(entry.command) === "chat.composer.focus"));
-      assert.isFalse(persisted.some((entry) => String(entry.command) === "thread.interrupt"));
+      assert.isFalse(persisted.some((entry) => String(entry.command) === "chat.composer.bad"));
+      assert.isFalse(persisted.some((entry) => String(entry.command) === "thread.bad"));
       assert.equal(byCommand.get("terminal.toggle")?.key, "mod+shift+t");
 
       for (const defaultRule of DEFAULT_KEYBINDINGS) {

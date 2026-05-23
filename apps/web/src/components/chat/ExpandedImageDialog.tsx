@@ -3,6 +3,8 @@ import { ChevronLeftIcon, ChevronRightIcon, XIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
 
+const GLOBAL_KEYDOWN_EVENT_OPTIONS = { capture: true } as const;
+
 interface ExpandedImageDialogProps {
   preview: ExpandedImagePreview;
   onClose: () => void;
@@ -49,8 +51,8 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
       event.stopPropagation();
       navigateImage(1);
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, GLOBAL_KEYDOWN_EVENT_OPTIONS);
+    return () => window.removeEventListener("keydown", onKeyDown, GLOBAL_KEYDOWN_EVENT_OPTIONS);
   }, [navigateImage, onClose, preview.images.length]);
 
   const item = preview.images[preview.index];

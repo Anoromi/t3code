@@ -71,6 +71,8 @@ describe("chatThreadActions", () => {
       branch: "feature/refactor",
       worktreePath: "/tmp/worktree",
       envMode: "worktree",
+      codexFastMode: false,
+      codexReasoningEffort: "high",
     });
   });
 
@@ -88,6 +90,8 @@ describe("chatThreadActions", () => {
     expect(didStart).toBe(true);
     expect(handleNewThread).toHaveBeenCalledWith(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), {
       envMode: "worktree",
+      codexFastMode: false,
+      codexReasoningEffort: "high",
     });
   });
 

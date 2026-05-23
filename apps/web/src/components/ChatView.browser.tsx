@@ -899,6 +899,37 @@ function createSnapshotWithPendingUserInput(): OrchestrationReadModel {
   };
 }
 
+function createSnapshotWithRecoverablePendingUserInput(): OrchestrationReadModel {
+  const snapshot = createSnapshotWithPendingUserInput();
+
+  return {
+    ...snapshot,
+    threads: snapshot.threads.map((thread) =>
+      thread.id === THREAD_ID
+        ? Object.assign({}, thread, {
+            activities: [
+              ...thread.activities,
+              {
+                id: EventId.make("activity-user-input-stale-failed"),
+                tone: "error",
+                kind: "provider.user-input.respond.failed",
+                summary: "Provider user input response failed",
+                payload: {
+                  requestId: "req-browser-user-input",
+                  detail:
+                    "ProviderAdapterRequestError: Provider adapter request failed (codex) for item/tool/requestUserInput: Unknown pending Codex user input request: req-browser-user-input",
+                },
+                turnId: null,
+                sequence: 2,
+                createdAt: "2026-06-05T18:05:00.000Z",
+              },
+            ],
+          })
+        : thread,
+    ),
+  };
+}
+
 function createSnapshotWithPlanFollowUpPrompt(options?: {
   modelSelection?: { instanceId: ProviderInstanceId; model: string };
   planMarkdown?: string;
@@ -4314,6 +4345,14 @@ describe("ChatView timeline estimator parity (full app)", () => {
           ],
         };
       },
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
     });
 
     try {
@@ -4367,6 +4406,154 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       expect(mounted.router.state.location.pathname).toBe(serverThreadPath(THREAD_ID));
       expect(Object.keys(useComposerDraftStore.getState().draftThreadsByThreadKey)).toHaveLength(0);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("opens the restored thread command bar from its shortcut", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-thread-command-bar-shortcut-test" as MessageId,
+        targetText: "thread command bar shortcut test",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "commandBar.toggle",
+              shortcut: {
+                key: "p",
+                metaKey: false,
+                ctrlKey: true,
+                shiftKey: false,
+                altKey: false,
+                modKey: false,
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "p",
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await expect.element(page.getByLabelText("Thread command bar")).toBeInTheDocument();
+      await expect.element(page.getByPlaceholder("Search commands...")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("renders read-aloud controls through the thread provider", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-read-aloud-provider-test" as MessageId,
+        targetText: "read aloud provider test",
+      }),
+    });
+
+    try {
+      await expect.element(page.getByLabelText("Read-aloud controls")).toBeInTheDocument();
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("routes desktop Corkdiff and worktree terminal shortcuts to the bridge", async () => {
+    const toggleExternalCorkdiff = vi.fn().mockResolvedValue(undefined);
+    const openWorktreeTerminal = vi.fn().mockResolvedValue({ worktreePath: "/repo/project" });
+    window.desktopBridge = {
+      getClientSettings: vi.fn().mockResolvedValue(DEFAULT_CLIENT_SETTINGS),
+      getLocalEnvironmentBootstrap: () => ({
+        wsBaseUrl: "ws://127.0.0.1:13773/ws?wsToken=test-token",
+        httpBaseUrl: "http://127.0.0.1:13773",
+      }),
+      getSavedEnvironmentRegistry: vi.fn().mockResolvedValue([]),
+      openWorktreeTerminal,
+      setClientSettings: vi.fn().mockResolvedValue(undefined),
+      setSavedEnvironmentRegistry: vi.fn().mockResolvedValue(undefined),
+      setTheme: vi.fn().mockResolvedValue(undefined),
+      toggleExternalCorkdiff,
+    } as unknown as NonNullable<typeof window.desktopBridge>;
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-desktop-shortcut-bridge-test" as MessageId,
+        targetText: "desktop shortcut bridge test",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "diff.toggle",
+              shortcut: {
+                key: "d",
+                metaKey: false,
+                ctrlKey: true,
+                shiftKey: false,
+                altKey: false,
+                modKey: false,
+              },
+            },
+            {
+              command: "terminal.worktree.open",
+              shortcut: {
+                key: "t",
+                metaKey: false,
+                ctrlKey: true,
+                shiftKey: false,
+                altKey: false,
+                modKey: false,
+              },
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "d",
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "t",
+          ctrlKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+
+      await vi.waitFor(() => {
+        expect(toggleExternalCorkdiff).toHaveBeenCalledWith(
+          expect.objectContaining({
+            cwd: "/repo/project",
+            threadId: THREAD_ID,
+          }),
+        );
+        expect(openWorktreeTerminal).toHaveBeenCalledWith({ cwd: "/repo/project" });
+      });
     } finally {
       await mounted.cleanup();
     }
@@ -5780,6 +5967,111 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("submits recoverable pending user input as a follow-up turn instead of a dead callback", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithRecoverablePendingUserInput(),
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      const firstOption = await waitForButtonContainingText("Tight");
+      firstOption.click();
+
+      const finalOption = await waitForButtonContainingText("Conservative");
+      finalOption.click();
+
+      await vi.waitFor(
+        () => {
+          const userInputRespondRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.user-input.respond",
+          );
+          const turnStartRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.turn.start",
+          ) as
+            | {
+                _tag: string;
+                type?: string;
+                message?: { text?: string };
+              }
+            | undefined;
+
+          expect(userInputRespondRequest).toBeUndefined();
+          expect(turnStartRequest?.message?.text).toContain(
+            "Answering the previous user-input request",
+          );
+          expect(turnStartRequest?.message?.text).toContain("Answer: Tight");
+          expect(turnStartRequest?.message?.text).toContain("Answer: Conservative");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("selects pending user input options with number keys while the composer is focused", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotWithPendingUserInput(),
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await pressComposerKey("1");
+      await waitForButtonContainingText("Conservative");
+      await pressComposerKey("1");
+
+      await vi.waitFor(
+        () => {
+          const dispatchRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.user-input.respond",
+          ) as
+            | {
+                _tag: string;
+                type?: string;
+                requestId?: string;
+                answers?: Record<string, unknown>;
+              }
+            | undefined;
+
+          expect(dispatchRequest).toMatchObject({
+            _tag: ORCHESTRATION_WS_METHODS.dispatchCommand,
+            type: "thread.user-input.respond",
+            requestId: "req-browser-user-input",
+            answers: {
+              scope: "Tight",
+              risk: "Conservative",
+            },
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("keeps plan follow-up footer actions fused and aligned after a real resize", async () => {
     const mounted = await mountChatView({
       viewport: WIDE_FOOTER_VIEWPORT,
@@ -5948,6 +6240,147 @@ describe("ChatView timeline estimator parity (full app)", () => {
           expect(menuRect.height).toBeGreaterThan(0);
           expect(menuRect.bottom).toBeLessThanOrEqual(composerRect.bottom);
           expect(hitTarget instanceof Element && menuItem.contains(hitTarget)).toBe(true);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows recovered branch, worktree, fast, and reasoning slash commands", async () => {
+    const draftId = draftIdFromPath("/draft/draft-recovered-slash-commands");
+    useComposerDraftStore.setState({
+      draftThreadsByThreadKey: {
+        [draftId]: {
+          threadId: THREAD_ID,
+          environmentId: LOCAL_ENVIRONMENT_ID,
+          projectId: PROJECT_ID,
+          logicalProjectKey: PROJECT_DRAFT_KEY,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      logicalProjectDraftThreadKeyByLogicalProjectKey: {
+        [PROJECT_DRAFT_KEY]: draftId,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      initialPath: `/draft/${draftId}`,
+    });
+
+    try {
+      await waitForComposerEditor();
+      await page.getByTestId("composer-editor").fill("/");
+
+      await waitForComposerMenuItem("slash:branch");
+      await waitForComposerMenuItem("slash:worktree");
+      await waitForComposerMenuItem("slash:fast");
+      await waitForComposerMenuItem("slash:reasoning");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("selects a named worktree from the slash-command menu", async () => {
+    const draftId = draftIdFromPath("/draft/draft-named-worktree-slash-command");
+    useComposerDraftStore.setState({
+      draftThreadsByThreadKey: {
+        [draftId]: {
+          threadId: THREAD_ID,
+          environmentId: LOCAL_ENVIRONMENT_ID,
+          projectId: PROJECT_ID,
+          logicalProjectKey: PROJECT_DRAFT_KEY,
+          createdAt: NOW_ISO,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "main",
+          worktreePath: null,
+          envMode: "local",
+        },
+      },
+      logicalProjectDraftThreadKeyByLogicalProjectKey: {
+        [PROJECT_DRAFT_KEY]: draftId,
+      },
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createDraftOnlySnapshot(),
+      initialPath: `/draft/${draftId}`,
+    });
+
+    try {
+      await waitForComposerEditor();
+      await page.getByTestId("composer-editor").fill("/worktree testing");
+      const item = await waitForComposerMenuItem("named-worktree:testing");
+      item.click();
+
+      await vi.waitFor(
+        () => {
+          const draft = useComposerDraftStore.getState().getDraftSession(draftId);
+          expect(draft?.branch).toBe("testing");
+          expect(draft?.worktreePath).toBeNull();
+          expect(draft?.envMode).toBe("worktree");
+          expect(composerDraftFor(draftId)?.prompt ?? "").toBe("");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("dispatches the recovered fork slash command with canonical source naming", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-fork-command-target" as MessageId,
+        targetText: "fork command thread",
+      }),
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      await waitForComposerEditor();
+      await page.getByTestId("composer-editor").fill("/fork");
+      const sendButton = await waitForSendButton();
+      sendButton.click();
+
+      await vi.waitFor(
+        () => {
+          const dispatchRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.fork",
+          ) as
+            | {
+                type?: string;
+                threadId?: string;
+                forkSourceThreadId?: string;
+                sourceThreadId?: string;
+              }
+            | undefined;
+          expect(dispatchRequest).toMatchObject({
+            type: "thread.fork",
+            forkSourceThreadId: THREAD_ID,
+          });
+          expect(dispatchRequest?.threadId).not.toBe(THREAD_ID);
+          expect(dispatchRequest?.sourceThreadId).toBeUndefined();
         },
         { timeout: 8_000, interval: 16 },
       );

@@ -6,9 +6,10 @@ import {
   toSortableTimestamp,
   type ThreadSortInput,
 } from "../lib/threadSort";
-import type { SidebarThreadSummary, Thread } from "../types";
+import type { Project, SidebarThreadSummary, Thread, WorktreeGroupTitle } from "../types";
 import { cn } from "../lib/utils";
 import { isLatestTurnSettled } from "../session-logic";
+import { formatWorktreePathForDisplay, normalizeWorktreePath } from "../worktreeCleanup";
 
 export const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 100;
@@ -38,6 +39,115 @@ export interface ThreadStatusPill {
   pulse: boolean;
 }
 
+export type SidebarThreadLike = Pick<Thread, "id" | "projectId" | "createdAt" | "worktreePath">;
+
+export type SidebarProjectThreadEntry<TThread extends SidebarThreadLike = SidebarThreadLike> =
+  | {
+      readonly kind: "thread";
+      readonly positionCreatedAt: string;
+      readonly thread: TThread;
+    }
+  | {
+      readonly kind: "worktree-group";
+      readonly groupKey: string;
+      readonly label: string;
+      readonly fallbackLabel: string;
+      readonly positionCreatedAt: string;
+      readonly threads: readonly TThread[];
+      readonly worktreePath: string;
+      readonly worktreeTitleStatus: WorktreeGroupTitle["status"] | "absent";
+      readonly worktreeTitleUpdatedAt: string | null;
+    };
+
+function sidebarWorktreeGroupKey(
+  thread: Pick<SidebarThreadLike, "projectId">,
+  worktreePath: string,
+): string {
+  return `${String(thread.projectId)}::${worktreePath}`;
+}
+
+export function buildSidebarProjectThreadEntries<TThread extends SidebarThreadLike>(
+  project: Pick<Project, "worktreeGroupTitles">,
+  threads: readonly TThread[],
+): SidebarProjectThreadEntry<TThread>[] {
+  const groupsByWorktreeKey = new Map<string, TThread[]>();
+  const worktreeTitlesByPath = new Map<string, WorktreeGroupTitle>();
+
+  for (const worktreeGroupTitle of project.worktreeGroupTitles ?? []) {
+    const worktreePath = normalizeWorktreePath(worktreeGroupTitle.worktreePath);
+    if (!worktreePath) continue;
+    worktreeTitlesByPath.set(worktreePath, worktreeGroupTitle);
+  }
+
+  for (const thread of threads) {
+    const worktreePath = normalizeWorktreePath(thread.worktreePath);
+    if (!worktreePath) continue;
+    const groupKey = sidebarWorktreeGroupKey(thread, worktreePath);
+    const existing = groupsByWorktreeKey.get(groupKey);
+    if (existing) {
+      existing.push(thread);
+    } else {
+      groupsByWorktreeKey.set(groupKey, [thread]);
+    }
+  }
+
+  const entries: SidebarProjectThreadEntry<TThread>[] = [];
+  const emittedGroupKeys = new Set<string>();
+  for (const thread of threads) {
+    const worktreePath = normalizeWorktreePath(thread.worktreePath);
+    const worktreeThreads = worktreePath
+      ? (groupsByWorktreeKey.get(sidebarWorktreeGroupKey(thread, worktreePath)) ?? [])
+      : [];
+
+    if (!worktreePath || worktreeThreads.length <= 1) {
+      entries.push({
+        kind: "thread",
+        positionCreatedAt: thread.createdAt,
+        thread,
+      });
+      continue;
+    }
+
+    const groupKey = sidebarWorktreeGroupKey(thread, worktreePath);
+    if (emittedGroupKeys.has(groupKey)) continue;
+    emittedGroupKeys.add(groupKey);
+
+    const worktreeGroupTitle = worktreeTitlesByPath.get(worktreePath) ?? null;
+    entries.push({
+      kind: "worktree-group",
+      groupKey,
+      label:
+        worktreeGroupTitle?.status === "ready" && worktreeGroupTitle.title
+          ? worktreeGroupTitle.title
+          : formatWorktreePathForDisplay(worktreePath),
+      fallbackLabel: formatWorktreePathForDisplay(worktreePath),
+      positionCreatedAt: thread.createdAt,
+      threads: [...worktreeThreads],
+      worktreePath,
+      worktreeTitleStatus: worktreeGroupTitle?.status ?? "absent",
+      worktreeTitleUpdatedAt: worktreeGroupTitle?.updatedAt ?? null,
+    });
+  }
+
+  return entries;
+}
+
+export function flattenSidebarProjectThreadIds<TThread extends SidebarThreadLike>(
+  entries: readonly SidebarProjectThreadEntry<TThread>[],
+): TThread["id"][] {
+  const orderedThreadIds: TThread["id"][] = [];
+  for (const entry of entries) {
+    if (entry.kind === "thread") {
+      orderedThreadIds.push(entry.thread.id);
+      continue;
+    }
+    for (const thread of entry.threads) {
+      orderedThreadIds.push(thread.id);
+    }
+  }
+  return orderedThreadIds;
+}
+
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   "Pending Approval": 5,
   "Awaiting Input": 4,
@@ -50,6 +160,7 @@ const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
 type ThreadStatusInput = Pick<
   SidebarThreadSummary,
   | "hasActionableProposedPlan"
+  | "hasPendingTurnStart"
   | "hasPendingApprovals"
   | "hasPendingUserInput"
   | "interactionMode"
@@ -349,7 +460,7 @@ export function resolveThreadStatusPill(input: {
     };
   }
 
-  if (thread.session?.status === "running") {
+  if (thread.hasPendingTurnStart === true || thread.session?.status === "running") {
     return {
       label: "Working",
       colorClass: "text-sky-600 dark:text-sky-300/80",

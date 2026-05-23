@@ -100,10 +100,11 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
         return;
       }
-      if (
-        target instanceof HTMLElement &&
-        target.closest('[contenteditable]:not([contenteditable="false"])')
-      ) {
+      const editableTarget =
+        target instanceof HTMLElement
+          ? target.closest<HTMLElement>('[contenteditable]:not([contenteditable="false"])')
+          : null;
+      if (editableTarget && editableTarget.textContent?.trim()) {
         return;
       }
       const digit = Number.parseInt(event.key, 10);
@@ -115,8 +116,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       event.preventDefault();
       handleOptionSelection(activeQuestion.id, option.label);
     };
-    document.addEventListener("keydown", handler);
-    return () => document.removeEventListener("keydown", handler);
+    document.addEventListener("keydown", handler, true);
+    return () => document.removeEventListener("keydown", handler, true);
   }, [activeQuestion, isResponding]);
 
   if (!activeQuestion) {

@@ -82,6 +82,8 @@ export const VcsRef = Schema.Struct({
   worktreePath: TrimmedNonEmptyStringSchema.pipe(Schema.NullOr),
 });
 export type VcsRef = typeof VcsRef.Type;
+export const GitBranch = VcsRef;
+export type GitBranch = VcsRef;
 
 const VcsWorktree = Schema.Struct({
   path: TrimmedNonEmptyStringSchema,
@@ -234,6 +236,8 @@ export const VcsStatusResult = Schema.Struct({
   ...VcsStatusRemoteShape,
 });
 export type VcsStatusResult = typeof VcsStatusResult.Type;
+export const GitStatusResult = VcsStatusResult;
+export type GitStatusResult = VcsStatusResult;
 
 export const VcsStatusStreamEvent = Schema.Union([
   Schema.TaggedStruct("snapshot", {

@@ -7,6 +7,32 @@ import { ProviderDriverKind } from "./providerInstance.ts";
 export const ProviderOptionDescriptorType = Schema.Literals(["select", "boolean"]);
 export type ProviderOptionDescriptorType = typeof ProviderOptionDescriptorType.Type;
 
+export const CodexReasoningEffort = Schema.Literals(["low", "medium", "high", "xhigh"]);
+export type CodexReasoningEffort = typeof CodexReasoningEffort.Type;
+
+export const ClaudeAgentEffort = Schema.Literals(["low", "medium", "high", "max", "ultrathink"]);
+export type ClaudeAgentEffort = typeof ClaudeAgentEffort.Type;
+
+export const CodexModelOptions = Schema.Struct({
+  reasoningEffort: Schema.optional(CodexReasoningEffort),
+  fastMode: Schema.optional(Schema.Boolean),
+});
+export type CodexModelOptions = typeof CodexModelOptions.Type;
+
+export const ClaudeModelOptions = Schema.Struct({
+  thinking: Schema.optional(Schema.Boolean),
+  effort: Schema.optional(ClaudeAgentEffort),
+  fastMode: Schema.optional(Schema.Boolean),
+  contextWindow: Schema.optional(Schema.String),
+});
+export type ClaudeModelOptions = typeof ClaudeModelOptions.Type;
+
+export const ProviderModelOptions = Schema.Struct({
+  codex: Schema.optional(CodexModelOptions),
+  claudeAgent: Schema.optional(ClaudeModelOptions),
+});
+export type ProviderModelOptions = typeof ProviderModelOptions.Type;
+
 export const ProviderOptionChoice = Schema.Struct({
   id: TrimmedNonEmptyString,
   label: TrimmedNonEmptyString,
@@ -124,6 +150,27 @@ function canonicalSelectionsToLegacyObject(
 
 export const ModelCapabilities = Schema.Struct({
   optionDescriptors: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
+  reasoningEffortLevels: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        value: TrimmedNonEmptyString,
+        label: TrimmedNonEmptyString,
+        isDefault: Schema.optional(Schema.Boolean),
+      }),
+    ),
+  ),
+  promptInjectedEffortLevels: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+  contextWindowOptions: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        value: TrimmedNonEmptyString,
+        label: TrimmedNonEmptyString,
+        isDefault: Schema.optional(Schema.Boolean),
+      }),
+    ),
+  ),
+  supportsFastMode: Schema.optional(Schema.Boolean),
+  supportsThinkingToggle: Schema.optional(Schema.Boolean),
 });
 export type ModelCapabilities = typeof ModelCapabilities.Type;
 
@@ -135,7 +182,7 @@ const OPENCODE_DRIVER_KIND = ProviderDriverKind.make("opencode");
 export const DEFAULT_MODEL = "gpt-5.4";
 export const DEFAULT_GIT_TEXT_GENERATION_MODEL = "gpt-5.4-mini";
 
-export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, string>> = {
+export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<string, string>> = {
   [CODEX_DRIVER_KIND]: DEFAULT_MODEL,
   [CLAUDE_DRIVER_KIND]: "claude-sonnet-4-6",
   [CURSOR_DRIVER_KIND]: "auto",
@@ -143,18 +190,14 @@ export const DEFAULT_MODEL_BY_PROVIDER: Partial<Record<ProviderDriverKind, strin
 };
 
 /** Per-provider text generation model defaults. */
-export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<
-  Record<ProviderDriverKind, string>
-> = {
+export const DEFAULT_GIT_TEXT_GENERATION_MODEL_BY_PROVIDER: Partial<Record<string, string>> = {
   [CODEX_DRIVER_KIND]: DEFAULT_GIT_TEXT_GENERATION_MODEL,
   [CLAUDE_DRIVER_KIND]: "claude-haiku-4-5",
   [CURSOR_DRIVER_KIND]: "composer-2",
   [OPENCODE_DRIVER_KIND]: "openai/gpt-5",
 };
 
-export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
-  Record<ProviderDriverKind, Record<string, string>>
-> = {
+export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<Record<string, Record<string, string>>> = {
   [CODEX_DRIVER_KIND]: {
     "gpt-5-codex": "gpt-5.4",
     "5.4": "gpt-5.4",
@@ -195,7 +238,7 @@ export const MODEL_SLUG_ALIASES_BY_PROVIDER: Partial<
 
 // ── Provider display names ────────────────────────────────────────────
 
-export const PROVIDER_DISPLAY_NAMES: Partial<Record<ProviderDriverKind, string>> = {
+export const PROVIDER_DISPLAY_NAMES: Partial<Record<string, string>> = {
   [CODEX_DRIVER_KIND]: "Codex",
   [CLAUDE_DRIVER_KIND]: "Claude",
   [CURSOR_DRIVER_KIND]: "Cursor",

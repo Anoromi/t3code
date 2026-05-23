@@ -143,6 +143,12 @@ export interface WsRpcClient {
     readonly subscribeLifecycle: RpcStreamMethod<typeof WS_METHODS.subscribeServerLifecycle>;
     readonly subscribeAuthAccess: RpcStreamMethod<typeof WS_METHODS.subscribeAuthAccess>;
   };
+  readonly desktop: {
+    readonly requestCorkdiffAppFocus: RpcUnaryMethod<
+      typeof WS_METHODS.desktopRequestCorkdiffAppFocus
+    >;
+    readonly onControlEvent: RpcStreamMethod<typeof WS_METHODS.subscribeDesktopControl>;
+  };
   readonly orchestration: {
     readonly dispatchCommand: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.dispatchCommand>;
     readonly getTurnDiff: RpcUnaryMethod<typeof ORCHESTRATION_WS_METHODS.getTurnDiff>;
@@ -294,6 +300,16 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
           ...options,
           tag: WS_METHODS.subscribeAuthAccess,
         }),
+    },
+    desktop: {
+      requestCorkdiffAppFocus: (input) =>
+        transport.request((client) => client[WS_METHODS.desktopRequestCorkdiffAppFocus](input)),
+      onControlEvent: (listener, options) =>
+        transport.subscribe(
+          (client) => client[WS_METHODS.subscribeDesktopControl]({}),
+          listener,
+          options,
+        ),
     },
     orchestration: {
       dispatchCommand: (input) =>

@@ -158,6 +158,8 @@ import {
 import { useThreadSelectionStore } from "../threadSelectionStore";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import {
+  buildSidebarProjectThreadEntries,
+  flattenSidebarProjectThreadIds,
   getSidebarThreadIdsToPrewarm,
   resolveAdjacentThreadId,
   isContextMenuPointerDown,
@@ -189,7 +191,7 @@ import {
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
 } from "../environments/runtime";
-import type { SidebarThreadSummary } from "../types";
+import type { Project, SidebarThreadSummary } from "../types";
 import {
   buildPhysicalToLogicalProjectKeyMap,
   buildSidebarProjectSnapshots,
@@ -1096,6 +1098,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     }
     return counts;
   }, [memberProjectByScopedKey, project.memberProjects, projectThreads]);
+  const projectWorktreeGroupTitles = useMemo<NonNullable<Project["worktreeGroupTitles"]>>(
+    () => project.memberProjects.flatMap((member) => member.worktreeGroupTitles ?? []),
+    [project.memberProjects],
+  );
 
   const { projectStatus, visibleProjectThreads, orderedProjectThreadKeys } = useMemo(() => {
     const lastVisitedAtByThreadKey = new Map(
@@ -1119,17 +1125,26 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       projectThreads.filter((thread) => thread.archivedAt === null),
       threadSortOrder,
     );
+    const visibleProjectThreadEntries = buildSidebarProjectThreadEntries(
+      { worktreeGroupTitles: projectWorktreeGroupTitles },
+      visibleProjectThreads,
+    );
     const projectStatus = resolveProjectStatusIndicator(
       visibleProjectThreads.map((thread) => resolveProjectThreadStatus(thread)),
     );
     return {
-      orderedProjectThreadKeys: visibleProjectThreads.map((thread) =>
-        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      orderedProjectThreadKeys: flattenSidebarProjectThreadIds(visibleProjectThreadEntries).map(
+        (threadId) => {
+          const thread = visibleProjectThreads.find((candidate) => candidate.id === threadId);
+          return thread
+            ? scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
+            : String(threadId);
+        },
       ),
       projectStatus,
       visibleProjectThreads,
     };
-  }, [projectThreads, threadLastVisitedAts, threadSortOrder]);
+  }, [projectThreads, projectWorktreeGroupTitles, threadLastVisitedAts, threadSortOrder]);
 
   const pinnedCollapsedThread = useMemo(() => {
     const activeThreadKey = activeRouteThreadKey ?? undefined;

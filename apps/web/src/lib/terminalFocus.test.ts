@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { isTerminalFocused } from "./terminalFocus";
+import { isTerminalFocused, shouldBypassGlobalTerminalShortcuts } from "./terminalFocus";
 
 class MockHTMLElement {
   isConnected = false;
@@ -11,8 +11,11 @@ class MockHTMLElement {
   };
 
   closest(selector: string): MockHTMLElement | null {
-    return selector === ".thread-terminal-drawer .xterm" && this.isConnected ? this : null;
+    if (!this.isConnected) return null;
+    return selector === this.closestSelector ? this : null;
   }
+
+  closestSelector = "";
 }
 
 const originalDocument = globalThis.document;
@@ -38,7 +41,7 @@ describe("isTerminalFocused", () => {
     detached.className = "xterm-helper-textarea";
 
     globalThis.HTMLElement = MockHTMLElement as unknown as typeof HTMLElement;
-    globalThis.document = { activeElement: detached } as Document;
+    globalThis.document = { activeElement: detached } as unknown as Document;
 
     expect(isTerminalFocused()).toBe(false);
   });
@@ -47,10 +50,24 @@ describe("isTerminalFocused", () => {
     const attached = new MockHTMLElement();
     attached.className = "xterm-helper-textarea";
     attached.isConnected = true;
+    attached.closestSelector = '[data-terminal-surface="app"] [data-terminal-focus-root="true"]';
 
     globalThis.HTMLElement = MockHTMLElement as unknown as typeof HTMLElement;
-    globalThis.document = { activeElement: attached } as Document;
+    globalThis.document = { activeElement: attached } as unknown as Document;
 
     expect(isTerminalFocused()).toBe(true);
+  });
+
+  it("bypasses global shortcuts for focused Corkdiff terminal textareas", () => {
+    const attached = new MockHTMLElement();
+    attached.className = "xterm-helper-textarea";
+    attached.isConnected = true;
+    attached.closestSelector =
+      '[data-terminal-surface="corkdiff"] [data-terminal-focus-root="true"]';
+
+    globalThis.HTMLElement = MockHTMLElement as unknown as typeof HTMLElement;
+    globalThis.document = { activeElement: attached } as unknown as Document;
+
+    expect(shouldBypassGlobalTerminalShortcuts()).toBe(true);
   });
 });
