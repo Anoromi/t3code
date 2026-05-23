@@ -26,3 +26,7 @@ squashfs-root/
 .gstack/
 dist-electron/
 .electron-runtime/
+/.btca/resources
+
+# btca local data
+.btca/
