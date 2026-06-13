@@ -126,6 +126,37 @@ const MAX_THREAD_PROPOSED_PLANS = 200;
 const MAX_THREAD_ACTIVITIES = 500;
 const EMPTY_THREAD_IDS: ThreadId[] = [];
 
+function logThreadFinishProjection(
+  label: string,
+  input: {
+    readonly environmentId: EnvironmentId;
+    readonly threadId: ThreadId;
+    readonly sequence: number | undefined;
+    readonly eventType: string;
+    readonly beforeLatestTurn: Thread["latestTurn"];
+    readonly afterLatestTurn: Thread["latestTurn"];
+    readonly beforeSession: Thread["session"];
+    readonly afterSession: Thread["session"];
+    readonly details?: Record<string, unknown>;
+  },
+) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  console.info("t3.threadFinish.store", {
+    label,
+    environmentId: input.environmentId,
+    threadId: input.threadId,
+    sequence: input.sequence,
+    eventType: input.eventType,
+    beforeLatestTurn: input.beforeLatestTurn,
+    afterLatestTurn: input.afterLatestTurn,
+    beforeSession: input.beforeSession,
+    afterSession: input.afterSession,
+    details: input.details ?? {},
+  });
+}
+
 function arraysEqual<T>(left: readonly T[], right: readonly T[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
@@ -1360,16 +1391,33 @@ function applyEnvironmentOrchestrationEvent(
       }));
 
     case "thread.turn-start-requested":
-      return updateThreadState(state, event.payload.threadId, (thread) => ({
-        ...thread,
-        ...(event.payload.modelSelection !== undefined
-          ? { modelSelection: normalizeModelSelection(event.payload.modelSelection) }
-          : {}),
-        runtimeMode: event.payload.runtimeMode,
-        interactionMode: event.payload.interactionMode,
-        pendingSourceProposedPlan: event.payload.sourceProposedPlan,
-        updatedAt: event.occurredAt,
-      }));
+      return updateThreadState(state, event.payload.threadId, (thread) => {
+        const nextThread = {
+          ...thread,
+          ...(event.payload.modelSelection !== undefined
+            ? { modelSelection: normalizeModelSelection(event.payload.modelSelection) }
+            : {}),
+          runtimeMode: event.payload.runtimeMode,
+          interactionMode: event.payload.interactionMode,
+          pendingSourceProposedPlan: event.payload.sourceProposedPlan,
+          updatedAt: event.occurredAt,
+        };
+        logThreadFinishProjection("turn-start-requested", {
+          environmentId,
+          threadId: event.payload.threadId,
+          sequence: event.sequence,
+          eventType: event.type,
+          beforeLatestTurn: thread.latestTurn,
+          afterLatestTurn: nextThread.latestTurn,
+          beforeSession: thread.session,
+          afterSession: nextThread.session,
+          details: {
+            runtimeMode: event.payload.runtimeMode,
+            interactionMode: event.payload.interactionMode,
+          },
+        });
+        return nextThread;
+      });
 
     case "thread.turn-interrupt-requested": {
       if (event.payload.turnId === undefined) {
@@ -1380,7 +1428,7 @@ function applyEnvironmentOrchestrationEvent(
         if (latestTurn === null || latestTurn.turnId !== event.payload.turnId) {
           return thread;
         }
-        return {
+        const nextThread = {
           ...thread,
           latestTurn: buildLatestTurn({
             previous: latestTurn,
@@ -1393,6 +1441,17 @@ function applyEnvironmentOrchestrationEvent(
           }),
           updatedAt: event.occurredAt,
         };
+        logThreadFinishProjection("turn-interrupt-requested", {
+          environmentId,
+          threadId: event.payload.threadId,
+          sequence: event.sequence,
+          eventType: event.type,
+          beforeLatestTurn: thread.latestTurn,
+          afterLatestTurn: nextThread.latestTurn,
+          beforeSession: thread.session,
+          afterSession: nextThread.session,
+        });
+        return nextThread;
       });
     }
 
@@ -1477,44 +1536,83 @@ function applyEnvironmentOrchestrationEvent(
                 assistantMessageId: event.payload.messageId,
               })
             : thread.latestTurn;
-        return {
+        const nextThread = {
           ...thread,
           messages: cappedMessages,
           turnDiffSummaries,
           latestTurn,
           updatedAt: event.occurredAt,
         };
+        if (event.payload.role === "assistant") {
+          logThreadFinishProjection("assistant-message-sent", {
+            environmentId,
+            threadId: event.payload.threadId,
+            sequence: event.sequence,
+            eventType: event.type,
+            beforeLatestTurn: thread.latestTurn,
+            afterLatestTurn: nextThread.latestTurn,
+            beforeSession: thread.session,
+            afterSession: nextThread.session,
+            details: {
+              messageId: event.payload.messageId,
+              turnId: event.payload.turnId,
+              streaming: event.payload.streaming,
+              textLength: event.payload.text.length,
+              existingMessage: existingMessage !== undefined,
+            },
+          });
+        }
+        return nextThread;
       });
 
     case "thread.session-set":
-      return updateThreadState(state, event.payload.threadId, (thread) => ({
-        ...thread,
-        session: mapSession(event.payload.session),
-        error: sanitizeThreadErrorMessage(event.payload.session.lastError),
-        latestTurn:
-          event.payload.session.status === "running" && event.payload.session.activeTurnId !== null
-            ? buildLatestTurn({
-                previous: thread.latestTurn,
-                turnId: event.payload.session.activeTurnId,
-                state: "running",
-                requestedAt:
-                  thread.latestTurn?.turnId === event.payload.session.activeTurnId
-                    ? thread.latestTurn.requestedAt
-                    : event.payload.session.updatedAt,
-                startedAt:
-                  thread.latestTurn?.turnId === event.payload.session.activeTurnId
-                    ? (thread.latestTurn.startedAt ?? event.payload.session.updatedAt)
-                    : event.payload.session.updatedAt,
-                completedAt: null,
-                assistantMessageId:
-                  thread.latestTurn?.turnId === event.payload.session.activeTurnId
-                    ? thread.latestTurn.assistantMessageId
-                    : null,
-                sourceProposedPlan: thread.pendingSourceProposedPlan,
-              })
-            : thread.latestTurn,
-        updatedAt: event.occurredAt,
-      }));
+      return updateThreadState(state, event.payload.threadId, (thread) => {
+        const nextThread = {
+          ...thread,
+          session: mapSession(event.payload.session),
+          error: sanitizeThreadErrorMessage(event.payload.session.lastError),
+          latestTurn:
+            event.payload.session.status === "running" &&
+            event.payload.session.activeTurnId !== null
+              ? buildLatestTurn({
+                  previous: thread.latestTurn,
+                  turnId: event.payload.session.activeTurnId,
+                  state: "running",
+                  requestedAt:
+                    thread.latestTurn?.turnId === event.payload.session.activeTurnId
+                      ? thread.latestTurn.requestedAt
+                      : event.payload.session.updatedAt,
+                  startedAt:
+                    thread.latestTurn?.turnId === event.payload.session.activeTurnId
+                      ? (thread.latestTurn.startedAt ?? event.payload.session.updatedAt)
+                      : event.payload.session.updatedAt,
+                  completedAt: null,
+                  assistantMessageId:
+                    thread.latestTurn?.turnId === event.payload.session.activeTurnId
+                      ? thread.latestTurn.assistantMessageId
+                      : null,
+                  sourceProposedPlan: thread.pendingSourceProposedPlan,
+                })
+              : thread.latestTurn,
+          updatedAt: event.occurredAt,
+        };
+        logThreadFinishProjection("session-set", {
+          environmentId,
+          threadId: event.payload.threadId,
+          sequence: event.sequence,
+          eventType: event.type,
+          beforeLatestTurn: thread.latestTurn,
+          afterLatestTurn: nextThread.latestTurn,
+          beforeSession: thread.session,
+          afterSession: nextThread.session,
+          details: {
+            sessionStatus: event.payload.session.status,
+            activeTurnId: event.payload.session.activeTurnId,
+            lastError: event.payload.session.lastError,
+          },
+        });
+        return nextThread;
+      });
 
     case "thread.session-stop-requested":
       return updateThreadState(state, event.payload.threadId, (thread) =>
@@ -1592,12 +1690,28 @@ function applyEnvironmentOrchestrationEvent(
                 sourceProposedPlan: thread.pendingSourceProposedPlan,
               })
             : thread.latestTurn;
-        return {
+        const nextThread = {
           ...thread,
           turnDiffSummaries,
           latestTurn,
           updatedAt: event.occurredAt,
         };
+        logThreadFinishProjection("turn-diff-completed", {
+          environmentId,
+          threadId: event.payload.threadId,
+          sequence: event.sequence,
+          eventType: event.type,
+          beforeLatestTurn: thread.latestTurn,
+          afterLatestTurn: nextThread.latestTurn,
+          beforeSession: thread.session,
+          afterSession: nextThread.session,
+          details: {
+            turnId: event.payload.turnId,
+            checkpointStatus: event.payload.status,
+            assistantMessageId: event.payload.assistantMessageId,
+          },
+        });
+        return nextThread;
       });
 
     case "thread.reverted":

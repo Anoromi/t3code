@@ -394,6 +394,76 @@ type PersistentTerminalLaunchContext = Pick<TerminalLaunchContext, "cwd" | "work
 
 const localDispatchHandoffByThreadId = new Map<ThreadId, LocalDispatchSnapshot>();
 
+function logThreadFinishViewState(input: {
+  readonly threadId: ThreadId | null;
+  readonly environmentId: EnvironmentId;
+  readonly phase: string;
+  readonly isWorking: boolean;
+  readonly latestTurnSettled: boolean;
+  readonly latestTurnInProgress: boolean;
+  readonly isSendBusy: boolean;
+  readonly isConnecting: boolean;
+  readonly isRevertingCheckpoint: boolean;
+  readonly localDispatchStartedAt: string | null;
+  readonly activeWorkStartedAt: string | null;
+  readonly latestTurn: Thread["latestTurn"] | null;
+  readonly session: Thread["session"] | null;
+  readonly pendingApprovalId: ApprovalRequestId | null;
+  readonly pendingUserInputId: ApprovalRequestId | null;
+  readonly threadError: string | null | undefined;
+  readonly completionSummary: string | null;
+}) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  console.info("t3.threadFinish.chatView", {
+    threadId: input.threadId,
+    environmentId: input.environmentId,
+    phase: input.phase,
+    isWorking: input.isWorking,
+    latestTurnSettled: input.latestTurnSettled,
+    latestTurnInProgress: input.latestTurnInProgress,
+    isSendBusy: input.isSendBusy,
+    isConnecting: input.isConnecting,
+    isRevertingCheckpoint: input.isRevertingCheckpoint,
+    localDispatchStartedAt: input.localDispatchStartedAt,
+    activeWorkStartedAt: input.activeWorkStartedAt,
+    latestTurn: input.latestTurn,
+    session: input.session,
+    pendingApprovalId: input.pendingApprovalId,
+    pendingUserInputId: input.pendingUserInputId,
+    hasThreadError: Boolean(input.threadError),
+    completionSummary: input.completionSummary,
+  });
+}
+
+function logThreadFinishTimelineProps(input: {
+  readonly threadId: ThreadId | null;
+  readonly environmentId: EnvironmentId;
+  readonly isWorking: boolean;
+  readonly activeTurnInProgress: boolean;
+  readonly latestTurnSettled: boolean;
+  readonly activeTurnId: TurnId | null;
+  readonly activeTurnStartedAt: string | null;
+  readonly completionDividerBeforeEntryId: string | null;
+  readonly completionSummary: string | null;
+}) {
+  if (typeof window === "undefined") {
+    return;
+  }
+  console.info("t3.threadFinish.timelineProps", {
+    threadId: input.threadId,
+    environmentId: input.environmentId,
+    isWorking: input.isWorking,
+    activeTurnInProgress: input.activeTurnInProgress,
+    latestTurnSettled: input.latestTurnSettled,
+    activeTurnId: input.activeTurnId,
+    activeTurnStartedAt: input.activeTurnStartedAt,
+    completionDividerBeforeEntryId: input.completionDividerBeforeEntryId,
+    completionSummary: input.completionSummary,
+  });
+}
+
 function useLocalDispatchState(input: {
   activeThread: Thread | undefined;
   activeLatestTurn: Thread["latestTurn"] | null;
@@ -1700,11 +1770,119 @@ export default function ChatView(props: ChatViewProps) {
     latestTurnHasToolActivity,
     latestTurnSettled,
   ]);
+  const lastThreadFinishViewStateKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const stateKey = JSON.stringify({
+      threadId: activeThreadId,
+      phase,
+      isWorking,
+      latestTurnSettled,
+      latestTurnInProgress,
+      isSendBusy,
+      isConnecting,
+      isRevertingCheckpoint,
+      localDispatchStartedAt,
+      activeWorkStartedAt,
+      latestTurnTurnId: activeLatestTurn?.turnId ?? null,
+      latestTurnState: activeLatestTurn?.state ?? null,
+      latestTurnRequestedAt: activeLatestTurn?.requestedAt ?? null,
+      latestTurnStartedAt: activeLatestTurn?.startedAt ?? null,
+      latestTurnCompletedAt: activeLatestTurn?.completedAt ?? null,
+      sessionStatus: activeThread?.session?.status ?? null,
+      sessionOrchestrationStatus: activeThread?.session?.orchestrationStatus ?? null,
+      sessionActiveTurnId: activeThread?.session?.activeTurnId ?? null,
+      sessionUpdatedAt: activeThread?.session?.updatedAt ?? null,
+      pendingApprovalId: activePendingApproval?.requestId ?? null,
+      pendingUserInputId: activePendingUserInput?.requestId ?? null,
+      threadError: activeThread?.error ?? null,
+      completionSummary,
+    });
+    if (lastThreadFinishViewStateKeyRef.current === stateKey) {
+      return;
+    }
+    lastThreadFinishViewStateKeyRef.current = stateKey;
+    logThreadFinishViewState({
+      threadId: activeThreadId,
+      environmentId,
+      phase,
+      isWorking,
+      latestTurnSettled,
+      latestTurnInProgress,
+      isSendBusy,
+      isConnecting,
+      isRevertingCheckpoint,
+      localDispatchStartedAt,
+      activeWorkStartedAt,
+      latestTurn: activeLatestTurn,
+      session: activeThread?.session ?? null,
+      pendingApprovalId: activePendingApproval?.requestId ?? null,
+      pendingUserInputId: activePendingUserInput?.requestId ?? null,
+      threadError: activeThread?.error,
+      completionSummary,
+    });
+  }, [
+    activeLatestTurn,
+    activePendingApproval?.requestId,
+    activePendingUserInput?.requestId,
+    activeThread?.error,
+    activeThread?.session,
+    activeThreadId,
+    activeWorkStartedAt,
+    completionSummary,
+    environmentId,
+    isConnecting,
+    isRevertingCheckpoint,
+    isSendBusy,
+    isWorking,
+    latestTurnInProgress,
+    latestTurnSettled,
+    localDispatchStartedAt,
+    phase,
+  ]);
   const completionDividerBeforeEntryId = useMemo(() => {
     if (!latestTurnSettled) return null;
     if (!completionSummary) return null;
     return deriveCompletionDividerBeforeEntryId(timelineEntries, activeLatestTurn);
   }, [activeLatestTurn, completionSummary, latestTurnSettled, timelineEntries]);
+  const timelineActiveTurnInProgress = isWorking || !latestTurnSettled;
+  const lastThreadFinishTimelinePropsKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const stateKey = JSON.stringify({
+      threadId: activeThreadId,
+      isWorking,
+      activeTurnInProgress: timelineActiveTurnInProgress,
+      latestTurnSettled,
+      activeTurnId: activeLatestTurn?.turnId ?? null,
+      activeTurnStartedAt: activeWorkStartedAt,
+      completionDividerBeforeEntryId,
+      completionSummary,
+    });
+    if (lastThreadFinishTimelinePropsKeyRef.current === stateKey) {
+      return;
+    }
+    lastThreadFinishTimelinePropsKeyRef.current = stateKey;
+    logThreadFinishTimelineProps({
+      threadId: activeThreadId,
+      environmentId,
+      isWorking,
+      activeTurnInProgress: timelineActiveTurnInProgress,
+      latestTurnSettled,
+      activeTurnId: activeLatestTurn?.turnId ?? null,
+      activeTurnStartedAt: activeWorkStartedAt,
+      completionDividerBeforeEntryId,
+      completionSummary,
+    });
+  }, [
+    activeLatestTurn?.turnId,
+    activeThreadId,
+    activeWorkStartedAt,
+    completionDividerBeforeEntryId,
+    completionSummary,
+    environmentId,
+    isWorking,
+    latestTurnSettled,
+    timelineActiveTurnInProgress,
+  ]);
   const gitCwd = activeProject
     ? projectScriptCwd({
         project: { cwd: activeProject.cwd },
@@ -3929,7 +4107,7 @@ export default function ChatView(props: ChatViewProps) {
               <MessagesTimeline
                 key={activeThread.id}
                 isWorking={isWorking}
-                activeTurnInProgress={isWorking || !latestTurnSettled}
+                activeTurnInProgress={timelineActiveTurnInProgress}
                 activeTurnId={activeLatestTurn?.turnId ?? null}
                 activeTurnStartedAt={activeWorkStartedAt}
                 listRef={legendListRef}

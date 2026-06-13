@@ -6,6 +6,7 @@ import type {
   ProjectEntry,
   ProviderApprovalDecision,
   ProviderInteractionMode,
+  ProviderOptionSelection,
   ResolvedKeybindingsConfig,
   RuntimeMode,
   ScopedThreadRef,
@@ -620,6 +621,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     (store) => store.setTerminalContexts,
   );
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  const setComposerDraftProviderModelOptions = useComposerDraftStore(
+    (store) => store.setProviderModelOptions,
+  );
   const clearComposerDraftPersistedAttachments = useComposerDraftStore(
     (store) => store.clearPersistedAttachments,
   );
@@ -1719,6 +1723,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
       if (item.type === "slash-command") {
+        if (
+          item.command === "branch" ||
+          item.command === "worktree" ||
+          item.command === "reasoning"
+        ) {
+          const replacement = `/${item.command} `;
+          const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+            snapshot.value,
+            trigger.rangeEnd,
+            replacement,
+          );
+          const applied = applyPromptReplacement(
+            trigger.rangeStart,
+            replacementRangeEnd,
+            replacement,
+            { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+          );
+          if (applied) {
+            setComposerHighlightedItemId(null);
+          }
+          return;
+        }
         if (item.command === "model") {
           const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
             expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -1736,6 +1762,43 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (item.command === "fork") {
           void onForkThread();
         }
+        if (item.command === "fast") {
+          const fastEnabled =
+            selectedModelOptionsForDispatch?.some(
+              (option) => option.id === "fastMode" && option.value === true,
+            ) ?? false;
+          const nextOptions = (selectedModelOptionsForDispatch ?? []).filter(
+            (option) => option.id !== "fastMode",
+          );
+          if (!fastEnabled) {
+            nextOptions.push({ id: "fastMode", value: true });
+          }
+          setComposerDraftProviderModelOptions(composerDraftTarget, selectedProvider, nextOptions, {
+            instanceId: selectedInstanceId,
+            model: selectedModel,
+            persistSticky: true,
+          });
+        }
+        const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
+          expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
+        });
+        if (applied) {
+          setComposerHighlightedItemId(null);
+        }
+        return;
+      }
+      if (item.type === "reasoning") {
+        const nextOptions: ProviderOptionSelection[] = [
+          ...(selectedModelOptionsForDispatch ?? []).filter(
+            (option) => option.id !== "reasoningEffort",
+          ),
+          { id: "reasoningEffort", value: item.effort },
+        ];
+        setComposerDraftProviderModelOptions(composerDraftTarget, selectedProvider, nextOptions, {
+          instanceId: selectedInstanceId,
+          model: selectedModel,
+          persistSticky: true,
+        });
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
         });
@@ -1839,6 +1902,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       handleInteractionModeChange,
       onForkThread,
       resolveActiveComposerTrigger,
+      selectedModel,
+      selectedModelOptionsForDispatch,
+      selectedProvider,
+      selectedInstanceId,
+      setComposerDraftProviderModelOptions,
       setDraftThreadContext,
     ],
   );
