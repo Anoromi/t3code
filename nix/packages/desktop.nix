@@ -5,6 +5,11 @@ let
   workspaceDirs = import ../lib/workspaces.nix { inherit lib src; };
   workspaceDirsShell = lib.escapeShellArgs workspaceDirs;
   electronPackage = pkgs.electron_40;
+  fontConfig = pkgs.makeFontsConf {
+    fontDirectories = [
+      pkgs.noto-fonts-cjk-sans
+    ];
+  };
   runtimeLibraries = with pkgs; [
     alsa-lib
     atk
@@ -136,6 +141,7 @@ pkgs.stdenv.mkDerivation (finalAttrs: {
     makeWrapper ${electronPackage}/bin/electron "$out/bin/t3-code" \
       --add-flags "$appRoot" \
       --unset ELECTRON_RUN_AS_NODE \
+      --set FONTCONFIG_FILE ${fontConfig} \
       --set-default T3CODE_NODE_EXECUTABLE ${pkgs.nodejs_24}/bin/node \
       --set-default T3CODE_DESKTOP_PACKAGE_CHANNEL nix \
       --set-default T3CODE_DISABLE_AUTO_UPDATE 1
