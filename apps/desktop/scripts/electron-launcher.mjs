@@ -346,7 +346,11 @@ function isLinuxSetuidSandboxConfigured(electronBinaryPath) {
   }
 }
 
-function resolveLinuxSandboxArgs(electronBinaryPath) {
+export function resolveLinuxSandboxArgs(electronBinaryPath, environment = process.env) {
+  if (environment.T3CODE_DESKTOP_ELECTRON_PATH?.trim() === electronBinaryPath) {
+    return environment.T3CODE_DESKTOP_DISABLE_SANDBOX === "1" ? ["--no-sandbox"] : [];
+  }
+
   if (isLinuxSetuidSandboxConfigured(electronBinaryPath)) {
     return [];
   }
@@ -378,8 +382,14 @@ export function resolveElectronLaunchCommand(args = []) {
 export function resolveElectronBinaryPath({
   ensureRuntime = ensureElectronRuntime,
   createRequire = NodeModule.createRequire,
+  environment = process.env,
   moduleUrl = import.meta.url,
 } = {}) {
+  const configuredPath = environment.T3CODE_DESKTOP_ELECTRON_PATH?.trim();
+  if (configuredPath) {
+    return configuredPath;
+  }
+
   ensureRuntime();
 
   const require = createRequire(moduleUrl);
