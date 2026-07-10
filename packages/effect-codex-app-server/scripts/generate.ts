@@ -61,7 +61,9 @@ interface JsonSchemaFile {
   readonly qualifiedName: string;
 }
 
-function includeMaxReasoningEffort(
+const COMPATIBILITY_REASONING_EFFORTS = ["max", "ultra"] as const;
+
+function includeCompatibilityReasoningEfforts(
   name: string,
   schema: typeof Schema.Json.Type,
 ): typeof Schema.Json.Type {
@@ -70,10 +72,16 @@ function includeMaxReasoningEffort(
     return schema;
   }
   const enumValues = "enum" in schema ? schema.enum : undefined;
-  if (!Array.isArray(enumValues) || enumValues.includes("max")) {
+  if (!Array.isArray(enumValues)) {
     return schema;
   }
-  return { ...schema, enum: [...enumValues, "max"] };
+  return {
+    ...schema,
+    enum: [
+      ...enumValues,
+      ...COMPATIBILITY_REASONING_EFFORTS.filter((effort) => !enumValues.includes(effort)),
+    ],
+  };
 }
 
 class GeneratorError extends Schema.TaggedErrorClass<GeneratorError>()("GeneratorError", {
@@ -612,7 +620,7 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
   for (const [name, schema] of Object.entries(aggregateSchemas).toSorted(([left], [right]) =>
     left.localeCompare(right),
   )) {
-    const normalizedSchema = includeMaxReasoningEffort(name, schema);
+    const normalizedSchema = includeCompatibilityReasoningEfforts(name, schema);
     aggregateSchemas[name] = normalizedSchema;
     generator.addSchema(name, normalizedSchema as never);
   }

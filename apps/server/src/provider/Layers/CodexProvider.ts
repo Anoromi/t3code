@@ -52,6 +52,7 @@ const REASONING_EFFORT_LABELS: Record<CodexSchema.V2ModelListResponse__Reasoning
   high: "High",
   xhigh: "Extra High",
   max: "Max",
+  ultra: "Ultra",
 };
 
 function codexAccountAuthLabel(account: CodexSchema.V2GetAccountResponse["account"]) {

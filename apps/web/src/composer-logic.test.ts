@@ -327,6 +327,13 @@ describe("parseStandaloneComposerSlashCommand", () => {
     });
   });
 
+  it("parses /reasoning ultra as a standalone slash command", () => {
+    expect(parseStandaloneComposerSlashCommand("/reasoning ultra")).toEqual({
+      kind: "reasoning",
+      effort: "ultra",
+    });
+  });
+
   it("does not parse /reasoning without a value", () => {
     expect(parseStandaloneComposerSlashCommand("/reasoning")).toBeNull();
   });

@@ -24,8 +24,9 @@ const decodeModelListReasoningEffort = Schema.decodeUnknownSync(
 );
 
 it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
-  it("decodes max reasoning effort from model/list", () => {
+  it("decodes compatibility reasoning efforts from model/list", () => {
     assert.equal(decodeModelListReasoningEffort("max"), "max");
+    assert.equal(decodeModelListReasoningEffort("ultra"), "ultra");
   });
 
   it.effect(

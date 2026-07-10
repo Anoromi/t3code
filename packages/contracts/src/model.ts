@@ -7,7 +7,14 @@ import { ProviderDriverKind } from "./providerInstance.ts";
 export const ProviderOptionDescriptorType = Schema.Literals(["select", "boolean"]);
 export type ProviderOptionDescriptorType = typeof ProviderOptionDescriptorType.Type;
 
-export const CodexReasoningEffort = Schema.Literals(["low", "medium", "high", "xhigh", "max"]);
+export const CodexReasoningEffort = Schema.Literals([
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+  "ultra",
+]);
 export type CodexReasoningEffort = typeof CodexReasoningEffort.Type;
 
 export const ClaudeAgentEffort = Schema.Literals(["low", "medium", "high", "max", "ultrathink"]);

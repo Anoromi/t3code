@@ -157,6 +157,7 @@ const CODEX_REASONING_LABEL_BY_OPTION: Record<string, string> = {
   high: "High",
   xhigh: "Extra high",
   max: "Max",
+  ultra: "Ultra",
 };
 const CODEX_REASONING_SHORT_ALIAS_BY_OPTION: Record<string, string> = {
   low: "l",
@@ -164,8 +165,9 @@ const CODEX_REASONING_SHORT_ALIAS_BY_OPTION: Record<string, string> = {
   high: "h",
   xhigh: "xh",
   max: "max",
+  ultra: "ultra",
 };
-const CODEX_REASONING_OPTIONS = ["low", "medium", "high", "xhigh", "max"] as const;
+const CODEX_REASONING_OPTIONS = ["low", "medium", "high", "xhigh", "max", "ultra"] as const;
 
 const extendReplacementRangeForTrailingSpace = (
   text: string,

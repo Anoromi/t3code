@@ -13,7 +13,7 @@ import {
 } from "@t3tools/contracts";
 
 const DEFAULT_PROVIDER_DRIVER_KIND = ProviderDriverKind.make("codex");
-const CODEX_REASONING_EFFORT_OPTIONS = ["max", "xhigh", "high", "medium", "low"] as const;
+const CODEX_REASONING_EFFORT_OPTIONS = ["ultra", "max", "xhigh", "high", "medium", "low"] as const;
 
 export interface SelectableModelOption {
   slug: string;
