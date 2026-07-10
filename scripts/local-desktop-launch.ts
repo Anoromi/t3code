@@ -537,6 +537,10 @@ export async function runLocalDesktopLaunch(options: LocalDesktopLaunchOptions):
     process.env.T3CODE_NODE_EXECUTABLE?.trim() || resolveExecutableFromPath("node", process.env);
   desktopRuntimeEnv.T3CODE_BUN_EXECUTABLE = bunExecutable;
   desktopRuntimeEnv.T3CODE_NODE_EXECUTABLE = nodeExecutable;
+  // Workspace Electron binaries cannot retain the root-owned setuid helper across installs.
+  if (process.platform === "linux") {
+    desktopRuntimeEnv.ELECTRON_DISABLE_SANDBOX = "1";
+  }
   const desktopStartCommand = [
     nodeExecutable,
     "apps/desktop/scripts/start-electron.mjs",

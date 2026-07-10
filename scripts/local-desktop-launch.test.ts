@@ -606,6 +606,7 @@ describe("runLocalDesktopLaunch", () => {
       [T3CODE_LOCAL_LAUNCH_ENV_FILE]: launchEnvPath,
       T3CODE_BUN_EXECUTABLE: "/nix/store/test-bun/bin/bun",
       T3CODE_NODE_EXECUTABLE: "/nix/store/test-node/bin/node",
+      ...(process.platform === "linux" ? { ELECTRON_DISABLE_SANDBOX: "1" } : {}),
     });
   });
 
