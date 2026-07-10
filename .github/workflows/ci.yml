@@ -47,6 +47,13 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Fetch canonical upstream main
+        run: |
+          git remote get-url upstream >/dev/null 2>&1 || git remote add upstream https://github.com/pingdotgg/t3code.git
+          git fetch --no-tags upstream main
 
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
