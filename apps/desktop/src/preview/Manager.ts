@@ -330,8 +330,8 @@ const APP_FORWARDED_SHORTCUTS: ReadonlyArray<{
 }> = Object.freeze([
   // mod+shift+J → preview.toggle
   { key: "j", meta: true, shift: true, control: false },
-  // mod+K → command palette
-  { key: "k", meta: true, shift: false, control: false },
+  // mod+E → command palette
+  { key: "e", meta: true, shift: false, control: false },
   // mod+, → settings (macOS convention)
   { key: ",", meta: true, shift: false, control: false },
   // mod+W → close tab/panel

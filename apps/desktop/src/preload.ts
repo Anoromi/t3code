@@ -4,12 +4,17 @@ import type {
   DesktopPreviewRecordingFrame,
   DesktopPreviewTabState,
 } from "@t3tools/contracts";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer } from "electron";
+import * as Effect from "effect/Effect";
 
 import * as IpcChannels from "./ipc/channels.ts";
 
 exposeClerkBridge({ passkeys: true });
+
+const hostPlatform = Effect.runSync(HostProcessPlatform);
+const hostEnvironment = Effect.runSync(HostProcessEnvironment);
 
 function unwrapEnsureSshEnvironmentResult(result: unknown) {
   if (
@@ -105,6 +110,12 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ...(position === undefined ? {} : { position }),
     }),
   openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.OPEN_EXTERNAL_CHANNEL, url),
+  ...(hostPlatform === "linux" && hostEnvironment.HYPRLAND_INSTANCE_SIGNATURE
+    ? {
+        openExternalCorkdiff: (input: { readonly cwd: string; readonly threadId: string }) =>
+          ipcRenderer.invoke(IpcChannels.OPEN_EXTERNAL_CORKDIFF_CHANNEL, input),
+      }
+    : {}),
   onMenuAction: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, action: unknown) => {
       if (typeof action !== "string") return;
