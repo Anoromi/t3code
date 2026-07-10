@@ -10,6 +10,7 @@ import { assert, it } from "@effect/vitest";
 
 import * as CodexError from "./errors.ts";
 import * as CodexProtocol from "./protocol.ts";
+import * as CodexSchema from "./schema.ts";
 import { makeInMemoryStdio } from "./_internal/stdio.ts";
 const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
 
@@ -18,8 +19,15 @@ const encoder = new TextEncoder();
 const encodeJsonl = (value: unknown) => encoder.encode(`${encodeUnknownJsonString(value)}\n`);
 
 const decodeJson = Schema.decodeEffect(Schema.UnknownFromJsonString);
+const decodeModelListReasoningEffort = Schema.decodeUnknownSync(
+  CodexSchema.V2ModelListResponse__ReasoningEffort,
+);
 
 it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
+  it("decodes max reasoning effort from model/list", () => {
+    assert.equal(decodeModelListReasoningEffort("max"), "max");
+  });
+
   it.effect(
     "encodes requests without a jsonrpc field and routes inbound requests and notifications",
     () =>

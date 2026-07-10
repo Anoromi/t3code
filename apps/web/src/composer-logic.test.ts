@@ -320,6 +320,13 @@ describe("parseStandaloneComposerSlashCommand", () => {
     });
   });
 
+  it("parses /reasoning max as a standalone slash command", () => {
+    expect(parseStandaloneComposerSlashCommand("/reasoning max")).toEqual({
+      kind: "reasoning",
+      effort: "max",
+    });
+  });
+
   it("does not parse /reasoning without a value", () => {
     expect(parseStandaloneComposerSlashCommand("/reasoning")).toBeNull();
   });

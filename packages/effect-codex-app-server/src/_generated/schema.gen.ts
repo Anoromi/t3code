@@ -837,7 +837,8 @@ export type ClientRequest__ReasoningEffort =
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max";
 export const ClientRequest__ReasoningEffort = Schema.Literals([
   "none",
   "minimal",
@@ -845,6 +846,7 @@ export const ClientRequest__ReasoningEffort = Schema.Literals([
   "medium",
   "high",
   "xhigh",
+  "max",
 ]).annotate({
   description:
     "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
@@ -2336,7 +2338,8 @@ export type ServerNotification__ReasoningEffort =
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max";
 export const ServerNotification__ReasoningEffort = Schema.Literals([
   "none",
   "minimal",
@@ -2344,6 +2347,7 @@ export const ServerNotification__ReasoningEffort = Schema.Literals([
   "medium",
   "high",
   "xhigh",
+  "max",
 ]).annotate({
   description:
     "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
@@ -3337,7 +3341,8 @@ export type V2ConfigReadResponse__ReasoningEffort =
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max";
 export const V2ConfigReadResponse__ReasoningEffort = Schema.Literals([
   "none",
   "minimal",
@@ -3345,6 +3350,7 @@ export const V2ConfigReadResponse__ReasoningEffort = Schema.Literals([
   "medium",
   "high",
   "xhigh",
+  "max",
 ]).annotate({
   description:
     "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
@@ -4226,7 +4232,8 @@ export type V2ItemCompletedNotification__ReasoningEffort =
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max";
 export const V2ItemCompletedNotification__ReasoningEffort = Schema.Literals([
   "none",
   "minimal",
@@ -4234,6 +4241,7 @@ export const V2ItemCompletedNotification__ReasoningEffort = Schema.Literals([
   "medium",
   "high",
   "xhigh",
+  "max",
 ]).annotate({
   description:
     "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
@@ -4665,7 +4673,8 @@ export type V2ItemStartedNotification__ReasoningEffort =
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max";
 export const V2ItemStartedNotification__ReasoningEffort = Schema.Literals([
   "none",
   "minimal",
@@ -4673,6 +4682,7 @@ export const V2ItemStartedNotification__ReasoningEffort = Schema.Literals([
   "medium",
   "high",
   "xhigh",
+  "max",
 ]).annotate({
   description:
     "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
@@ -4921,7 +4931,8 @@ export type V2ModelListResponse__ReasoningEffort =
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max";
 export const V2ModelListResponse__ReasoningEffort = Schema.Literals([
   "none",
   "minimal",
@@ -4929,6 +4940,7 @@ export const V2ModelListResponse__ReasoningEffort = Schema.Literals([
   "medium",
   "high",
   "xhigh",
+  "max",
 ]).annotate({
   description:
     "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
@@ -5506,7 +5518,8 @@ export type V2ReviewStartResponse__ReasoningEffort =
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max";
 export const V2ReviewStartResponse__ReasoningEffort = Schema.Literals([
   "none",
   "minimal",
@@ -5514,6 +5527,7 @@ export const V2ReviewStartResponse__ReasoningEffort = Schema.Literals([
   "medium",
   "high",
   "xhigh",
+  "max",
 ]).annotate({
   description:
     "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
@@ -5979,7 +5993,8 @@ export type V2ThreadForkResponse__ReasoningEffort =
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max";
 export const V2ThreadForkResponse__ReasoningEffort = Schema.Literals([
   "none",
   "minimal",
@@ -5987,6 +6002,7 @@ export const V2ThreadForkResponse__ReasoningEffort = Schema.Literals([
   "medium",
   "high",
   "xhigh",
+  "max",
 ]).annotate({
   description:
     "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
@@ -6300,7 +6316,8 @@ export type V2ThreadListResponse__ReasoningEffort =
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max";
 export const V2ThreadListResponse__ReasoningEffort = Schema.Literals([
   "none",
   "minimal",
@@ -6308,6 +6325,7 @@ export const V2ThreadListResponse__ReasoningEffort = Schema.Literals([
   "medium",
   "high",
   "xhigh",
+  "max",
 ]).annotate({
   description:
     "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
@@ -6619,7 +6637,8 @@ export type V2ThreadMetadataUpdateResponse__ReasoningEffort =
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max";
 export const V2ThreadMetadataUpdateResponse__ReasoningEffort = Schema.Literals([
   "none",
   "minimal",
@@ -6627,6 +6646,7 @@ export const V2ThreadMetadataUpdateResponse__ReasoningEffort = Schema.Literals([
   "medium",
   "high",
   "xhigh",
+  "max",
 ]).annotate({
   description:
     "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
@@ -6897,7 +6917,8 @@ export type V2ThreadReadResponse__ReasoningEffort =
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max";
 export const V2ThreadReadResponse__ReasoningEffort = Schema.Literals([
   "none",
   "minimal",
@@ -6905,6 +6926,7 @@ export const V2ThreadReadResponse__ReasoningEffort = Schema.Literals([
   "medium",
   "high",
   "xhigh",
+  "max",
 ]).annotate({
   description:
     "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
@@ -7471,7 +7493,8 @@ export type V2ThreadResumeResponse__ReasoningEffort =
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max";
 export const V2ThreadResumeResponse__ReasoningEffort = Schema.Literals([
   "none",
   "minimal",
@@ -7479,6 +7502,7 @@ export const V2ThreadResumeResponse__ReasoningEffort = Schema.Literals([
   "medium",
   "high",
   "xhigh",
+  "max",
 ]).annotate({
   description:
     "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
@@ -7747,7 +7771,8 @@ export type V2ThreadRollbackResponse__ReasoningEffort =
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max";
 export const V2ThreadRollbackResponse__ReasoningEffort = Schema.Literals([
   "none",
   "minimal",
@@ -7755,6 +7780,7 @@ export const V2ThreadRollbackResponse__ReasoningEffort = Schema.Literals([
   "medium",
   "high",
   "xhigh",
+  "max",
 ]).annotate({
   description:
     "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
@@ -8028,7 +8054,8 @@ export type V2ThreadStartedNotification__ReasoningEffort =
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max";
 export const V2ThreadStartedNotification__ReasoningEffort = Schema.Literals([
   "none",
   "minimal",
@@ -8036,6 +8063,7 @@ export const V2ThreadStartedNotification__ReasoningEffort = Schema.Literals([
   "medium",
   "high",
   "xhigh",
+  "max",
 ]).annotate({
   description:
     "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
@@ -8453,7 +8481,8 @@ export type V2ThreadStartResponse__ReasoningEffort =
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max";
 export const V2ThreadStartResponse__ReasoningEffort = Schema.Literals([
   "none",
   "minimal",
@@ -8461,6 +8490,7 @@ export const V2ThreadStartResponse__ReasoningEffort = Schema.Literals([
   "medium",
   "high",
   "xhigh",
+  "max",
 ]).annotate({
   description:
     "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
@@ -8757,7 +8787,8 @@ export type V2ThreadUnarchiveResponse__ReasoningEffort =
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max";
 export const V2ThreadUnarchiveResponse__ReasoningEffort = Schema.Literals([
   "none",
   "minimal",
@@ -8765,6 +8796,7 @@ export const V2ThreadUnarchiveResponse__ReasoningEffort = Schema.Literals([
   "medium",
   "high",
   "xhigh",
+  "max",
 ]).annotate({
   description:
     "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
@@ -9036,7 +9068,8 @@ export type V2TurnCompletedNotification__ReasoningEffort =
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max";
 export const V2TurnCompletedNotification__ReasoningEffort = Schema.Literals([
   "none",
   "minimal",
@@ -9044,6 +9077,7 @@ export const V2TurnCompletedNotification__ReasoningEffort = Schema.Literals([
   "medium",
   "high",
   "xhigh",
+  "max",
 ]).annotate({
   description:
     "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
@@ -9297,7 +9331,8 @@ export type V2TurnStartedNotification__ReasoningEffort =
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max";
 export const V2TurnStartedNotification__ReasoningEffort = Schema.Literals([
   "none",
   "minimal",
@@ -9305,6 +9340,7 @@ export const V2TurnStartedNotification__ReasoningEffort = Schema.Literals([
   "medium",
   "high",
   "xhigh",
+  "max",
 ]).annotate({
   description:
     "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
@@ -9439,7 +9475,8 @@ export type V2TurnStartParams__ReasoningEffort =
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max";
 export const V2TurnStartParams__ReasoningEffort = Schema.Literals([
   "none",
   "minimal",
@@ -9447,6 +9484,7 @@ export const V2TurnStartParams__ReasoningEffort = Schema.Literals([
   "medium",
   "high",
   "xhigh",
+  "max",
 ]).annotate({
   description:
     "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",
@@ -9650,7 +9688,8 @@ export type V2TurnStartResponse__ReasoningEffort =
   | "low"
   | "medium"
   | "high"
-  | "xhigh";
+  | "xhigh"
+  | "max";
 export const V2TurnStartResponse__ReasoningEffort = Schema.Literals([
   "none",
   "minimal",
@@ -9658,6 +9697,7 @@ export const V2TurnStartResponse__ReasoningEffort = Schema.Literals([
   "medium",
   "high",
   "xhigh",
+  "max",
 ]).annotate({
   description:
     "See https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning",

@@ -61,6 +61,21 @@ interface JsonSchemaFile {
   readonly qualifiedName: string;
 }
 
+function includeMaxReasoningEffort(
+  name: string,
+  schema: typeof Schema.Json.Type,
+): typeof Schema.Json.Type {
+  // Released app-server builds may expose this before the pinned protocol ref does.
+  if (!name.endsWith("__ReasoningEffort") || schema === null || typeof schema !== "object") {
+    return schema;
+  }
+  const enumValues = "enum" in schema ? schema.enum : undefined;
+  if (!Array.isArray(enumValues) || enumValues.includes("max")) {
+    return schema;
+  }
+  return { ...schema, enum: [...enumValues, "max"] };
+}
+
 class GeneratorError extends Schema.TaggedErrorClass<GeneratorError>()("GeneratorError", {
   detail: Schema.String,
   cause: Schema.optional(Schema.Defect),
@@ -597,7 +612,9 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
   for (const [name, schema] of Object.entries(aggregateSchemas).toSorted(([left], [right]) =>
     left.localeCompare(right),
   )) {
-    generator.addSchema(name, schema as never);
+    const normalizedSchema = includeMaxReasoningEffort(name, schema);
+    aggregateSchemas[name] = normalizedSchema;
+    generator.addSchema(name, normalizedSchema as never);
   }
 
   const generatedEntries = new Map<string, string>();

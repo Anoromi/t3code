@@ -59,6 +59,8 @@ export function normalizeReasoningCommandAlias(command: string): "reasoning" | n
 
 export function normalizeReasoningValue(value: string): CodexReasoningEffort | null {
   switch (value.trim().toLowerCase()) {
+    case "max":
+      return "max";
     case "xh":
     case "xhigh":
       return "xhigh";
