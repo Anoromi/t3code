@@ -36,6 +36,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           workspace_root,
           default_model_selection_json,
           scripts_json,
+          hyprnav_json,
           created_at,
           updated_at,
           deleted_at
@@ -46,6 +47,7 @@ const makeProjectionProjectRepository = Effect.gen(function* () {
           ${row.workspaceRoot},
           ${row.defaultModelSelection !== null ? JSON.stringify(row.defaultModelSelection) : null},
           ${JSON.stringify(row.scripts)},
+          'null',
           ${row.createdAt},
           ${row.updatedAt},
           ${row.deletedAt}
