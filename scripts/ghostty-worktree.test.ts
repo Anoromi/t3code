@@ -86,6 +86,7 @@ describe("ghostty-worktree", () => {
     const directory = NodeFs.mkdtempSync(NodePath.join(NodeOs.tmpdir(), "ghostty-stale-"));
     const statePath = NodePath.join(directory, "assignments.json");
     NodeFs.mkdirSync(`${statePath}.lock`);
+    NodeFs.writeFileSync(NodePath.join(`${statePath}.lock`, "owner"), "99999999-stale");
     NodeFs.utimesSync(`${statePath}.lock`, new Date(0), new Date(0));
     let ran = false;
     await withRegistryLock(statePath, async () => {
@@ -95,12 +96,45 @@ describe("ghostty-worktree", () => {
     NodeFs.rmSync(directory, { recursive: true, force: true });
   });
 
+  it("does not remove a replacement lock created after stale observation", async () => {
+    const directory = NodeFs.mkdtempSync(NodePath.join(NodeOs.tmpdir(), "ghostty-race-"));
+    const statePath = NodePath.join(directory, "assignments.json");
+    const lockPath = `${statePath}.lock`;
+    NodeFs.mkdirSync(lockPath);
+    NodeFs.writeFileSync(NodePath.join(lockPath, "owner"), "99999999-stale");
+    NodeFs.utimesSync(lockPath, new Date(0), new Date(0));
+    const replacementOwner = `${String(process.pid)}-replacement`;
+    await expect(
+      withRegistryLock(statePath, async () => undefined, {
+        staleLockMs: 0,
+        waitTimeoutMs: 0,
+        beforeStaleClaim: () => {
+          NodeFs.rmSync(lockPath, { recursive: true, force: true });
+          NodeFs.mkdirSync(lockPath);
+          NodeFs.writeFileSync(NodePath.join(lockPath, "owner"), replacementOwner);
+        },
+      }),
+    ).rejects.toThrow("Timed out waiting");
+    expect(NodeFs.readFileSync(NodePath.join(lockPath, "owner"), "utf8")).toBe(replacementOwner);
+    NodeFs.rmSync(directory, { recursive: true, force: true });
+  });
+
   it("quarantines malformed state and starts from an empty registry", () => {
     const directory = NodeFs.mkdtempSync(NodePath.join(NodeOs.tmpdir(), "ghostty-corrupt-"));
     const statePath = NodePath.join(directory, "assignments.json");
     NodeFs.writeFileSync(statePath, "{broken");
     expect(readRegistryRecovering(statePath, 123)).toEqual({ version: 1, assignments: {} });
     expect(NodeFs.existsSync(`${statePath}.corrupt-123-${String(process.pid)}`)).toBe(true);
+    NodeFs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("propagates registry read errors without quarantining state", () => {
+    const directory = NodeFs.mkdtempSync(NodePath.join(NodeOs.tmpdir(), "ghostty-read-error-"));
+    const statePath = NodePath.join(directory, "assignments.json");
+    NodeFs.mkdirSync(statePath);
+    expect(() => readRegistryRecovering(statePath, 456)).toThrow();
+    expect(NodeFs.existsSync(statePath)).toBe(true);
+    expect(NodeFs.existsSync(`${statePath}.corrupt-456-${String(process.pid)}`)).toBe(false);
     NodeFs.rmSync(directory, { recursive: true, force: true });
   });
 

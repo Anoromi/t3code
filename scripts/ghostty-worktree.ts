@@ -117,21 +117,34 @@ function isRegistry(value: unknown): value is Registry {
   );
 }
 
-export function readRegistryRecovering(path: string, now = Date.now()): Registry {
-  if (!NodeFs.existsSync(path)) return { version: 1, assignments: {} };
+function quarantineMalformedRegistry(path: string, now: number): Registry {
+  const corruptPath = `${path}.corrupt-${String(now)}-${String(process.pid)}`;
   try {
-    const parsed: unknown = JSON.parse(NodeFs.readFileSync(path, "utf8"));
-    if (!isRegistry(parsed)) throw new Error("Invalid registry shape.");
-    return parsed;
-  } catch {
-    const corruptPath = `${path}.corrupt-${String(now)}-${String(process.pid)}`;
-    try {
-      NodeFs.renameSync(path, corruptPath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-    return emptyRegistry();
+    NodeFs.renameSync(path, corruptPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
+  return emptyRegistry();
+}
+
+export function readRegistryRecovering(path: string, now = Date.now()): Registry {
+  let contents: string;
+  try {
+    contents = NodeFs.readFileSync(path, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return emptyRegistry();
+    throw error;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(contents);
+  } catch {
+    return quarantineMalformedRegistry(path, now);
+  }
+  if (!isRegistry(parsed)) {
+    return quarantineMalformedRegistry(path, now);
+  }
+  return parsed;
 }
 
 export function writeRegistryAtomic(path: string, registry: Registry): void {
@@ -169,6 +182,7 @@ export async function withRegistryLock<T>(
     readonly waitTimeoutMs?: number;
     readonly staleLockMs?: number;
     readonly now?: () => number;
+    readonly beforeStaleClaim?: () => void;
   } = {},
 ): Promise<T> {
   const lockPath = `${statePath}.lock`;
@@ -179,44 +193,75 @@ export async function withRegistryLock<T>(
   const startedAt = now();
   const ownerToken = `${String(process.pid)}-${randomUUID()}`;
   const ownerPath = NodePath.join(lockPath, "owner");
+  const recoveryPath = NodePath.join(lockPath, "recovery");
+  const candidatePath = `${lockPath}.candidate-${ownerToken}`;
   NodeFs.mkdirSync(NodePath.dirname(statePath), { recursive: true });
   for (;;) {
     try {
-      NodeFs.mkdirSync(lockPath);
+      NodeFs.mkdirSync(candidatePath);
       try {
-        NodeFs.writeFileSync(ownerPath, ownerToken, { mode: 0o600 });
+        NodeFs.writeFileSync(NodePath.join(candidatePath, "owner"), ownerToken, { mode: 0o600 });
+        NodeFs.renameSync(candidatePath, lockPath);
       } catch (error) {
-        NodeFs.rmSync(lockPath, { recursive: true, force: true });
+        NodeFs.rmSync(candidatePath, { recursive: true, force: true });
         throw error;
       }
       break;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EEXIST" && code !== "ENOTEMPTY") throw error;
       try {
-        const owner = (() => {
+        const readOwner = () => {
           try {
             return NodeFs.readFileSync(ownerPath, "utf8");
           } catch (ownerError) {
             if ((ownerError as NodeJS.ErrnoException).code === "ENOENT") return null;
             throw ownerError;
           }
-        })();
-        const ownerPid = owner === null ? null : Number(owner.split("-", 1)[0]);
-        const ownerIsAlive =
-          ownerPid !== null &&
-          Number.isSafeInteger(ownerPid) &&
-          ownerPid > 0 &&
-          (() => {
-            try {
-              process.kill(ownerPid, 0);
-              return true;
-            } catch (killError) {
-              return (killError as NodeJS.ErrnoException).code === "EPERM";
+        };
+        const isOwnerAlive = (owner: string | null) => {
+          const ownerPid = owner === null ? null : Number(owner.split("-", 1)[0]);
+          if (ownerPid === null || !Number.isSafeInteger(ownerPid) || ownerPid <= 0) return false;
+          try {
+            process.kill(ownerPid, 0);
+            return true;
+          } catch (killError) {
+            return (killError as NodeJS.ErrnoException).code === "EPERM";
+          }
+        };
+        const observedOwner = readOwner();
+        const observedStat = NodeFs.statSync(lockPath);
+        if (!isOwnerAlive(observedOwner) && now() - observedStat.mtimeMs >= staleLockMs) {
+          options.beforeStaleClaim?.();
+          let recoveryDescriptor: number | null = null;
+          let recovered = false;
+          try {
+            recoveryDescriptor = NodeFs.openSync(recoveryPath, "wx", 0o600);
+            const currentOwner = readOwner();
+            const currentStat = NodeFs.statSync(lockPath);
+            if (
+              currentOwner === observedOwner &&
+              currentStat.dev === observedStat.dev &&
+              currentStat.ino === observedStat.ino &&
+              !isOwnerAlive(currentOwner) &&
+              now() - observedStat.mtimeMs >= staleLockMs
+            ) {
+              NodeFs.rmSync(lockPath, { recursive: true, force: true });
+              recovered = true;
             }
-          })();
-        if (!ownerIsAlive && now() - NodeFs.statSync(lockPath).mtimeMs >= staleLockMs) {
-          NodeFs.rmSync(lockPath, { recursive: true, force: true });
-          continue;
+          } catch (claimError) {
+            if ((claimError as NodeJS.ErrnoException).code !== "EEXIST") throw claimError;
+          } finally {
+            if (recoveryDescriptor !== null) {
+              NodeFs.closeSync(recoveryDescriptor);
+              try {
+                NodeFs.unlinkSync(recoveryPath);
+              } catch (unlinkError) {
+                if ((unlinkError as NodeJS.ErrnoException).code !== "ENOENT") throw unlinkError;
+              }
+            }
+          }
+          if (recovered) continue;
         }
       } catch (statError) {
         if ((statError as NodeJS.ErrnoException).code === "ENOENT") continue;
