@@ -2,6 +2,7 @@ import tailwindcss from "@tailwindcss/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import babel from "@rolldown/plugin-babel";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
+import { playwright } from "vite-plus/test/browser-playwright";
 import { defineProject, type TestProjectInlineConfiguration } from "vite-plus/test/config";
 import "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
@@ -64,6 +65,27 @@ const unitTestProject = {
   },
 } satisfies TestProjectInlineConfiguration;
 
+const browserTestProject = {
+  extends: true,
+  server: {
+    strictPort: false,
+  },
+  test: {
+    name: "browser",
+    include: ["src/**/*.browser.{ts,tsx}"],
+    browser: {
+      enabled: true,
+      provider: playwright() as never,
+      instances: [{ browser: "chromium" }],
+      headless: true,
+      api: { strictPort: false },
+    },
+    hookTimeout: 30_000,
+    testTimeout: 30_000,
+    fileParallelism: false,
+  },
+} satisfies TestProjectInlineConfiguration;
+
 function resolveDevProxyTarget(wsUrl: string | undefined): string | undefined {
   if (!wsUrl) {
     return undefined;
@@ -113,6 +135,8 @@ export default defineConfig(() => {
         "effect/Array",
         "effect/Order",
         "react-dom/client",
+        "vite-plus/test",
+        "vite-plus/test/browser",
       ],
     },
     define: {
@@ -174,7 +198,7 @@ export default defineConfig(() => {
       sourcemap: buildSourcemap,
     },
     test: {
-      projects: [defineProject(unitTestProject)],
+      projects: [defineProject(unitTestProject), defineProject(browserTestProject)],
     },
   };
 });
