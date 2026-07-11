@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // @effect-diagnostics globalDate:off globalTimers:off nodeBuiltinImport:off
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import * as NodeFs from "node:fs";
 import { homedir } from "node:os";
@@ -19,6 +19,71 @@ const POLL_ATTEMPTS = 30;
 const LOCK_RETRY_MS = 50;
 const LOCK_WAIT_TIMEOUT_MS = 10_000;
 const STALE_LOCK_MS = 5_000;
+
+async function acquireKernelRecoveryLock(
+  directoryPath: string,
+  waitTimeoutMs: number,
+): Promise<(() => Promise<void>) | null> {
+  const waitSeconds = String(Math.max(0, waitTimeoutMs) / 1_000);
+  const child = spawn(
+    "flock",
+    [
+      "--exclusive",
+      "--wait",
+      waitSeconds,
+      directoryPath,
+      "sh",
+      "-c",
+      'printf "locked\\n"; cat >/dev/null',
+    ],
+    { stdio: ["pipe", "pipe", "pipe"] },
+  );
+  let stderr = "";
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (chunk: string) => {
+    stderr += chunk;
+  });
+  const completion = new Promise<
+    | { readonly _tag: "Exit"; readonly status: number | null }
+    | { readonly _tag: "SpawnError"; readonly error: Error }
+  >((resolve) => {
+    child.once("error", (error) => resolve({ _tag: "SpawnError", error }));
+    child.once("exit", (status) => resolve({ _tag: "Exit", status }));
+  });
+  const ready = new Promise<true>((resolve) => {
+    let stdout = "";
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => {
+      stdout += chunk;
+      if (stdout.includes("\n")) resolve(true);
+    });
+  });
+  const acquired = await Promise.race([
+    ready,
+    completion.then((result) => {
+      if (result._tag === "SpawnError") {
+        throw new Error("util-linux flock is required for registry recovery.", {
+          cause: result.error,
+        });
+      }
+      if (result.status === 1) return false;
+      throw new Error(stderr.trim() || `flock exited with status ${String(result.status)}.`);
+    }),
+  ]);
+  if (!acquired) return null;
+  let released: Promise<void> | null = null;
+  return () => {
+    if (released) return released;
+    child.stdin.end();
+    released = completion.then((result) => {
+      if (result._tag === "SpawnError") throw result.error;
+      if (result.status !== 0) {
+        throw new Error(stderr.trim() || `flock exited with status ${String(result.status)}.`);
+      }
+    });
+    return released;
+  };
+}
 
 export interface GhosttyAssignment {
   readonly repoCommonDir: string;
@@ -183,7 +248,7 @@ export async function withRegistryLock<T>(
     readonly staleLockMs?: number;
     readonly now?: () => number;
     readonly beforeStaleClaim?: () => void;
-    readonly afterRecoveryClaim?: () => Promise<void>;
+    readonly afterRecoveryLock?: () => Promise<void>;
   } = {},
 ): Promise<T> {
   const lockPath = `${statePath}.lock`;
@@ -194,7 +259,6 @@ export async function withRegistryLock<T>(
   const startedAt = now();
   const ownerToken = `${String(process.pid)}-${randomUUID()}`;
   const ownerPath = NodePath.join(lockPath, "owner");
-  const recoveryDirectoryPath = NodePath.join(lockPath, "recovery-claims");
   const candidatePath = `${lockPath}.candidate-${ownerToken}`;
   NodeFs.mkdirSync(NodePath.dirname(statePath), { recursive: true });
   for (;;) {
@@ -234,30 +298,14 @@ export async function withRegistryLock<T>(
         const observedStat = NodeFs.statSync(lockPath);
         if (!isOwnerAlive(observedOwner) && now() - observedStat.mtimeMs >= staleLockMs) {
           options.beforeStaleClaim?.();
-          const recoveryClaimName = `${ownerToken}.${String(process.hrtime.bigint())}`;
-          const recoveryClaimPath = NodePath.join(recoveryDirectoryPath, recoveryClaimName);
           let recovered = false;
+          const releaseRecoveryLock = await acquireKernelRecoveryLock(
+            NodePath.dirname(statePath),
+            waitTimeoutMs - (now() - startedAt),
+          );
           try {
-            try {
-              NodeFs.mkdirSync(recoveryDirectoryPath);
-            } catch (directoryError) {
-              if ((directoryError as NodeJS.ErrnoException).code !== "EEXIST") {
-                throw directoryError;
-              }
-            }
-            NodeFs.writeFileSync(recoveryClaimPath, "", { flag: "wx", mode: 0o600 });
-            await options.afterRecoveryClaim?.();
-            const liveClaims = NodeFs.readdirSync(recoveryDirectoryPath).filter(isOwnerAlive);
-            const oldestLiveClaim = liveClaims.toSorted((left, right) => {
-              const leftCreatedAt = BigInt(left.slice(left.lastIndexOf(".") + 1));
-              const rightCreatedAt = BigInt(right.slice(right.lastIndexOf(".") + 1));
-              return leftCreatedAt < rightCreatedAt
-                ? -1
-                : leftCreatedAt > rightCreatedAt
-                  ? 1
-                  : left.localeCompare(right);
-            })[0];
-            if (oldestLiveClaim === recoveryClaimName) {
+            if (releaseRecoveryLock) {
+              await options.afterRecoveryLock?.();
               const currentOwner = readOwner();
               const currentStat = NodeFs.statSync(lockPath);
               if (
@@ -272,11 +320,7 @@ export async function withRegistryLock<T>(
               }
             }
           } finally {
-            try {
-              NodeFs.unlinkSync(recoveryClaimPath);
-            } catch (unlinkError) {
-              if ((unlinkError as NodeJS.ErrnoException).code !== "ENOENT") throw unlinkError;
-            }
+            await releaseRecoveryLock?.();
           }
           if (recovered) continue;
         }

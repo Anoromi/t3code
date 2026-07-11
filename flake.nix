@@ -57,6 +57,7 @@
               pkgs.pkg-config
               pnpm
               pkgs.python3
+              pkgs.util-linux
               pkgs.xdg-utils
             ];
             env = {

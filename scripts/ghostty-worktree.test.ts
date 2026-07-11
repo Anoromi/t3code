@@ -1,4 +1,5 @@
 // @effect-diagnostics globalDate:off globalTimers:off nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFs from "node:fs";
 import * as NodeOs from "node:os";
 import * as NodePath from "node:path";
@@ -97,48 +98,85 @@ describe("ghostty-worktree", () => {
       { waitTimeoutMs: 250 },
     );
     expect(ran).toBe(true);
+    expect(NodeFs.readdirSync(directory)).toEqual([]);
     NodeFs.rmSync(directory, { recursive: true, force: true });
   });
 
-  it("recovers a stale recovery claim left by a crashed contender", async () => {
-    const directory = NodeFs.mkdtempSync(NodePath.join(NodeOs.tmpdir(), "ghostty-recovery-"));
+  it("recovers after a kernel lock holder crashes without leaving recovery artifacts", async () => {
+    const directory = NodeFs.mkdtempSync(NodePath.join(NodeOs.tmpdir(), "ghostty-crash-"));
     const statePath = NodePath.join(directory, "assignments.json");
     const lockPath = `${statePath}.lock`;
     NodeFs.mkdirSync(lockPath);
-    NodeFs.writeFileSync(NodePath.join(lockPath, "owner"), "99999998-stale-lock");
-    const recoveryPath = NodePath.join(lockPath, "recovery-claims");
-    NodeFs.mkdirSync(recoveryPath);
-    NodeFs.writeFileSync(NodePath.join(recoveryPath, "99999999-crashed-recovery.0"), "");
+    NodeFs.writeFileSync(NodePath.join(lockPath, "owner"), "99999999-stale");
     NodeFs.utimesSync(lockPath, new Date(0), new Date(0));
+    const crashedHolder = NodeChildProcess.spawn(
+      "flock",
+      ["--exclusive", directory, "sh", "-c", 'printf "locked\\n"; cat >/dev/null'],
+      { stdio: ["pipe", "pipe", "pipe"] },
+    );
+    await new Promise<void>((resolve) => {
+      crashedHolder.stdout.once("data", () => resolve());
+    });
     let ran = false;
-    await withRegistryLock(
+    const recovery = withRegistryLock(
       statePath,
       async () => {
         ran = true;
       },
-      { waitTimeoutMs: 250 },
+      { waitTimeoutMs: 1_000 },
     );
+    crashedHolder.kill("SIGKILL");
+    await new Promise<void>((resolve) => {
+      crashedHolder.once("exit", () => resolve());
+    });
+    await recovery;
     expect(ran).toBe(true);
     expect(NodeFs.existsSync(lockPath)).toBe(false);
+    expect(NodeFs.readdirSync(directory)).toEqual([]);
     NodeFs.rmSync(directory, { recursive: true, force: true });
   });
 
-  it("elects one stale-lock recovery claimant when contenders arrive together", async () => {
+  it("times out cleanly while another process holds the kernel recovery lock", async () => {
+    const directory = NodeFs.mkdtempSync(NodePath.join(NodeOs.tmpdir(), "ghostty-timeout-"));
+    const statePath = NodePath.join(directory, "assignments.json");
+    const lockPath = `${statePath}.lock`;
+    NodeFs.mkdirSync(lockPath);
+    NodeFs.writeFileSync(NodePath.join(lockPath, "owner"), "99999999-stale");
+    NodeFs.utimesSync(lockPath, new Date(0), new Date(0));
+    const holder = NodeChildProcess.spawn(
+      "flock",
+      ["--exclusive", directory, "sh", "-c", 'printf "locked\\n"; cat >/dev/null'],
+      { stdio: ["pipe", "pipe", "pipe"] },
+    );
+    await new Promise<void>((resolve) => {
+      holder.stdout.once("data", () => resolve());
+    });
+    await expect(
+      withRegistryLock(statePath, async () => undefined, { waitTimeoutMs: 50 }),
+    ).rejects.toThrow("Timed out waiting");
+    expect(NodeFs.readFileSync(NodePath.join(lockPath, "owner"), "utf8")).toBe("99999999-stale");
+    expect(NodeFs.readdirSync(directory)).toEqual(["assignments.json.lock"]);
+    holder.stdin.end();
+    await new Promise<void>((resolve) => {
+      holder.once("exit", () => resolve());
+    });
+    NodeFs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("serializes concurrent stale-lock recovery with the kernel lock", async () => {
     const directory = NodeFs.mkdtempSync(NodePath.join(NodeOs.tmpdir(), "ghostty-election-"));
     const statePath = NodePath.join(directory, "assignments.json");
     const lockPath = `${statePath}.lock`;
     NodeFs.mkdirSync(lockPath);
     NodeFs.writeFileSync(NodePath.join(lockPath, "owner"), "99999999-stale");
     NodeFs.utimesSync(lockPath, new Date(0), new Date(0));
-    let releaseClaims: (() => void) | undefined;
-    const allClaimsPublished = new Promise<void>((resolve) => {
-      releaseClaims = resolve;
-    });
-    let publishedClaims = 0;
-    const afterRecoveryClaim = async () => {
-      publishedClaims += 1;
-      if (publishedClaims === 2) releaseClaims?.();
-      await allClaimsPublished;
+    let activeRecoveryLocks = 0;
+    let maximumRecoveryLocks = 0;
+    const afterRecoveryLock = async () => {
+      activeRecoveryLocks += 1;
+      maximumRecoveryLocks = Math.max(maximumRecoveryLocks, activeRecoveryLocks);
+      await new Promise<void>((resolve) => setTimeout(resolve, 20));
+      activeRecoveryLocks -= 1;
     };
     let active = 0;
     let maximumActive = 0;
@@ -151,12 +189,13 @@ describe("ghostty-worktree", () => {
           await new Promise<void>((resolve) => setTimeout(resolve, 20));
           active -= 1;
         },
-        { afterRecoveryClaim, retryMs: 1, staleLockMs: 0, waitTimeoutMs: 500 },
+        { afterRecoveryLock, retryMs: 1, staleLockMs: 0, waitTimeoutMs: 500 },
       );
     await Promise.all([recover(), recover()]);
-    expect(publishedClaims).toBe(2);
+    expect(maximumRecoveryLocks).toBe(1);
     expect(maximumActive).toBe(1);
     expect(NodeFs.existsSync(lockPath)).toBe(false);
+    expect(NodeFs.readdirSync(directory)).toEqual([]);
     NodeFs.rmSync(directory, { recursive: true, force: true });
   });
 
