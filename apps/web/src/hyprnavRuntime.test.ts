@@ -2,6 +2,9 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   attachHyprnavWebSocketTicket,
+  createCancelableHyprnavDelay,
+  HYPRNAV_CREDENTIAL_REFRESH_DELAY_MS,
+  hyprnavCredentialRefreshDelay,
   preferredEditorForHyprnav,
   syncHyprnavWithRetry,
 } from "./hyprnavRuntime";
@@ -80,5 +83,38 @@ describe("hyprnavRuntime", () => {
     expect(
       attachHyprnavWebSocketTicket("ws://127.0.0.1:3000/?token=old&wsToken=older", "fresh"),
     ).toBe("ws://127.0.0.1:3000/ws?wsTicket=fresh");
+  });
+
+  it("refreshes Corkdiff credential-backed publications before ticket expiry only", () => {
+    expect(
+      hyprnavCredentialRefreshDelay({
+        bindings: [
+          {
+            id: "corkdiff",
+            slot: 8,
+            scope: "thread",
+            workspace: { mode: "managed" },
+            action: "shell-command",
+            command: "corkdiff {corkdiffServerUrl}",
+          },
+        ],
+      }),
+    ).toBe(HYPRNAV_CREDENTIAL_REFRESH_DELAY_MS);
+    expect(hyprnavCredentialRefreshDelay({ bindings: [] })).toBeNull();
+    expect(HYPRNAV_CREDENTIAL_REFRESH_DELAY_MS).toBeLessThan(5 * 60_000);
+  });
+
+  it("cancels a pending credential refresh timer and wakes its task", async () => {
+    vi.useFakeTimers();
+    try {
+      const delay = createCancelableHyprnavDelay();
+      const pending = delay.wait(HYPRNAV_CREDENTIAL_REFRESH_DELAY_MS);
+      expect(vi.getTimerCount()).toBe(1);
+      delay.cancel();
+      await expect(pending).resolves.toBeUndefined();
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

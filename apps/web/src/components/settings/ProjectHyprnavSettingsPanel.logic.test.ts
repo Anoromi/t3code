@@ -6,6 +6,7 @@ import {
   buildHyprnavPublicationRequests,
   hyprnavDraftFromSettings,
   parseHyprnavDraft,
+  publishSettingsChange,
   resolveProjectHyprnavNextOverride,
 } from "./ProjectHyprnavSettingsPanel";
 
@@ -64,6 +65,14 @@ describe("ProjectHyprnavSettingsPanel logic", () => {
       parseHyprnavDraft([{ ...terminal!, workspaceMode: "absolute", workspaceId: "0" }]).message,
     ).toContain("positive workspace");
     expect(parseHyprnavDraft([{ ...command!, command: " " }]).message).toContain("need a command");
+  });
+
+  it("rejects binding names longer than the persisted contract allows", () => {
+    const [binding] = hyprnavDraftFromSettings(SETTINGS);
+    expect(parseHyprnavDraft([{ ...binding!, name: "x".repeat(256) }]).message).toBe(
+      "Binding names must be 255 characters or fewer.",
+    );
+    expect(parseHyprnavDraft([{ ...binding!, name: "x".repeat(255) }]).message).toBeNull();
   });
 
   it("persists inherited null when a project matches the global defaults", () => {
@@ -145,5 +154,38 @@ describe("ProjectHyprnavSettingsPanel logic", () => {
       clearBindings: [{ scope: "project", slot: 1 }],
       clearNames: [{ scope: "worktree", slot: 2 }],
     });
+  });
+
+  it("reports publication exceptions as saved but not applied", async () => {
+    const environmentId = EnvironmentId.make("primary");
+    const projectId = ProjectId.make("project-1");
+    await expect(
+      publishSettingsChange({
+        localEnvironmentId: environmentId,
+        projects: [
+          {
+            id: projectId,
+            environmentId,
+            title: "Project",
+            workspaceRoot: "/repo",
+            repositoryIdentity: null,
+            defaultModelSelection: null,
+            scripts: [],
+            hyprnav: SETTINGS,
+            createdAt: "2026-07-11T00:00:00.000Z",
+            updatedAt: "2026-07-11T00:00:00.000Z",
+            nextHyprnav: SETTINGS,
+          },
+        ],
+        threadShells: [],
+        previousSettingsByProjectKey: new Map([
+          [scopedProjectKey(scopeProjectRef(environmentId, projectId)), SETTINGS],
+        ]),
+        availableEditors: [],
+        publish: async () => {
+          throw new Error("ticket issuance failed");
+        },
+      }),
+    ).resolves.toBe("Saved, but Hyprnav was not applied. ticket issuance failed");
   });
 });

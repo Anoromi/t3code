@@ -403,6 +403,20 @@ describe("hyprnavSettings", () => {
       },
       {
         projectRoot: "/repo",
+        worktreePath: "/repo/worktrees/feature-a",
+        threadId: null,
+        threadTitle: null,
+        hyprnav: {
+          bindings: DEFAULT_PROJECT_HYPRNAV_SETTINGS.bindings.filter(
+            (binding) => binding.scope !== "thread",
+          ),
+        },
+        clearBindings: [],
+        clearNames: [],
+        lock: false,
+      },
+      {
+        projectRoot: "/repo",
         worktreePath: null,
         threadId: null,
         threadTitle: null,
@@ -414,6 +428,42 @@ describe("hyprnavSettings", () => {
         clearBindings: [],
         clearNames: [],
         lock: false,
+      },
+    ]);
+  });
+
+  it("publishes base bindings and cleanup for every distinct known non-root worktree", () => {
+    const jobs = buildProjectHyprnavSyncJobs({
+      localEnvironmentId,
+      projects: [makeResolvedProject()],
+      threadShells: [
+        makeThreadShell({ id: ThreadId.make("one"), worktreePath: "/repo/worktrees/one" }),
+        makeThreadShell({ id: ThreadId.make("two"), worktreePath: "/repo/worktrees/two" }),
+        makeThreadShell({ id: ThreadId.make("duplicate"), worktreePath: "/repo/worktrees/one" }),
+      ],
+      activeThread: null,
+      clearBindingsByProjectKey: new Map([[projectKey, [{ scope: "worktree", slot: 9 }]]]),
+      clearNamesByProjectKey: new Map([[projectKey, [{ scope: "worktree", slot: 7 }]]]),
+    });
+
+    expect(
+      jobs
+        .filter((job) => job.threadId === null && job.worktreePath !== null)
+        .map((job) => ({
+          worktreePath: job.worktreePath,
+          clearBindings: job.clearBindings,
+          clearNames: job.clearNames,
+        })),
+    ).toEqual([
+      {
+        worktreePath: "/repo/worktrees/one",
+        clearBindings: [{ scope: "worktree", slot: 9 }],
+        clearNames: [{ scope: "worktree", slot: 7 }],
+      },
+      {
+        worktreePath: "/repo/worktrees/two",
+        clearBindings: [{ scope: "worktree", slot: 9 }],
+        clearNames: [{ scope: "worktree", slot: 7 }],
       },
     ]);
   });

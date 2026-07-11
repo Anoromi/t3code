@@ -302,6 +302,7 @@ export function buildProjectHyprnavSyncJobs(input: {
   clearNamesByProjectKey: ReadonlyMap<string, readonly DesktopHyprnavScopedSlot[]>;
 }): ProjectHyprnavSyncJob[] {
   const BASE_JOB_SCOPES = ["project", "worktree"] as const satisfies readonly ProjectHyprnavScope[];
+  const WORKTREE_JOB_SCOPES = ["worktree"] as const satisfies readonly ProjectHyprnavScope[];
   const THREAD_JOB_SCOPES = ["thread"] as const satisfies readonly ProjectHyprnavScope[];
   const localProjectsByKey = new Map(
     input.projects
@@ -404,6 +405,41 @@ export function buildProjectHyprnavSyncJobs(input: {
       hyprnav: threadHyprnav,
       clearBindings: threadClearBindings,
       clearNames: threadClearNames,
+      lock: false,
+    });
+  }
+
+  const knownWorktrees = new Map<
+    string,
+    { readonly projectKey: string; readonly worktreePath: string }
+  >();
+  for (const thread of input.threadShells) {
+    if (thread.environmentId !== input.localEnvironmentId || !thread.worktreePath) continue;
+    const projectKey = scopedProjectKey(scopeProjectRef(thread.environmentId, thread.projectId));
+    const project = localProjectsByKey.get(projectKey);
+    if (!project || thread.worktreePath === project.workspaceRoot) continue;
+    knownWorktrees.set(`${projectKey}\u0000${thread.worktreePath}`, {
+      projectKey,
+      worktreePath: thread.worktreePath,
+    });
+  }
+  for (const { projectKey, worktreePath } of knownWorktrees.values()) {
+    const project = localProjectsByKey.get(projectKey)!;
+    addJob({
+      projectKey,
+      projectRoot: project.workspaceRoot,
+      worktreePath,
+      threadId: null,
+      threadTitle: null,
+      hyprnav: filterHyprnavBindingsByScopes(project.hyprnav, WORKTREE_JOB_SCOPES),
+      clearBindings: filterScopedSlotsByScopes(
+        input.clearBindingsByProjectKey.get(projectKey) ?? [],
+        WORKTREE_JOB_SCOPES,
+      ),
+      clearNames: filterScopedSlotsByScopes(
+        input.clearNamesByProjectKey.get(projectKey) ?? [],
+        WORKTREE_JOB_SCOPES,
+      ),
       lock: false,
     });
   }

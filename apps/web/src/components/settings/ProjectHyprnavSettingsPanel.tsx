@@ -94,6 +94,9 @@ export function parseHyprnavDraft(draft: readonly HyprnavDraftBinding[]): {
     if (!workspace) {
       return { settings: null, message: "Absolute workspaces need a positive workspace number." };
     }
+    if (item.name.trim().length > 255) {
+      return { settings: null, message: "Binding names must be 255 characters or fewer." };
+    }
     const common = {
       id: item.id,
       slot,
@@ -183,30 +186,37 @@ export function buildHyprnavPublicationRequests(input: {
   }));
 }
 
-async function publishSettingsChange(input: {
+export async function publishSettingsChange(input: {
   readonly localEnvironmentId: EnvironmentId | null;
   readonly projects: readonly (Project & { readonly nextHyprnav: ProjectHyprnavSettings })[];
   readonly threadShells: readonly ThreadShell[];
   readonly previousSettingsByProjectKey: ReadonlyMap<string, ProjectHyprnavSettings>;
   readonly availableEditors: Parameters<typeof resolveAndPersistPreferredEditor>[0];
+  readonly publish?: typeof publishHyprnavRequests;
 }): Promise<string> {
   if (input.localEnvironmentId === null || input.projects.length === 0) {
     return "Saved. Runtime synchronization is limited to the primary local environment.";
   }
-  const requests = buildHyprnavPublicationRequests({
-    localEnvironmentId: input.localEnvironmentId,
-    projects: input.projects,
-    threadShells: input.threadShells,
-    previousSettingsByProjectKey: input.previousSettingsByProjectKey,
-  });
-  const result = await publishHyprnavRequests({
-    requests,
-    availableEditors: input.availableEditors,
-    resolvePreferredEditor: resolveAndPersistPreferredEditor,
-  });
-  return result.status === "ok"
-    ? "Saved and synchronized with Hyprnav."
-    : `Saved, but Hyprnav was not applied. ${result.message ?? "The desktop runtime will retry later."}`;
+  try {
+    const requests = buildHyprnavPublicationRequests({
+      localEnvironmentId: input.localEnvironmentId,
+      projects: input.projects,
+      threadShells: input.threadShells,
+      previousSettingsByProjectKey: input.previousSettingsByProjectKey,
+    });
+    const result = await (input.publish ?? publishHyprnavRequests)({
+      requests,
+      availableEditors: input.availableEditors,
+      resolvePreferredEditor: resolveAndPersistPreferredEditor,
+    });
+    return result.status === "ok"
+      ? "Saved and synchronized with Hyprnav."
+      : `Saved, but Hyprnav was not applied. ${result.message ?? "The desktop runtime will retry later."}`;
+  } catch (error) {
+    return `Saved, but Hyprnav was not applied. ${
+      error instanceof Error ? error.message : "The desktop runtime will retry later."
+    }`;
+  }
 }
 
 function nextBinding(draft: readonly HyprnavDraftBinding[]): HyprnavDraftBinding {
@@ -340,6 +350,7 @@ function BindingEditor({
           <Input
             aria-label={`Name for ${binding.id}`}
             placeholder="Optional Hyprnav label"
+            maxLength={255}
             value={binding.name}
             disabled={disabled}
             onChange={(event) => patch({ name: event.target.value })}

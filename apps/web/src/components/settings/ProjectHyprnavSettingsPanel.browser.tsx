@@ -34,6 +34,9 @@ describe("HyprnavEditor browser", () => {
     );
 
     await expect.element(page.getByRole("heading", { name: "Hyprnav defaults" })).toBeVisible();
+    await expect
+      .element(page.getByRole("textbox", { name: "Name for notify" }))
+      .toHaveAttribute("maxlength", "255");
     const save = page.getByRole("button", { name: "Save and apply" });
     await expect.element(save).toBeDisabled();
     await expect.element(page.getByText("Shell command bindings need a command.")).toBeVisible();

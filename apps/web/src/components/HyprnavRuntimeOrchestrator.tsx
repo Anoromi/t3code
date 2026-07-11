@@ -6,15 +6,12 @@ import { useEffect, useMemo } from "react";
 import { resolveAndPersistPreferredEditor } from "../editorPreferences";
 import { isElectron } from "../env";
 import { useClientSettings } from "../hooks/useSettings";
+import { resolveActiveHyprnavSyncTarget, resolveProjectHyprnavSettings } from "../hyprnavSettings";
 import {
-  projectHyprnavNeedsCorkdiffConnection,
-  resolveActiveHyprnavSyncTarget,
-  resolveProjectHyprnavSettings,
-} from "../hyprnavSettings";
-import {
+  createCancelableHyprnavDelay,
+  hyprnavCredentialRefreshDelay,
   publishHyprnavRequests,
   resolveHyprnavCorkdiffConnection,
-  waitForHyprnavRetry,
 } from "../hyprnavRuntime";
 import { usePrimaryEnvironment } from "../state/environments";
 import { useProject, useThreadShell } from "../state/entities";
@@ -58,6 +55,8 @@ export function HyprnavRuntimeOrchestrator({ threadRef }: { readonly threadRef: 
 
     let cancelled = false;
     let warned = false;
+    const delay = createCancelableHyprnavDelay();
+    const credentialRefreshDelay = hyprnavCredentialRefreshDelay(effectiveSettings);
     void (async () => {
       for (;;) {
         if (cancelled) return;
@@ -77,11 +76,16 @@ export function HyprnavRuntimeOrchestrator({ threadRef }: { readonly threadRef: 
             ],
             availableEditors,
             resolvePreferredEditor: resolveAndPersistPreferredEditor,
-            ...(projectHyprnavNeedsCorkdiffConnection(effectiveSettings)
+            ...(credentialRefreshDelay !== null
               ? { resolveCorkdiffConnection: resolveHyprnavCorkdiffConnection }
               : {}),
           });
-          if (cancelled || result.status === "ok") return;
+          if (cancelled) return;
+          if (result.status === "ok") {
+            if (credentialRefreshDelay === null) return;
+            await delay.wait(credentialRefreshDelay);
+            continue;
+          }
           if (!warned) {
             warned = true;
             toastManager.add({
@@ -104,12 +108,13 @@ export function HyprnavRuntimeOrchestrator({ threadRef }: { readonly threadRef: 
             });
           }
         }
-        await waitForHyprnavRetry(HYPRNAV_BACKGROUND_RETRY_DELAY_MS);
+        await delay.wait(HYPRNAV_BACKGROUND_RETRY_DELAY_MS);
       }
     })();
 
     return () => {
       cancelled = true;
+      delay.cancel();
     };
   }, [availableEditors, effectiveSettings, requestKey, target]);
 

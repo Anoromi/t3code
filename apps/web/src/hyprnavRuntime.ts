@@ -4,6 +4,7 @@ import type {
   DesktopHyprnavSyncInput,
   DesktopHyprnavSyncResult,
   EditorId,
+  ProjectHyprnavSettings,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
@@ -11,11 +12,52 @@ import { PrimaryEnvironmentHttpClient } from "./environments/primary/httpClient"
 import { runPrimaryHttp } from "./lib/runtime";
 
 export const HYPRNAV_SYNC_RETRY_DELAYS_MS = [250, 1_000] as const;
+export const HYPRNAV_CREDENTIAL_REFRESH_DELAY_MS = 4 * 60_000;
+
+export function hyprnavCredentialRefreshDelay(settings: ProjectHyprnavSettings): number | null {
+  return settings.bindings.some(
+    (binding) =>
+      binding.action === "shell-command" &&
+      (binding.command.includes("{corkdiffLaunchCommand}") ||
+        binding.command.includes("{corkdiffServerUrl}") ||
+        binding.command.includes("{corkdiffToken}")),
+  )
+    ? HYPRNAV_CREDENTIAL_REFRESH_DELAY_MS
+    : null;
+}
 
 export function waitForHyprnavRetry(delayMs: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, delayMs);
   });
+}
+
+export function createCancelableHyprnavDelay(): {
+  readonly wait: (delayMs: number) => Promise<void>;
+  readonly cancel: () => void;
+} {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let wake: (() => void) | null = null;
+  const cancel = () => {
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+    wake?.();
+    wake = null;
+  };
+  return {
+    wait: (delayMs) => {
+      cancel();
+      return new Promise<void>((resolve) => {
+        wake = resolve;
+        timer = setTimeout(() => {
+          timer = null;
+          wake = null;
+          resolve();
+        }, delayMs);
+      });
+    },
+    cancel,
+  };
 }
 
 export async function syncHyprnavWithRetry(input: {
