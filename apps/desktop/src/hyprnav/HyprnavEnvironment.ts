@@ -1,7 +1,7 @@
 // @effect-diagnostics globalDate:off globalTimers:off nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
-import * as NodeFs from "node:fs";
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import type {
@@ -232,7 +232,7 @@ export class HyprnavEnvironmentManager {
   constructor(options: HyprnavEnvironmentManagerOptions = {}) {
     this.spawn = options.spawn ?? NodeChildProcess.spawn;
     this.resolvePath = options.resolvePath ?? NodePath.resolve;
-    this.realpathSync = options.realpathSync ?? ((path) => NodeFs.realpathSync.native(path));
+    this.realpathSync = options.realpathSync ?? ((path) => NodeFS.realpathSync.native(path));
     this.timeoutMs = options.timeoutMs ?? COMMAND_TIMEOUT_MS;
   }
 

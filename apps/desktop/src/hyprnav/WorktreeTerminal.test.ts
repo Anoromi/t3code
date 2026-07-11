@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import type * as NodeChildProcess from "node:child_process";
-import { EventEmitter } from "node:events";
+import * as NodeEvents from "node:events";
 
 import { describe, expect, it, vi } from "vite-plus/test";
 
@@ -10,14 +10,14 @@ import {
   WorktreeTerminalLauncher,
 } from "./WorktreeTerminal.ts";
 
-class Stream extends EventEmitter {
+class Stream extends NodeEvents.EventEmitter {
   setEncoding(): this {
     return this;
   }
 }
 
 function child() {
-  const value = new EventEmitter() as EventEmitter & {
+  const value = new NodeEvents.EventEmitter() as NodeEvents.EventEmitter & {
     stdout: Stream;
     stderr: Stream;
     stdin: null;

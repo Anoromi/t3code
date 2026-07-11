@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import type * as NodeChildProcess from "node:child_process";
-import { EventEmitter } from "node:events";
+import * as NodeEvents from "node:events";
 
 import { DEFAULT_PROJECT_HYPRNAV_WORKSPACE_TARGET } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -12,7 +12,7 @@ import {
   normalizeClearBindings,
 } from "./HyprnavEnvironment.ts";
 
-class MockStream extends EventEmitter {
+class MockStream extends NodeEvents.EventEmitter {
   readonly writes: string[] = [];
   setEncoding(): this {
     return this;
@@ -22,7 +22,7 @@ class MockStream extends EventEmitter {
   }
 }
 
-class MockChild extends EventEmitter {
+class MockChild extends NodeEvents.EventEmitter {
   readonly stdout = new MockStream();
   readonly stderr = new MockStream();
   readonly stdin = new MockStream();
