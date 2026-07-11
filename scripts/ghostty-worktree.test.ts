@@ -89,10 +89,37 @@ describe("ghostty-worktree", () => {
     NodeFs.writeFileSync(NodePath.join(`${statePath}.lock`, "owner"), "99999999-stale");
     NodeFs.utimesSync(`${statePath}.lock`, new Date(0), new Date(0));
     let ran = false;
-    await withRegistryLock(statePath, async () => {
-      ran = true;
-    });
+    await withRegistryLock(
+      statePath,
+      async () => {
+        ran = true;
+      },
+      { waitTimeoutMs: 250 },
+    );
     expect(ran).toBe(true);
+    NodeFs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("recovers a stale recovery claim left by a crashed contender", async () => {
+    const directory = NodeFs.mkdtempSync(NodePath.join(NodeOs.tmpdir(), "ghostty-recovery-"));
+    const statePath = NodePath.join(directory, "assignments.json");
+    const lockPath = `${statePath}.lock`;
+    NodeFs.mkdirSync(lockPath);
+    NodeFs.writeFileSync(NodePath.join(lockPath, "owner"), "99999998-stale-lock");
+    const recoveryPath = NodePath.join(lockPath, "recovery");
+    NodeFs.writeFileSync(recoveryPath, "99999999-crashed-recovery");
+    NodeFs.utimesSync(recoveryPath, new Date(0), new Date(0));
+    NodeFs.utimesSync(lockPath, new Date(0), new Date(0));
+    let ran = false;
+    await withRegistryLock(
+      statePath,
+      async () => {
+        ran = true;
+      },
+      { waitTimeoutMs: 250 },
+    );
+    expect(ran).toBe(true);
+    expect(NodeFs.existsSync(lockPath)).toBe(false);
     NodeFs.rmSync(directory, { recursive: true, force: true });
   });
 

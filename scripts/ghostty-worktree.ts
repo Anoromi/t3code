@@ -236,21 +236,55 @@ export async function withRegistryLock<T>(
           let recoveryDescriptor: number | null = null;
           let recovered = false;
           try {
-            recoveryDescriptor = NodeFs.openSync(recoveryPath, "wx", 0o600);
-            const currentOwner = readOwner();
-            const currentStat = NodeFs.statSync(lockPath);
-            if (
-              currentOwner === observedOwner &&
-              currentStat.dev === observedStat.dev &&
-              currentStat.ino === observedStat.ino &&
-              !isOwnerAlive(currentOwner) &&
-              now() - observedStat.mtimeMs >= staleLockMs
-            ) {
-              NodeFs.rmSync(lockPath, { recursive: true, force: true });
-              recovered = true;
+            for (;;) {
+              try {
+                recoveryDescriptor = NodeFs.openSync(recoveryPath, "wx", 0o600);
+                NodeFs.writeFileSync(recoveryDescriptor, ownerToken);
+                NodeFs.fsyncSync(recoveryDescriptor);
+                break;
+              } catch (claimError) {
+                if ((claimError as NodeJS.ErrnoException).code !== "EEXIST") throw claimError;
+                let observedRecoveryOwner: string;
+                let observedRecoveryStat: NodeFs.Stats;
+                try {
+                  observedRecoveryOwner = NodeFs.readFileSync(recoveryPath, "utf8");
+                  observedRecoveryStat = NodeFs.statSync(recoveryPath);
+                } catch (recoveryError) {
+                  if ((recoveryError as NodeJS.ErrnoException).code === "ENOENT") continue;
+                  throw recoveryError;
+                }
+                if (
+                  isOwnerAlive(observedRecoveryOwner) ||
+                  now() - observedRecoveryStat.mtimeMs < staleLockMs
+                ) {
+                  break;
+                }
+                const currentRecoveryOwner = NodeFs.readFileSync(recoveryPath, "utf8");
+                const currentRecoveryStat = NodeFs.statSync(recoveryPath);
+                if (
+                  currentRecoveryOwner !== observedRecoveryOwner ||
+                  currentRecoveryStat.dev !== observedRecoveryStat.dev ||
+                  currentRecoveryStat.ino !== observedRecoveryStat.ino
+                ) {
+                  continue;
+                }
+                NodeFs.unlinkSync(recoveryPath);
+              }
             }
-          } catch (claimError) {
-            if ((claimError as NodeJS.ErrnoException).code !== "EEXIST") throw claimError;
+            if (recoveryDescriptor !== null) {
+              const currentOwner = readOwner();
+              const currentStat = NodeFs.statSync(lockPath);
+              if (
+                currentOwner === observedOwner &&
+                currentStat.dev === observedStat.dev &&
+                currentStat.ino === observedStat.ino &&
+                !isOwnerAlive(currentOwner) &&
+                now() - observedStat.mtimeMs >= staleLockMs
+              ) {
+                NodeFs.rmSync(lockPath, { recursive: true, force: true });
+                recovered = true;
+              }
+            }
           } finally {
             if (recoveryDescriptor !== null) {
               NodeFs.closeSync(recoveryDescriptor);
