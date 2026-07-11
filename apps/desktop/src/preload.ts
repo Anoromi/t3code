@@ -4,17 +4,14 @@ import type {
   DesktopPreviewRecordingFrame,
   DesktopPreviewTabState,
 } from "@t3tools/contracts";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { exposeClerkBridge } from "@clerk/electron/preload";
 import { contextBridge, ipcRenderer } from "electron";
-import * as Effect from "effect/Effect";
 
 import * as IpcChannels from "./ipc/channels.ts";
 
 exposeClerkBridge({ passkeys: true });
 
-const hostPlatform = Effect.runSync(HostProcessPlatform);
-const hostEnvironment = Effect.runSync(HostProcessEnvironment);
+const { platform: hostPlatform, env: hostEnvironment } = process;
 
 function unwrapEnsureSshEnvironmentResult(result: unknown) {
   if (
