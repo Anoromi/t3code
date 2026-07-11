@@ -1597,7 +1597,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
 
         const actionHandlers = new Map<string, () => Promise<void> | void>();
         const makeLeaf = (
-          action: "rename" | "grouping" | "copy-path" | "delete",
+          action: "rename" | "grouping" | "hyprnav" | "copy-path" | "delete",
           member: SidebarProjectGroupMember,
           options?: {
             destructive?: boolean;
@@ -1612,6 +1612,15 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
                 return;
               case "grouping":
                 openProjectGroupingDialog(member);
+                return;
+              case "hyprnav":
+                void router.navigate({
+                  to: "/settings/projects/$environmentId/$projectId",
+                  params: {
+                    environmentId: member.environmentId,
+                    projectId: member.id,
+                  },
+                });
                 return;
               case "copy-path":
                 copyPathToClipboard(member.workspaceRoot, { path: member.workspaceRoot });
@@ -1630,7 +1639,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         };
 
         const buildTargetedItem = (
-          action: "rename" | "grouping" | "copy-path" | "delete",
+          action: "rename" | "grouping" | "hyprnav" | "copy-path" | "delete",
           label: string,
           options?: {
             destructive?: boolean;
@@ -1666,6 +1675,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           [
             buildTargetedItem("rename", "Rename"),
             buildTargetedItem("grouping", "Group into..."),
+            buildTargetedItem("hyprnav", "Hyprnav settings"),
             buildTargetedItem("copy-path", "Copy Path"),
             buildTargetedItem("delete", "Remove", {
               destructive: true,
@@ -1691,6 +1701,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       openProjectRenameDialog,
       project.groupedProjectCount,
       project.memberProjects,
+      router,
       suppressProjectClickForContextMenuRef,
     ],
   );

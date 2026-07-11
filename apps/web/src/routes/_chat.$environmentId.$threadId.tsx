@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect } from "react";
 
 import ChatView from "../components/ChatView";
+import { HyprnavRuntimeOrchestrator } from "../components/HyprnavRuntimeOrchestrator";
 import { threadHasStarted } from "../components/ChatView.logic";
 import { finalizePromotedDraftThreadByRef, useComposerDraftStore } from "../composerDraftStore";
 import { resolveThreadRouteRef } from "../threadRoutes";
@@ -62,13 +63,16 @@ function ChatThreadRouteView() {
   }
 
   return (
-    <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
-      <ChatView
-        environmentId={threadRef.environmentId}
-        threadId={threadRef.threadId}
-        routeKind="server"
-      />
-    </SidebarInset>
+    <>
+      <HyprnavRuntimeOrchestrator threadRef={threadRef} />
+      <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
+        <ChatView
+          environmentId={threadRef.environmentId}
+          threadId={threadRef.threadId}
+          routeKind="server"
+        />
+      </SidebarInset>
+    </>
   );
 }
 

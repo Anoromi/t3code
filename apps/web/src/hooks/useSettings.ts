@@ -288,6 +288,18 @@ export function useUpdateClientSettings() {
   }, []);
 }
 
+/** Persist a client settings patch before publishing it to runtime subscribers. */
+export function usePersistClientSettings() {
+  return useCallback(async (patch: ClientSettingsPatch): Promise<void> => {
+    const settings = {
+      ...getClientSettingsSnapshot(),
+      ...patch,
+    };
+    await ensureLocalApi().persistence.setClientSettings(settings);
+    replaceClientSettingsSnapshot(settings);
+  }, []);
+}
+
 export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsHydrationGeneration += 1;
   clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
