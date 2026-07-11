@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
-import * as NodeCrypto from "node:crypto";
 import * as NodeTimersPromises from "node:timers/promises";
 
 import * as Context from "effect/Context";
@@ -11,12 +10,17 @@ import * as Schema from "effect/Schema";
 
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "../backend/DesktopLocalEnvironmentAuth.ts";
+import {
+  buildCorkdiffGhosttyArgs,
+  createCorkdiffGhosttyClassName,
+} from "./ExternalCorkdiffCommand.ts";
 
 const COMMAND_TIMEOUT_MS = 10_000;
 const MAX_OUTPUT_BYTES = 64 * 1024;
 const CLIENT_READY_ATTEMPTS = 25;
 const CLIENT_READY_DELAY_MS = 200;
-const CORKDIFF_GHOSTTY_CLASS_PREFIX = "dev.t3tools.t3code.corkdiff";
+
+export { buildCorkdiffGhosttyArgs, createCorkdiffGhosttyClassName };
 
 interface CommandResult {
   readonly code: number | null;
@@ -137,28 +141,6 @@ export function runCommand(
   return Promise.race([completion, timeout]).finally(() => timeoutController.abort());
 }
 
-export function createCorkdiffGhosttyClassName(threadId: string): string {
-  const suffix = NodeCrypto.createHash("sha256").update(threadId).digest("hex").slice(0, 12);
-  return `${CORKDIFF_GHOSTTY_CLASS_PREFIX}.t${suffix}`;
-}
-
-export function buildCorkdiffGhosttyArgs(input: {
-  readonly className: string;
-  readonly threadId: string;
-}): readonly string[] {
-  return [
-    "--gtk-single-instance=false",
-    `--class=${input.className}`,
-    `--title=T3 Code Corkdiff ${input.threadId}`,
-    "-e",
-    "nvim",
-    "-c",
-    "lua require('codediff.config').options.t3code.server_url=vim.env.T3CODE_SERVER_URL",
-    "-c",
-    "lua vim.api.nvim_cmd({cmd='CorkDiff',args={'t3code',vim.env.T3CODE_THREAD_ID}}, {})",
-  ];
-}
-
 export function parseWorkspaceId(stdout: string): number | null {
   const firstLine = stdout
     .split(/\r?\n/u)
@@ -190,12 +172,18 @@ export class ExternalCorkdiffManager {
   private readonly inFlight = new Map<string, Promise<ExternalCorkdiffOpenResult>>();
   private readonly run: RunCommand;
   private readonly runtimeEnv: NodeJS.ProcessEnv;
-  private readonly readiness: { readonly attempts: number; readonly delayMs: number };
+  private readonly readiness: {
+    readonly attempts: number;
+    readonly delayMs: number;
+  };
 
   constructor(
     run: RunCommand,
     runtimeEnv: NodeJS.ProcessEnv,
-    readiness = { attempts: CLIENT_READY_ATTEMPTS, delayMs: CLIENT_READY_DELAY_MS },
+    readiness = {
+      attempts: CLIENT_READY_ATTEMPTS,
+      delayMs: CLIENT_READY_DELAY_MS,
+    },
   ) {
     this.run = run;
     this.runtimeEnv = runtimeEnv;
@@ -218,7 +206,9 @@ export class ExternalCorkdiffManager {
       const client = await this.findClient(className);
       if (client !== null) return client;
       if (attempt + 1 < this.readiness.attempts) {
-        await NodeTimersPromises.setTimeout(this.readiness.delayMs, undefined, { ref: false });
+        await NodeTimersPromises.setTimeout(this.readiness.delayMs, undefined, {
+          ref: false,
+        });
       }
     }
     throw new Error("Corkdiff did not create a Ghostty window before the startup timeout.");
@@ -323,7 +313,10 @@ export class ExternalCorkdiffManager {
       throw new Error("hyprnav did not return a valid workspace id.");
     }
     const client = await this.waitForClient(className);
-    this.sessions.set(input.threadId, { className, workspaceId: client.workspaceId });
+    this.sessions.set(input.threadId, {
+      className,
+      workspaceId: client.workspaceId,
+    });
     return { workspaceId: client.workspaceId, reused: false };
   }
 }

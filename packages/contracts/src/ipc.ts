@@ -101,6 +101,7 @@ import { EnvironmentId } from "./baseSchemas.ts";
 import { AuthAccessTokenResult, AuthSessionState, AuthWebSocketTicketResult } from "./auth.ts";
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { EditorId } from "./editor.ts";
+import type { ProjectHyprnavScope, ProjectHyprnavSettings } from "./hyprnav.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import type { ClientSettings, ServerSettings, ServerSettingsPatch } from "./settings.ts";
 import type {
@@ -993,6 +994,14 @@ export interface DesktopBridge {
     position?: { x: number; y: number },
   ) => Promise<T | null>;
   openExternal: (url: string) => Promise<boolean>;
+  /** Hyprland-only, primary local environment terminal integration. */
+  openWorktreeTerminal?: (input: { readonly cwd: string }) => Promise<{
+    readonly worktreePath: string;
+  }>;
+  listOpenWorktreeTerminals?: () => Promise<ReadonlyArray<{ readonly worktreePath: string }>>;
+  /** Hyprland-only, primary local environment navigation integration. */
+  syncHyprnavEnvironment?: (input: DesktopHyprnavSyncInput) => Promise<DesktopHyprnavSyncResult>;
+  lockHyprnavEnvironment?: (input: DesktopHyprnavLockInput) => Promise<DesktopHyprnavSyncResult>;
   /** Hyprland-only, primary local environment Corkdiff integration. */
   openExternalCorkdiff?: (input: { readonly cwd: string; readonly threadId: string }) => Promise<{
     readonly workspaceId: number;
@@ -1010,6 +1019,38 @@ export interface DesktopBridge {
    * Electron desktop build; web builds have `preview === undefined`.
    */
   preview?: DesktopPreviewBridge;
+}
+
+export interface DesktopHyprnavScopedSlot {
+  readonly slot: number;
+  readonly scope: ProjectHyprnavScope;
+}
+
+export interface DesktopHyprnavCorkdiffConnectionInput {
+  readonly serverUrl: string;
+  readonly token: string | null;
+}
+
+export interface DesktopHyprnavSyncInput {
+  readonly projectRoot: string;
+  readonly worktreePath?: string | null;
+  readonly threadId?: string | null;
+  readonly threadTitle?: string | null;
+  readonly hyprnav: ProjectHyprnavSettings;
+  readonly preferredEditor?: EditorId | null;
+  readonly clearBindings?: readonly DesktopHyprnavScopedSlot[];
+  readonly clearNames?: readonly DesktopHyprnavScopedSlot[];
+  readonly corkdiffConnection?: DesktopHyprnavCorkdiffConnectionInput | null;
+  readonly lock: boolean;
+}
+
+export interface DesktopHyprnavLockInput {
+  readonly envId: string;
+}
+
+export interface DesktopHyprnavSyncResult {
+  readonly status: "ok" | "unavailable" | "error";
+  readonly message: string | null;
 }
 
 export interface DesktopPreviewBridge {

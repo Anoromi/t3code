@@ -1398,6 +1398,13 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // files through the asar (transparently redirected to the unpacked copy), so
     // there's no duplication.
     asarUnpack: [...DESKTOP_ASAR_UNPACK, "apps/server/dist/**", "**/node_modules/**"],
+    extraResources: [
+      {
+        from: "scripts",
+        to: "scripts",
+        filter: ["ghostty-worktree.ts", "lib/worktree.ts"],
+      },
+    ],
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
   const publishConfig = yield* resolveGitHubPublishConfig(updateChannel);
@@ -1669,11 +1676,20 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
 
   yield* fs.makeDirectory(path.join(stageAppDir, "apps/desktop"), { recursive: true });
   yield* fs.makeDirectory(path.join(stageAppDir, "apps/server"), { recursive: true });
+  yield* fs.makeDirectory(path.join(stageAppDir, "scripts/lib"), { recursive: true });
 
   yield* Effect.log("[desktop-artifact] Staging release app...");
   yield* fs.copy(distDirs.desktopDist, path.join(stageAppDir, "apps/desktop/dist-electron"));
   yield* fs.copy(distDirs.desktopResources, stageResourcesDir);
   yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
+  yield* fs.copyFile(
+    path.join(repoRoot, "scripts/ghostty-worktree.ts"),
+    path.join(stageAppDir, "scripts/ghostty-worktree.ts"),
+  );
+  yield* fs.copyFile(
+    path.join(repoRoot, "scripts/lib/worktree.ts"),
+    path.join(stageAppDir, "scripts/lib/worktree.ts"),
+  );
 
   yield* assertPlatformBuildResources(
     options.platform,
