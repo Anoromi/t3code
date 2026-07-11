@@ -44,36 +44,38 @@ export function parseOpenWorktreeTerminalEntries(
 
 interface LauncherOptions {
   readonly spawn?: typeof NodeChildProcess.spawn;
-  readonly bunExecutable?: string;
+  readonly runtimeExecutable?: string;
   readonly runtimeEnv?: NodeJS.ProcessEnv;
 }
 
 export class WorktreeTerminalLauncher {
   private readonly spawn: typeof NodeChildProcess.spawn;
-  private readonly bunExecutable: string;
+  private readonly runtimeExecutable: string;
   private readonly runtimeEnv: NodeJS.ProcessEnv;
 
   constructor(options: LauncherOptions = {}) {
     this.spawn = options.spawn ?? NodeChildProcess.spawn;
-    this.bunExecutable =
-      (options.bunExecutable ?? process.env.T3CODE_BUN_EXECUTABLE?.trim()) || "bun";
-    this.runtimeEnv = options.runtimeEnv ?? process.env;
+    this.runtimeExecutable = options.runtimeExecutable ?? process.execPath;
+    this.runtimeEnv = {
+      ...(options.runtimeEnv ?? process.env),
+      ELECTRON_RUN_AS_NODE: "1",
+    };
   }
 
   open(input: {
     readonly cwd: string;
-    readonly rootDir: string;
+    readonly scriptPath: string;
   }): Promise<{ readonly worktreePath: string }> {
     const cwd = input.cwd.trim();
     if (!cwd)
       return Promise.reject(
         new Error("Worktree terminal launch requires a valid working directory."),
       );
-    const child = this.spawn(
-      this.bunExecutable,
-      [NodePath.join(input.rootDir, "scripts", "ghostty-worktree.ts"), "--exec", "exec tmux"],
-      { cwd, env: { ...this.runtimeEnv }, stdio: ["ignore", "pipe", "pipe"] },
-    );
+    const child = this.spawn(this.runtimeExecutable, [input.scriptPath, "--exec", "exec tmux"], {
+      cwd,
+      env: { ...this.runtimeEnv },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     return new Promise((resolve, reject) => {
       let stdout = "";
       let stderr = "";
@@ -110,16 +112,12 @@ export class WorktreeTerminalLauncher {
     });
   }
 
-  list(rootDir: string): Promise<ReadonlyArray<{ readonly worktreePath: string }>> {
-    const child = this.spawn(
-      this.bunExecutable,
-      [NodePath.join(rootDir, "scripts", "ghostty-worktree.ts"), "list-open"],
-      {
-        cwd: rootDir,
-        env: { ...this.runtimeEnv },
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
+  list(scriptPath: string): Promise<ReadonlyArray<{ readonly worktreePath: string }>> {
+    const child = this.spawn(this.runtimeExecutable, [scriptPath, "list-open"], {
+      cwd: NodePath.dirname(scriptPath),
+      env: { ...this.runtimeEnv },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     return new Promise((resolve, reject) => {
       let stdout = "";
       let stderr = "";
@@ -159,15 +157,20 @@ export const layer = Layer.effect(
   Effect.gen(function* () {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const launcher = new WorktreeTerminalLauncher();
-    const launcherRoot = environment.isPackaged ? environment.resourcesPath : environment.appRoot;
+    const scriptPath = environment.isPackaged
+      ? environment.path.join(environment.resourcesPath, "ghostty-worktree.cjs")
+      : environment.path.join(
+          environment.appRoot,
+          "apps/desktop/dist-electron/ghostty-worktree-entry.cjs",
+        );
     return WorktreeTerminal.of({
       open: (cwd) =>
         Effect.tryPromise({
-          try: () => launcher.open({ cwd, rootDir: launcherRoot }),
+          try: () => launcher.open({ cwd, scriptPath }),
           catch: (cause) => new WorktreeTerminalCommandError({ operation: "open", cause }),
         }),
       list: Effect.tryPromise({
-        try: () => launcher.list(launcherRoot),
+        try: () => launcher.list(scriptPath),
         catch: (cause) => new WorktreeTerminalCommandError({ operation: "list", cause }),
       }),
     });

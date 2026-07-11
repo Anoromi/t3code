@@ -43,16 +43,21 @@ describe("WorktreeTerminalLauncher", () => {
     const spawn = vi.fn(() => process as unknown as NodeChildProcess.ChildProcess);
     const launcher = new WorktreeTerminalLauncher({
       spawn: spawn as typeof NodeChildProcess.spawn,
-      bunExecutable: "/bin/bun",
+      runtimeExecutable: "/opt/t3code/electron",
       runtimeEnv: { WAYLAND_DISPLAY: "wayland-1" },
     });
-    const result = launcher.open({ cwd: "/repo/wt/a", rootDir: "/repo" });
+    const result = launcher.open({
+      cwd: "/repo/wt/a",
+      scriptPath: "/opt/t3code/resources/ghostty-worktree.cjs",
+    });
     process.stdout.emit("data", "pid=1 workspace=4 worktree=/repo/wt/a\n");
     await expect(result).resolves.toEqual({ worktreePath: "/repo/wt/a" });
     expect(spawn).toHaveBeenCalledWith(
-      "/bin/bun",
-      ["/repo/scripts/ghostty-worktree.ts", "--exec", "exec tmux"],
-      expect.objectContaining({ env: { WAYLAND_DISPLAY: "wayland-1" } }),
+      "/opt/t3code/electron",
+      ["/opt/t3code/resources/ghostty-worktree.cjs", "--exec", "exec tmux"],
+      expect.objectContaining({
+        env: { WAYLAND_DISPLAY: "wayland-1", ELECTRON_RUN_AS_NODE: "1" },
+      }),
     );
   });
 });

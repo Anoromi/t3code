@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// @effect-diagnostics globalTimers:off nodeBuiltinImport:off
+// @effect-diagnostics globalDate:off globalTimers:off nodeBuiltinImport:off
 import { execFileSync, spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import * as NodeFs from "node:fs";
 import { homedir } from "node:os";
 import * as NodePath from "node:path";
@@ -16,6 +16,9 @@ import {
 
 const CLASS_PREFIX = "dev.t3tools.t3code.ghostty";
 const POLL_ATTEMPTS = 30;
+const LOCK_RETRY_MS = 50;
+const LOCK_WAIT_TIMEOUT_MS = 10_000;
+const STALE_LOCK_MS = 5_000;
 
 export interface GhosttyAssignment {
   readonly repoCommonDir: string;
@@ -30,11 +33,18 @@ interface Registry {
   readonly assignments: Record<string, GhosttyAssignment>;
 }
 
-interface HyprClient {
+export interface HyprClient {
   readonly address: string;
   readonly workspace: number;
   readonly pid: number;
   readonly className: string;
+}
+
+export function findManagedClientByClassName(
+  values: readonly HyprClient[],
+  className: string,
+): HyprClient | null {
+  return values.find((client) => client.className === className) ?? null;
 }
 
 export function resolveStateFilePath(env: NodeJS.ProcessEnv, home = homedir()): string {
@@ -91,26 +101,144 @@ export function parseCliArgs(argv: readonly string[]): {
   throw new Error("ghostty-worktree only accepts no args, 'list-open', or '--exec <command>'.");
 }
 
-function readRegistry(path: string): Registry {
-  if (!NodeFs.existsSync(path)) return { version: 1, assignments: {} };
-  const parsed: unknown = JSON.parse(NodeFs.readFileSync(path, "utf8"));
-  if (
-    typeof parsed !== "object" ||
-    parsed === null ||
-    !("version" in parsed) ||
-    parsed.version !== 1 ||
-    !("assignments" in parsed) ||
-    typeof parsed.assignments !== "object" ||
-    parsed.assignments === null
-  ) {
-    throw new Error("Malformed ghostty-worktree registry.");
-  }
-  return parsed as Registry;
+function emptyRegistry(): Registry {
+  return { version: 1, assignments: {} };
 }
 
-function writeRegistry(path: string, registry: Registry): void {
+function isRegistry(value: unknown): value is Registry {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "version" in value &&
+    value.version === 1 &&
+    "assignments" in value &&
+    typeof value.assignments === "object" &&
+    value.assignments !== null
+  );
+}
+
+export function readRegistryRecovering(path: string, now = Date.now()): Registry {
+  if (!NodeFs.existsSync(path)) return { version: 1, assignments: {} };
+  try {
+    const parsed: unknown = JSON.parse(NodeFs.readFileSync(path, "utf8"));
+    if (!isRegistry(parsed)) throw new Error("Invalid registry shape.");
+    return parsed;
+  } catch {
+    const corruptPath = `${path}.corrupt-${String(now)}-${String(process.pid)}`;
+    try {
+      NodeFs.renameSync(path, corruptPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    return emptyRegistry();
+  }
+}
+
+export function writeRegistryAtomic(path: string, registry: Registry): void {
   NodeFs.mkdirSync(NodePath.dirname(path), { recursive: true });
-  NodeFs.writeFileSync(path, `${JSON.stringify(registry, null, 2)}\n`);
+  const temporaryPath = `${path}.tmp-${String(process.pid)}-${randomUUID()}`;
+  let descriptor: number | null = null;
+  try {
+    descriptor = NodeFs.openSync(temporaryPath, "wx", 0o600);
+    NodeFs.writeFileSync(descriptor, `${JSON.stringify(registry, null, 2)}\n`);
+    NodeFs.fsyncSync(descriptor);
+    NodeFs.closeSync(descriptor);
+    descriptor = null;
+    NodeFs.renameSync(temporaryPath, path);
+    const directoryDescriptor = NodeFs.openSync(NodePath.dirname(path), "r");
+    try {
+      NodeFs.fsyncSync(directoryDescriptor);
+    } finally {
+      NodeFs.closeSync(directoryDescriptor);
+    }
+  } finally {
+    if (descriptor !== null) NodeFs.closeSync(descriptor);
+    try {
+      NodeFs.unlinkSync(temporaryPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+}
+
+export async function withRegistryLock<T>(
+  statePath: string,
+  operation: () => Promise<T>,
+  options: {
+    readonly retryMs?: number;
+    readonly waitTimeoutMs?: number;
+    readonly staleLockMs?: number;
+    readonly now?: () => number;
+  } = {},
+): Promise<T> {
+  const lockPath = `${statePath}.lock`;
+  const retryMs = options.retryMs ?? LOCK_RETRY_MS;
+  const waitTimeoutMs = options.waitTimeoutMs ?? LOCK_WAIT_TIMEOUT_MS;
+  const staleLockMs = options.staleLockMs ?? STALE_LOCK_MS;
+  const now = options.now ?? Date.now;
+  const startedAt = now();
+  const ownerToken = `${String(process.pid)}-${randomUUID()}`;
+  const ownerPath = NodePath.join(lockPath, "owner");
+  NodeFs.mkdirSync(NodePath.dirname(statePath), { recursive: true });
+  for (;;) {
+    try {
+      NodeFs.mkdirSync(lockPath);
+      try {
+        NodeFs.writeFileSync(ownerPath, ownerToken, { mode: 0o600 });
+      } catch (error) {
+        NodeFs.rmSync(lockPath, { recursive: true, force: true });
+        throw error;
+      }
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      try {
+        const owner = (() => {
+          try {
+            return NodeFs.readFileSync(ownerPath, "utf8");
+          } catch (ownerError) {
+            if ((ownerError as NodeJS.ErrnoException).code === "ENOENT") return null;
+            throw ownerError;
+          }
+        })();
+        const ownerPid = owner === null ? null : Number(owner.split("-", 1)[0]);
+        const ownerIsAlive =
+          ownerPid !== null &&
+          Number.isSafeInteger(ownerPid) &&
+          ownerPid > 0 &&
+          (() => {
+            try {
+              process.kill(ownerPid, 0);
+              return true;
+            } catch (killError) {
+              return (killError as NodeJS.ErrnoException).code === "EPERM";
+            }
+          })();
+        if (!ownerIsAlive && now() - NodeFs.statSync(lockPath).mtimeMs >= staleLockMs) {
+          NodeFs.rmSync(lockPath, { recursive: true, force: true });
+          continue;
+        }
+      } catch (statError) {
+        if ((statError as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw statError;
+      }
+      if (now() - startedAt >= waitTimeoutMs) {
+        throw new Error("Timed out waiting for the ghostty-worktree registry lock.");
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, retryMs));
+    }
+  }
+  try {
+    return await operation();
+  } finally {
+    try {
+      if (NodeFs.readFileSync(ownerPath, "utf8") === ownerToken) {
+        NodeFs.rmSync(lockPath, { recursive: true, force: true });
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
 }
 
 function command(command: string, args: readonly string[]): string {
@@ -221,67 +349,77 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     }
     const args = parseCliArgs(argv);
     const statePath = resolveStateFilePath(process.env);
-    const registry = prune(readRegistry(statePath));
-    const openClients = clients();
-    if (args.mode === "list-open") {
-      const assignments: Record<string, GhosttyAssignment> = {};
-      const open: Array<{ readonly worktreePath: string }> = [];
-      for (const assignment of Object.values(registry.assignments)) {
-        const client = liveClient(assignment, openClients);
-        if (!client) continue;
-        const recovered = { ...assignment, pid: client.pid };
-        assignments[createAssignmentKey(recovered.repoCommonDir, recovered.worktreeRoot)] =
-          recovered;
-        open.push({ worktreePath: recovered.worktreeRoot });
+    return await withRegistryLock(statePath, async () => {
+      const registry = prune(readRegistryRecovering(statePath));
+      const openClients = clients();
+      if (args.mode === "list-open") {
+        const assignments: Record<string, GhosttyAssignment> = {};
+        const open: Array<{ readonly worktreePath: string }> = [];
+        for (const assignment of Object.values(registry.assignments)) {
+          const client = liveClient(assignment, openClients);
+          if (!client) continue;
+          const recovered = { ...assignment, pid: client.pid };
+          assignments[createAssignmentKey(recovered.repoCommonDir, recovered.worktreeRoot)] =
+            recovered;
+          open.push({ worktreePath: recovered.worktreeRoot });
+        }
+        writeRegistryAtomic(statePath, { version: 1, assignments });
+        process.stdout.write(`${JSON.stringify(open)}\n`);
+        return 0;
       }
-      writeRegistry(statePath, { version: 1, assignments });
-      process.stdout.write(`${JSON.stringify(open)}\n`);
-      return 0;
-    }
-    const ghostty = spawnSync("ghostty", ["+version"], { stdio: "ignore" });
-    if (ghostty.error || ghostty.status !== 0)
-      throw new Error("Ghostty does not appear to be installed in PATH.");
-    const worktree = resolveWorktreeFromCwd(process.cwd());
-    const existing = registry.assignments[worktree.key];
-    const existingClient = existing ? liveClient(existing, openClients) : null;
-    if (existing && existingClient) {
-      const recovered = { ...existing, pid: existingClient.pid };
-      writeRegistry(statePath, {
+      const ghostty = spawnSync("ghostty", ["+version"], { stdio: "ignore" });
+      if (ghostty.error || ghostty.status !== 0)
+        throw new Error("Ghostty does not appear to be installed in PATH.");
+      const worktree = resolveWorktreeFromCwd(process.cwd());
+      const existing = registry.assignments[worktree.key];
+      const existingClient = existing ? liveClient(existing, openClients) : null;
+      const className = createManagedClassName(worktree.key);
+      const recoveredClient =
+        existingClient ?? findManagedClientByClassName(openClients, className);
+      if (recoveredClient) {
+        const recovered: GhosttyAssignment = {
+          repoCommonDir: worktree.repoCommonDir,
+          worktreeRoot: worktree.worktreeRoot,
+          className,
+          title: existing?.title ?? createManagedTitle(worktree),
+          pid: recoveredClient.pid,
+        };
+        writeRegistryAtomic(statePath, {
+          version: 1,
+          assignments: { ...registry.assignments, [worktree.key]: recovered },
+        });
+        focus(recoveredClient);
+        process.stdout.write(
+          `pid=${String(recovered.pid)} workspace=${String(recoveredClient.workspace)} worktree=${worktree.worktreeRoot}\n`,
+        );
+        return 0;
+      }
+      spawnGhostty(
+        buildGhosttyLaunchCommand({
+          className,
+          cwd: worktree.cwd,
+          title: createManagedTitle(worktree),
+          execCommand: args.execCommand,
+        }),
+      );
+      const client = await waitForClient(className);
+      const assignment: GhosttyAssignment = {
+        repoCommonDir: worktree.repoCommonDir,
+        worktreeRoot: worktree.worktreeRoot,
+        pid: client.pid,
+        className,
+        title: createManagedTitle(worktree),
+      };
+      writeRegistryAtomic(statePath, {
         version: 1,
-        assignments: { ...registry.assignments, [worktree.key]: recovered },
+        assignments: { ...registry.assignments, [worktree.key]: assignment },
       });
-      focus(existingClient);
+      focus(client);
       process.stdout.write(
-        `pid=${String(recovered.pid)} workspace=${String(existingClient.workspace)} worktree=${worktree.worktreeRoot}\n`,
+        `pid=${String(client.pid)} workspace=${String(client.workspace)} worktree=${worktree.worktreeRoot}\n`,
       );
       return 0;
-    }
-    const className = createManagedClassName(worktree.key);
-    spawnGhostty(
-      buildGhosttyLaunchCommand({
-        className,
-        cwd: worktree.cwd,
-        title: createManagedTitle(worktree),
-        execCommand: args.execCommand,
-      }),
-    );
-    const client = await waitForClient(className);
-    const assignment: GhosttyAssignment = {
-      repoCommonDir: worktree.repoCommonDir,
-      worktreeRoot: worktree.worktreeRoot,
-      pid: client.pid,
-      className,
-      title: createManagedTitle(worktree),
-    };
-    writeRegistry(statePath, {
-      version: 1,
-      assignments: { ...registry.assignments, [worktree.key]: assignment },
     });
-    focus(client);
-    process.stdout.write(
-      `pid=${String(client.pid)} workspace=${String(client.workspace)} worktree=${worktree.worktreeRoot}\n`,
-    );
-    return 0;
   } catch (error) {
     process.stderr.write(
       `[ghostty-worktree] ${error instanceof Error ? error.message : String(error)}\n`,
@@ -289,5 +427,3 @@ export async function runCli(argv: readonly string[]): Promise<number> {
     return 1;
   }
 }
-
-if (import.meta.main) process.exitCode = await runCli(process.argv.slice(2));
