@@ -114,8 +114,13 @@ const DEFAULT_BINDINGS = compile([
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
   {
-    shortcut: modShortcut("e"),
+    shortcut: modShortcut("k"),
     command: "commandPalette.toggle",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
+    shortcut: modShortcut("e"),
+    command: "navigation.commandMenu",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
   {
@@ -325,6 +330,10 @@ describe("shortcutLabelForCommand", () => {
     );
     assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "commandPalette.toggle", "MacIntel"),
+      "⌘K",
+    );
+    assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "navigation.commandMenu", "MacIntel"),
       "⌘E",
     );
     assert.strictEqual(
@@ -499,14 +508,14 @@ describe("chat/editor shortcuts", () => {
 
   it("matches commandPalette.toggle shortcut outside terminal focus", () => {
     assert.strictEqual(
-      resolveShortcutCommand(event({ key: "e", metaKey: true }), DEFAULT_BINDINGS, {
+      resolveShortcutCommand(event({ key: "k", metaKey: true }), DEFAULT_BINDINGS, {
         platform: "MacIntel",
         context: { terminalFocus: false },
       }),
       "commandPalette.toggle",
     );
     assert.notStrictEqual(
-      resolveShortcutCommand(event({ key: "e", metaKey: true }), DEFAULT_BINDINGS, {
+      resolveShortcutCommand(event({ key: "k", metaKey: true }), DEFAULT_BINDINGS, {
         platform: "MacIntel",
         context: { terminalFocus: true },
       }),

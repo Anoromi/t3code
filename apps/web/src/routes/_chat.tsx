@@ -3,6 +3,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useEffect } from "react";
 
 import { isCommandPaletteOpen } from "../commandPaletteContext";
+import { isNavigationCommandMenuOpen } from "../navigationCommandMenu";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import {
@@ -50,7 +51,7 @@ function ChatRouteGlobalShortcuts() {
         },
       });
 
-      if (isCommandPaletteOpen()) {
+      if (isCommandPaletteOpen() || isNavigationCommandMenuOpen()) {
         return;
       }
 
