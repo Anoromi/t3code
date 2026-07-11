@@ -17,6 +17,7 @@ import {
 
 const COMMAND_TIMEOUT_MS = 10_000;
 const MAX_OUTPUT_BYTES = 64 * 1024;
+const WORKSPACE_ID_SETTLE_MS = 150;
 const CLIENT_READY_ATTEMPTS = 25;
 const CLIENT_READY_DELAY_MS = 200;
 
@@ -114,7 +115,12 @@ export function runCommand(
     child.stdout?.on("data", (chunk: Buffer | string) => {
       stdout = appendBounded(stdout, chunk);
       if (options.resolveOnWorkspaceId === true && parseWorkspaceId(stdout) !== null) {
-        succeed({ code: null, stdout, stderr });
+        // `hyprnav spawn --print-workspace-id` prints before contacting the
+        // compositor plugin. Keep a short failure window so a missing/broken
+        // spawn socket is reported instead of being masked as a client timeout.
+        void NodeTimersPromises.setTimeout(WORKSPACE_ID_SETTLE_MS, undefined, { ref: false }).then(
+          () => succeed({ code: null, stdout, stderr }),
+        );
       }
     });
     child.stderr?.on("data", (chunk: Buffer | string) => {

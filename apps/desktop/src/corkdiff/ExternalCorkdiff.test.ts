@@ -7,6 +7,7 @@ import {
   createCorkdiffGhosttyClassName,
   findClientForClass,
   parseWorkspaceId,
+  runCommand,
 } from "./ExternalCorkdiff.ts";
 
 describe("ExternalCorkdiff helpers", () => {
@@ -36,6 +37,23 @@ describe("ExternalCorkdiff helpers", () => {
     expect(
       findClientForClass([{ address: "0xabc", class: "target", workspace: { id: 8 } }], "target"),
     ).toEqual({ address: "0xabc", workspaceId: 8 });
+  });
+
+  it("preserves an immediate spawn failure after a workspace id is printed", async () => {
+    await expect(
+      runCommand(
+        process.execPath,
+        [
+          "-e",
+          "process.stdout.write('105\\n'); process.stderr.write('spawn socket unavailable\\n'); process.exit(1)",
+        ],
+        { resolveOnWorkspaceId: true },
+      ),
+    ).resolves.toEqual({
+      code: 1,
+      stdout: "105\n",
+      stderr: "spawn socket unavailable\n",
+    });
   });
 });
 
