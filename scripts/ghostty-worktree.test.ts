@@ -106,9 +106,9 @@ describe("ghostty-worktree", () => {
     const lockPath = `${statePath}.lock`;
     NodeFs.mkdirSync(lockPath);
     NodeFs.writeFileSync(NodePath.join(lockPath, "owner"), "99999998-stale-lock");
-    const recoveryPath = NodePath.join(lockPath, "recovery");
-    NodeFs.writeFileSync(recoveryPath, "99999999-crashed-recovery");
-    NodeFs.utimesSync(recoveryPath, new Date(0), new Date(0));
+    const recoveryPath = NodePath.join(lockPath, "recovery-claims");
+    NodeFs.mkdirSync(recoveryPath);
+    NodeFs.writeFileSync(NodePath.join(recoveryPath, "99999999-crashed-recovery.0"), "");
     NodeFs.utimesSync(lockPath, new Date(0), new Date(0));
     let ran = false;
     await withRegistryLock(
@@ -119,6 +119,43 @@ describe("ghostty-worktree", () => {
       { waitTimeoutMs: 250 },
     );
     expect(ran).toBe(true);
+    expect(NodeFs.existsSync(lockPath)).toBe(false);
+    NodeFs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("elects one stale-lock recovery claimant when contenders arrive together", async () => {
+    const directory = NodeFs.mkdtempSync(NodePath.join(NodeOs.tmpdir(), "ghostty-election-"));
+    const statePath = NodePath.join(directory, "assignments.json");
+    const lockPath = `${statePath}.lock`;
+    NodeFs.mkdirSync(lockPath);
+    NodeFs.writeFileSync(NodePath.join(lockPath, "owner"), "99999999-stale");
+    NodeFs.utimesSync(lockPath, new Date(0), new Date(0));
+    let releaseClaims: (() => void) | undefined;
+    const allClaimsPublished = new Promise<void>((resolve) => {
+      releaseClaims = resolve;
+    });
+    let publishedClaims = 0;
+    const afterRecoveryClaim = async () => {
+      publishedClaims += 1;
+      if (publishedClaims === 2) releaseClaims?.();
+      await allClaimsPublished;
+    };
+    let active = 0;
+    let maximumActive = 0;
+    const recover = () =>
+      withRegistryLock(
+        statePath,
+        async () => {
+          active += 1;
+          maximumActive = Math.max(maximumActive, active);
+          await new Promise<void>((resolve) => setTimeout(resolve, 20));
+          active -= 1;
+        },
+        { afterRecoveryClaim, retryMs: 1, staleLockMs: 0, waitTimeoutMs: 500 },
+      );
+    await Promise.all([recover(), recover()]);
+    expect(publishedClaims).toBe(2);
+    expect(maximumActive).toBe(1);
     expect(NodeFs.existsSync(lockPath)).toBe(false);
     NodeFs.rmSync(directory, { recursive: true, force: true });
   });

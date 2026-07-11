@@ -183,6 +183,7 @@ export async function withRegistryLock<T>(
     readonly staleLockMs?: number;
     readonly now?: () => number;
     readonly beforeStaleClaim?: () => void;
+    readonly afterRecoveryClaim?: () => Promise<void>;
   } = {},
 ): Promise<T> {
   const lockPath = `${statePath}.lock`;
@@ -193,7 +194,7 @@ export async function withRegistryLock<T>(
   const startedAt = now();
   const ownerToken = `${String(process.pid)}-${randomUUID()}`;
   const ownerPath = NodePath.join(lockPath, "owner");
-  const recoveryPath = NodePath.join(lockPath, "recovery");
+  const recoveryDirectoryPath = NodePath.join(lockPath, "recovery-claims");
   const candidatePath = `${lockPath}.candidate-${ownerToken}`;
   NodeFs.mkdirSync(NodePath.dirname(statePath), { recursive: true });
   for (;;) {
@@ -233,45 +234,30 @@ export async function withRegistryLock<T>(
         const observedStat = NodeFs.statSync(lockPath);
         if (!isOwnerAlive(observedOwner) && now() - observedStat.mtimeMs >= staleLockMs) {
           options.beforeStaleClaim?.();
-          let recoveryDescriptor: number | null = null;
+          const recoveryClaimName = `${ownerToken}.${String(process.hrtime.bigint())}`;
+          const recoveryClaimPath = NodePath.join(recoveryDirectoryPath, recoveryClaimName);
           let recovered = false;
           try {
-            for (;;) {
-              try {
-                recoveryDescriptor = NodeFs.openSync(recoveryPath, "wx", 0o600);
-                NodeFs.writeFileSync(recoveryDescriptor, ownerToken);
-                NodeFs.fsyncSync(recoveryDescriptor);
-                break;
-              } catch (claimError) {
-                if ((claimError as NodeJS.ErrnoException).code !== "EEXIST") throw claimError;
-                let observedRecoveryOwner: string;
-                let observedRecoveryStat: NodeFs.Stats;
-                try {
-                  observedRecoveryOwner = NodeFs.readFileSync(recoveryPath, "utf8");
-                  observedRecoveryStat = NodeFs.statSync(recoveryPath);
-                } catch (recoveryError) {
-                  if ((recoveryError as NodeJS.ErrnoException).code === "ENOENT") continue;
-                  throw recoveryError;
-                }
-                if (
-                  isOwnerAlive(observedRecoveryOwner) ||
-                  now() - observedRecoveryStat.mtimeMs < staleLockMs
-                ) {
-                  break;
-                }
-                const currentRecoveryOwner = NodeFs.readFileSync(recoveryPath, "utf8");
-                const currentRecoveryStat = NodeFs.statSync(recoveryPath);
-                if (
-                  currentRecoveryOwner !== observedRecoveryOwner ||
-                  currentRecoveryStat.dev !== observedRecoveryStat.dev ||
-                  currentRecoveryStat.ino !== observedRecoveryStat.ino
-                ) {
-                  continue;
-                }
-                NodeFs.unlinkSync(recoveryPath);
+            try {
+              NodeFs.mkdirSync(recoveryDirectoryPath);
+            } catch (directoryError) {
+              if ((directoryError as NodeJS.ErrnoException).code !== "EEXIST") {
+                throw directoryError;
               }
             }
-            if (recoveryDescriptor !== null) {
+            NodeFs.writeFileSync(recoveryClaimPath, "", { flag: "wx", mode: 0o600 });
+            await options.afterRecoveryClaim?.();
+            const liveClaims = NodeFs.readdirSync(recoveryDirectoryPath).filter(isOwnerAlive);
+            const oldestLiveClaim = liveClaims.toSorted((left, right) => {
+              const leftCreatedAt = BigInt(left.slice(left.lastIndexOf(".") + 1));
+              const rightCreatedAt = BigInt(right.slice(right.lastIndexOf(".") + 1));
+              return leftCreatedAt < rightCreatedAt
+                ? -1
+                : leftCreatedAt > rightCreatedAt
+                  ? 1
+                  : left.localeCompare(right);
+            })[0];
+            if (oldestLiveClaim === recoveryClaimName) {
               const currentOwner = readOwner();
               const currentStat = NodeFs.statSync(lockPath);
               if (
@@ -286,13 +272,10 @@ export async function withRegistryLock<T>(
               }
             }
           } finally {
-            if (recoveryDescriptor !== null) {
-              NodeFs.closeSync(recoveryDescriptor);
-              try {
-                NodeFs.unlinkSync(recoveryPath);
-              } catch (unlinkError) {
-                if ((unlinkError as NodeJS.ErrnoException).code !== "ENOENT") throw unlinkError;
-              }
+            try {
+              NodeFs.unlinkSync(recoveryClaimPath);
+            } catch (unlinkError) {
+              if ((unlinkError as NodeJS.ErrnoException).code !== "ENOENT") throw unlinkError;
             }
           }
           if (recovered) continue;
