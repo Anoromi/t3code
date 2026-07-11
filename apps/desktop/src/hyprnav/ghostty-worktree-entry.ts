@@ -1,6 +1,6 @@
 import { runCli } from "../../../../scripts/ghostty-worktree.ts";
 
-void runCli(process.argv.slice(2)).then(
+void runCli(process.argv.slice(2), process).then(
   (exitCode) => {
     process.exitCode = exitCode;
   },

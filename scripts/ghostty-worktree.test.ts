@@ -10,6 +10,7 @@ import { createAssignmentKey } from "./lib/worktree.ts";
 import {
   buildGhosttyLaunchCommand,
   createManagedClassName,
+  createRecoveryMutexKey,
   findManagedClientByClassName,
   parseCliArgs,
   quoteShellArg,
@@ -21,6 +22,24 @@ import {
 
 const NodeFs = NodeFS;
 const NodeOs = NodeOS;
+const runtime: Pick<NodeJS.Process, "execPath" | "platform"> = process;
+const linuxIt = it.runIf(runtime.platform === "linux");
+
+function spawnAbstractMutexHolder(
+  statePath: string,
+): NodeChildProcess.ChildProcessWithoutNullStreams {
+  return NodeChildProcess.spawn(
+    runtime.execPath,
+    [
+      "-e",
+      `const net = require("node:net");
+const server = net.createServer();
+server.listen({ path: "\\0" + process.argv[1] }, () => process.stdout.write("locked\\n"));`,
+      createRecoveryMutexKey(statePath),
+    ],
+    { stdio: ["pipe", "pipe", "pipe"] },
+  );
+}
 
 describe("ghostty-worktree", () => {
   it("creates a stable, worktree-specific class", () => {
@@ -86,7 +105,7 @@ describe("ghostty-worktree", () => {
     NodeFs.rmSync(directory, { recursive: true, force: true });
   });
 
-  it("recovers a stale lock", async () => {
+  linuxIt("recovers a stale lock", async () => {
     const directory = NodeFs.mkdtempSync(NodePath.join(NodeOs.tmpdir(), "ghostty-stale-"));
     const statePath = NodePath.join(directory, "assignments.json");
     NodeFs.mkdirSync(`${statePath}.lock`);
@@ -105,52 +124,47 @@ describe("ghostty-worktree", () => {
     NodeFs.rmSync(directory, { recursive: true, force: true });
   });
 
-  it("recovers after a kernel lock holder crashes without leaving recovery artifacts", async () => {
-    const directory = NodeFs.mkdtempSync(NodePath.join(NodeOs.tmpdir(), "ghostty-crash-"));
-    const statePath = NodePath.join(directory, "assignments.json");
-    const lockPath = `${statePath}.lock`;
-    NodeFs.mkdirSync(lockPath);
-    NodeFs.writeFileSync(NodePath.join(lockPath, "owner"), "99999999-stale");
-    NodeFs.utimesSync(lockPath, new Date(0), new Date(0));
-    const crashedHolder = NodeChildProcess.spawn(
-      "flock",
-      ["--exclusive", directory, "sh", "-c", 'printf "locked\\n"; cat >/dev/null'],
-      { stdio: ["pipe", "pipe", "pipe"] },
-    );
-    await new Promise<void>((resolve) => {
-      crashedHolder.stdout.once("data", () => resolve());
-    });
-    let ran = false;
-    const recovery = withRegistryLock(
-      statePath,
-      async () => {
-        ran = true;
-      },
-      { waitTimeoutMs: 1_000 },
-    );
-    crashedHolder.kill("SIGKILL");
-    await new Promise<void>((resolve) => {
-      crashedHolder.once("exit", () => resolve());
-    });
-    await recovery;
-    expect(ran).toBe(true);
-    expect(NodeFs.existsSync(lockPath)).toBe(false);
-    expect(NodeFs.readdirSync(directory)).toEqual([]);
-    NodeFs.rmSync(directory, { recursive: true, force: true });
-  });
+  linuxIt(
+    "recovers after a kernel lock holder crashes without leaving recovery artifacts",
+    async () => {
+      const directory = NodeFs.mkdtempSync(NodePath.join(NodeOs.tmpdir(), "ghostty-crash-"));
+      const statePath = NodePath.join(directory, "assignments.json");
+      const lockPath = `${statePath}.lock`;
+      NodeFs.mkdirSync(lockPath);
+      NodeFs.writeFileSync(NodePath.join(lockPath, "owner"), "99999999-stale");
+      NodeFs.utimesSync(lockPath, new Date(0), new Date(0));
+      const crashedHolder = spawnAbstractMutexHolder(statePath);
+      await new Promise<void>((resolve) => {
+        crashedHolder.stdout.once("data", () => resolve());
+      });
+      let ran = false;
+      const recovery = withRegistryLock(
+        statePath,
+        async () => {
+          ran = true;
+        },
+        { waitTimeoutMs: 1_000 },
+      );
+      crashedHolder.kill("SIGKILL");
+      await new Promise<void>((resolve) => {
+        crashedHolder.once("exit", () => resolve());
+      });
+      await recovery;
+      expect(ran).toBe(true);
+      expect(NodeFs.existsSync(lockPath)).toBe(false);
+      expect(NodeFs.readdirSync(directory)).toEqual([]);
+      NodeFs.rmSync(directory, { recursive: true, force: true });
+    },
+  );
 
-  it("times out cleanly while another process holds the kernel recovery lock", async () => {
+  linuxIt("times out cleanly while another process holds the kernel recovery lock", async () => {
     const directory = NodeFs.mkdtempSync(NodePath.join(NodeOs.tmpdir(), "ghostty-timeout-"));
     const statePath = NodePath.join(directory, "assignments.json");
     const lockPath = `${statePath}.lock`;
     NodeFs.mkdirSync(lockPath);
     NodeFs.writeFileSync(NodePath.join(lockPath, "owner"), "99999999-stale");
     NodeFs.utimesSync(lockPath, new Date(0), new Date(0));
-    const holder = NodeChildProcess.spawn(
-      "flock",
-      ["--exclusive", directory, "sh", "-c", 'printf "locked\\n"; cat >/dev/null'],
-      { stdio: ["pipe", "pipe", "pipe"] },
-    );
+    const holder = spawnAbstractMutexHolder(statePath);
     await new Promise<void>((resolve) => {
       holder.stdout.once("data", () => resolve());
     });
@@ -159,14 +173,14 @@ describe("ghostty-worktree", () => {
     ).rejects.toThrow("Timed out waiting");
     expect(NodeFs.readFileSync(NodePath.join(lockPath, "owner"), "utf8")).toBe("99999999-stale");
     expect(NodeFs.readdirSync(directory)).toEqual(["assignments.json.lock"]);
-    holder.stdin.end();
+    holder.kill("SIGTERM");
     await new Promise<void>((resolve) => {
       holder.once("exit", () => resolve());
     });
     NodeFs.rmSync(directory, { recursive: true, force: true });
   });
 
-  it("serializes concurrent stale-lock recovery with the kernel lock", async () => {
+  linuxIt("serializes concurrent stale-lock recovery with the kernel lock", async () => {
     const directory = NodeFs.mkdtempSync(NodePath.join(NodeOs.tmpdir(), "ghostty-election-"));
     const statePath = NodePath.join(directory, "assignments.json");
     const lockPath = `${statePath}.lock`;
@@ -202,7 +216,49 @@ describe("ghostty-worktree", () => {
     NodeFs.rmSync(directory, { recursive: true, force: true });
   });
 
-  it("does not remove a replacement lock created after stale observation", async () => {
+  linuxIt("keeps a staggered stale-lock recovery behind the active mutex holder", async () => {
+    const directory = NodeFs.mkdtempSync(NodePath.join(NodeOs.tmpdir(), "ghostty-staggered-"));
+    const statePath = NodePath.join(directory, "assignments.json");
+    const lockPath = `${statePath}.lock`;
+    NodeFs.mkdirSync(lockPath);
+    NodeFs.writeFileSync(NodePath.join(lockPath, "owner"), "99999999-stale");
+    NodeFs.utimesSync(lockPath, new Date(0), new Date(0));
+    let releaseFirst: (() => void) | undefined;
+    const holdFirst = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let firstEntered: (() => void) | undefined;
+    const firstIsHolding = new Promise<void>((resolve) => {
+      firstEntered = resolve;
+    });
+    const first = withRegistryLock(statePath, async () => undefined, {
+      staleLockMs: 0,
+      waitTimeoutMs: 500,
+      afterRecoveryLock: async () => {
+        firstEntered?.();
+        await holdFirst;
+      },
+    });
+    await firstIsHolding;
+    let secondEntered = false;
+    const second = withRegistryLock(statePath, async () => undefined, {
+      retryMs: 1,
+      staleLockMs: 0,
+      waitTimeoutMs: 500,
+      afterRecoveryLock: async () => {
+        secondEntered = true;
+      },
+    });
+    await new Promise<void>((resolve) => setTimeout(resolve, 20));
+    expect(secondEntered).toBe(false);
+    releaseFirst?.();
+    await Promise.all([first, second]);
+    expect(secondEntered).toBe(true);
+    expect(NodeFs.readdirSync(directory)).toEqual([]);
+    NodeFs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  linuxIt("does not remove a replacement lock created after stale observation", async () => {
     const directory = NodeFs.mkdtempSync(NodePath.join(NodeOs.tmpdir(), "ghostty-race-"));
     const statePath = NodePath.join(directory, "assignments.json");
     const lockPath = `${statePath}.lock`;

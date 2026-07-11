@@ -15,7 +15,6 @@
   src,
   stdenv,
   t3codeElectron,
-  util-linux,
   xdg-utils,
 }:
 
@@ -152,7 +151,7 @@ stdenv.mkDerivation (finalAttrs: {
     export T3CODE_DESKTOP_PACKAGE_CHANNEL=\''${T3CODE_DESKTOP_PACKAGE_CHANNEL:-nix}
     export T3CODE_DESKTOP_FORCE_PACKAGED=\''${T3CODE_DESKTOP_FORCE_PACKAGED:-1}
     export T3CODE_DISABLE_AUTO_UPDATE=\''${T3CODE_DISABLE_AUTO_UPDATE:-1}
-    export PATH=${lib.makeBinPath [ util-linux xdg-utils ]}:\''${PATH:-}
+    export PATH=${lib.makeBinPath [ xdg-utils ]}:\''${PATH:-}
 
     sandbox_args=()
     if [[ \''${T3CODE_DESKTOP_DISABLE_SANDBOX:-0} == 1 ]]; then

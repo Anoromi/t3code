@@ -3,6 +3,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
@@ -19,74 +20,51 @@ const POLL_ATTEMPTS = 30;
 const LOCK_RETRY_MS = 50;
 const LOCK_WAIT_TIMEOUT_MS = 10_000;
 const STALE_LOCK_MS = 5_000;
-const { execFileSync, spawn, spawnSync } = NodeChildProcess;
+const { execFileSync, spawnSync } = NodeChildProcess;
 const { createHash, randomUUID } = NodeCrypto;
 const NodeFs = NodeFS;
 const { homedir } = NodeOS;
 
 async function acquireKernelRecoveryLock(
-  directoryPath: string,
+  statePath: string,
   waitTimeoutMs: number,
 ): Promise<(() => Promise<void>) | null> {
-  const waitSeconds = String(Math.max(0, waitTimeoutMs) / 1_000);
-  const child = spawn(
-    "flock",
-    [
-      "--exclusive",
-      "--wait",
-      waitSeconds,
-      directoryPath,
-      "sh",
-      "-c",
-      'printf "locked\\n"; cat >/dev/null',
-    ],
-    { stdio: ["pipe", "pipe", "pipe"] },
-  );
-  let stderr = "";
-  child.stderr.setEncoding("utf8");
-  child.stderr.on("data", (chunk: string) => {
-    stderr += chunk;
-  });
-  const completion = new Promise<
-    | { readonly _tag: "Exit"; readonly status: number | null }
-    | { readonly _tag: "SpawnError"; readonly error: Error }
-  >((resolve) => {
-    child.once("error", (error) => resolve({ _tag: "SpawnError", error }));
-    child.once("exit", (status) => resolve({ _tag: "Exit", status }));
-  });
-  const ready = new Promise<true>((resolve) => {
-    let stdout = "";
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      stdout += chunk;
-      if (stdout.includes("\n")) resolve(true);
+  const startedAt = Date.now();
+  const mutexName = `\0${createRecoveryMutexKey(statePath)}`;
+  for (;;) {
+    const server = NodeNet.createServer((socket) => socket.destroy());
+    const acquired = await new Promise<boolean>((resolve, reject) => {
+      server.once("error", (error: NodeJS.ErrnoException) => {
+        if (error.code === "EADDRINUSE") resolve(false);
+        else reject(error);
+      });
+      server.listen({ path: mutexName }, () => resolve(true));
     });
-  });
-  const acquired = await Promise.race([
-    ready,
-    completion.then((result) => {
-      if (result._tag === "SpawnError") {
-        throw new Error("util-linux flock is required for registry recovery.", {
-          cause: result.error,
+    if (acquired) {
+      let released: Promise<void> | null = null;
+      return () => {
+        released ??= new Promise<void>((resolve, reject) => {
+          server.close((error) => {
+            if (error) reject(error);
+            else resolve();
+          });
         });
-      }
-      if (result.status === 1) return false;
-      throw new Error(stderr.trim() || `flock exited with status ${String(result.status)}.`);
-    }),
-  ]);
-  if (!acquired) return null;
-  let released: Promise<void> | null = null;
-  return () => {
-    if (released) return released;
-    child.stdin.end();
-    released = completion.then((result) => {
-      if (result._tag === "SpawnError") throw result.error;
-      if (result.status !== 0) {
-        throw new Error(stderr.trim() || `flock exited with status ${String(result.status)}.`);
-      }
+        return released;
+      };
+    }
+    const remainingMs = waitTimeoutMs - (Date.now() - startedAt);
+    if (remainingMs <= 0) return null;
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, Math.min(LOCK_RETRY_MS, remainingMs));
     });
-    return released;
-  };
+  }
+}
+
+export function createRecoveryMutexKey(statePath: string): string {
+  return `t3code-ghostty-worktree-${createHash("sha256")
+    .update(NodePath.resolve(statePath))
+    .digest("hex")
+    .slice(0, 32)}`;
 }
 
 export interface GhosttyAssignment {
@@ -318,7 +296,7 @@ export async function withRegistryLock<T>(
           options.beforeStaleClaim?.();
           let recovered = false;
           const releaseRecoveryLock = await acquireKernelRecoveryLock(
-            NodePath.dirname(statePath),
+            statePath,
             waitTimeoutMs - (now() - startedAt),
           );
           try {
