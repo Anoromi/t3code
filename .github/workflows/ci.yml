@@ -68,6 +68,12 @@ jobs:
       - name: Test
         run: vp run test
 
+      - name: Install Chromium for browser tests
+        run: vp run --filter @t3tools/web test:browser:install
+
+      - name: Browser tests
+        run: vp run --filter @t3tools/web test:browser
+
   mobile_native_static_analysis:
     name: Mobile Native Static Analysis
     runs-on: blacksmith-12vcpu-macos-26
