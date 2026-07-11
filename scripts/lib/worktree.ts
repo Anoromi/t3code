@@ -1,5 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
-import { execFileSync } from "node:child_process";
+import * as NodeChildProcess from "node:child_process";
 import * as NodePath from "node:path";
 
 export interface ResolvedWorktree {
@@ -14,7 +14,7 @@ export function normalizePath(value: string): string {
 }
 
 function git(args: readonly string[], cwd: string): string {
-  return execFileSync("git", [...args], {
+  return NodeChildProcess.execFileSync("git", [...args], {
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],

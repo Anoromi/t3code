@@ -1,7 +1,7 @@
 // @effect-diagnostics globalDate:off globalTimers:off nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
-import * as NodeFs from "node:fs";
-import * as NodeOs from "node:os";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { describe, expect, it } from "vite-plus/test";
@@ -18,6 +18,9 @@ import {
   withRegistryLock,
   writeRegistryAtomic,
 } from "./ghostty-worktree.ts";
+
+const NodeFs = NodeFS;
+const NodeOs = NodeOS;
 
 describe("ghostty-worktree", () => {
   it("creates a stable, worktree-specific class", () => {

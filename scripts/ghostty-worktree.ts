@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // @effect-diagnostics globalDate:off globalTimers:off nodeBuiltinImport:off
-import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
-import * as NodeFs from "node:fs";
-import { homedir } from "node:os";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
@@ -19,6 +19,10 @@ const POLL_ATTEMPTS = 30;
 const LOCK_RETRY_MS = 50;
 const LOCK_WAIT_TIMEOUT_MS = 10_000;
 const STALE_LOCK_MS = 5_000;
+const { execFileSync, spawn, spawnSync } = NodeChildProcess;
+const { createHash, randomUUID } = NodeCrypto;
+const NodeFs = NodeFS;
+const { homedir } = NodeOS;
 
 async function acquireKernelRecoveryLock(
   directoryPath: string,
@@ -192,6 +196,24 @@ function quarantineMalformedRegistry(path: string, now: number): Registry {
   return emptyRegistry();
 }
 
+function unlinkIfExists(path: string): void {
+  try {
+    NodeFs.unlinkSync(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+function removeOwnedLock(ownerPath: string, ownerToken: string, lockPath: string): void {
+  try {
+    if (NodeFs.readFileSync(ownerPath, "utf8") === ownerToken) {
+      NodeFs.rmSync(lockPath, { recursive: true, force: true });
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
 export function readRegistryRecovering(path: string, now = Date.now()): Registry {
   let contents: string;
   try {
@@ -231,11 +253,7 @@ export function writeRegistryAtomic(path: string, registry: Registry): void {
     }
   } finally {
     if (descriptor !== null) NodeFs.closeSync(descriptor);
-    try {
-      NodeFs.unlinkSync(temporaryPath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
+    unlinkIfExists(temporaryPath);
   }
 }
 
@@ -329,7 +347,9 @@ export async function withRegistryLock<T>(
         throw statError;
       }
       if (now() - startedAt >= waitTimeoutMs) {
-        throw new Error("Timed out waiting for the ghostty-worktree registry lock.");
+        throw new Error("Timed out waiting for the ghostty-worktree registry lock.", {
+          cause: error,
+        });
       }
       await new Promise<void>((resolve) => setTimeout(resolve, retryMs));
     }
@@ -337,13 +357,7 @@ export async function withRegistryLock<T>(
   try {
     return await operation();
   } finally {
-    try {
-      if (NodeFs.readFileSync(ownerPath, "utf8") === ownerToken) {
-        NodeFs.rmSync(lockPath, { recursive: true, force: true });
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
+    removeOwnedLock(ownerPath, ownerToken, lockPath);
   }
 }
 
@@ -448,9 +462,12 @@ async function waitForClient(className: string): Promise<HyprClient> {
   throw new Error(`Timed out waiting for Ghostty class ${className}.`);
 }
 
-export async function runCli(argv: readonly string[]): Promise<number> {
+export async function runCli(
+  argv: readonly string[],
+  runtime: { readonly platform: NodeJS.Platform },
+): Promise<number> {
   try {
-    if (process.platform !== "linux" || !process.env.HYPRLAND_INSTANCE_SIGNATURE?.trim()) {
+    if (runtime.platform !== "linux" || !process.env.HYPRLAND_INSTANCE_SIGNATURE?.trim()) {
       throw new Error("Hyprland does not appear to be running in this environment.");
     }
     const args = parseCliArgs(argv);
