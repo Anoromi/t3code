@@ -186,7 +186,7 @@ describe("HyprnavEnvironmentManager", () => {
     });
   });
 
-  it("skips removed worktrees without invoking Hyprnav", async () => {
+  it("publishes only project operations when a worktree was removed", async () => {
     const harness = spawnHarness();
     const manager = new HyprnavEnvironmentManager({
       spawn: harness.spawn as unknown as typeof NodeChildProcess.spawn,
@@ -198,15 +198,66 @@ describe("HyprnavEnvironmentManager", () => {
       },
     });
 
-    await expect(
-      manager.sync({
-        projectRoot: "/repo",
-        worktreePath: "/repo/worktrees/removed",
-        hyprnav: { bindings: [] },
-        lock: false,
-      }),
-    ).resolves.toEqual({ status: "ok", message: null });
-    expect(harness.spawn).not.toHaveBeenCalled();
+    const result = manager.sync({
+      projectRoot: "/repo",
+      worktreePath: "/repo/worktrees/removed",
+      threadId: "thread-1",
+      hyprnav: {
+        bindings: [
+          {
+            id: "project",
+            slot: 1,
+            scope: "project",
+            workspace: { mode: "managed" },
+            action: "nothing",
+          },
+          {
+            id: "worktree",
+            slot: 2,
+            scope: "worktree",
+            workspace: { mode: "managed" },
+            action: "nothing",
+          },
+          {
+            id: "thread",
+            slot: 3,
+            scope: "thread",
+            workspace: { mode: "managed" },
+            action: "nothing",
+          },
+        ],
+      },
+      clearBindings: [
+        { scope: "project", slot: 4 },
+        { scope: "worktree", slot: 5 },
+      ],
+      clearNames: [
+        { scope: "project", slot: 6 },
+        { scope: "thread", slot: 7 },
+      ],
+      lock: true,
+    });
+
+    await vi.waitFor(() => expect(harness.calls).toHaveLength(1));
+    const payload = JSON.parse(harness.calls[0]!.child.stdin.writes.join("")) as {
+      operations: Array<Record<string, unknown>>;
+    };
+    expect(payload.operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ op: "env_ensure", cwd: "/repo" }),
+        expect.objectContaining({ op: "slot_assign", slot: 1 }),
+        expect.objectContaining({ op: "slot_clear", slot: 4 }),
+        expect.objectContaining({ op: "slot_name_clear", slot: 6 }),
+      ]),
+    );
+    expect(
+      payload.operations.filter(
+        (operation) => typeof operation.slot === "number" && [2, 3, 5, 7].includes(operation.slot),
+      ),
+    ).toEqual([]);
+    harness.children[0]!.succeed();
+    await expect(result).resolves.toEqual({ status: "ok", message: null });
+    expect(harness.calls).toHaveLength(1);
   });
 
   it("preserves missing project roots and non-ENOENT worktree failures", async () => {
