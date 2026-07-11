@@ -185,4 +185,59 @@ describe("HyprnavEnvironmentManager", () => {
       message: "hyprnav is not installed or not available in PATH.",
     });
   });
+
+  it("skips removed worktrees without invoking Hyprnav", async () => {
+    const harness = spawnHarness();
+    const manager = new HyprnavEnvironmentManager({
+      spawn: harness.spawn as unknown as typeof NodeChildProcess.spawn,
+      realpathSync: (path) => {
+        if (path === "/repo/worktrees/removed") {
+          throw Object.assign(new Error("worktree missing"), { code: "ENOENT" });
+        }
+        return path;
+      },
+    });
+
+    await expect(
+      manager.sync({
+        projectRoot: "/repo",
+        worktreePath: "/repo/worktrees/removed",
+        hyprnav: { bindings: [] },
+        lock: false,
+      }),
+    ).resolves.toEqual({ status: "ok", message: null });
+    expect(harness.spawn).not.toHaveBeenCalled();
+  });
+
+  it("preserves missing project roots and non-ENOENT worktree failures", async () => {
+    const request = {
+      projectRoot: "/repo",
+      worktreePath: "/repo/worktrees/feature",
+      hyprnav: { bindings: [] },
+      lock: false,
+    } as const;
+    const missingRoot = new HyprnavEnvironmentManager({
+      realpathSync: (path) => {
+        if (path === "/repo") throw Object.assign(new Error("project missing"), { code: "ENOENT" });
+        return path;
+      },
+    });
+    const unreadableWorktree = new HyprnavEnvironmentManager({
+      realpathSync: (path) => {
+        if (path === request.worktreePath) {
+          throw Object.assign(new Error("worktree denied"), { code: "EACCES" });
+        }
+        return path;
+      },
+    });
+
+    await expect(missingRoot.sync(request)).resolves.toEqual({
+      status: "error",
+      message: "project missing",
+    });
+    await expect(unreadableWorktree.sync(request)).resolves.toEqual({
+      status: "error",
+      message: "worktree denied",
+    });
+  });
 });

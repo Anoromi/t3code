@@ -237,7 +237,7 @@ export class HyprnavEnvironmentManager {
   }
 
   sync(input: DesktopHyprnavSyncInput): Promise<DesktopHyprnavSyncResult> {
-    let canonical: CanonicalSyncInput;
+    let canonical: CanonicalSyncInput | null;
     try {
       canonical = this.canonicalize(input);
     } catch (error) {
@@ -246,6 +246,7 @@ export class HyprnavEnvironmentManager {
         message: error instanceof Error ? error.message : String(error),
       });
     }
+    if (canonical === null) return Promise.resolve({ status: "ok", message: null });
     const key = buildHyprnavEnvironmentIds(canonical).lockEnvId;
     return this.serialize(key, () => this.performSync(canonical));
   }
@@ -271,12 +272,24 @@ export class HyprnavEnvironmentManager {
     return current;
   }
 
-  private canonicalize(input: DesktopHyprnavSyncInput): CanonicalSyncInput {
+  private canonicalize(input: DesktopHyprnavSyncInput): CanonicalSyncInput | null {
     const canonicalPath = (path: string) => this.realpathSync(this.resolvePath(path));
+    const projectRoot = canonicalPath(input.projectRoot);
+    let worktreePath: string | null = null;
+    if (input.worktreePath) {
+      try {
+        worktreePath = canonicalPath(input.worktreePath);
+      } catch (error) {
+        // Thread projections can briefly retain a worktree after it has been removed.
+        // Treat publishing to that stale target as an idempotent no-op so later jobs run.
+        if (isUnavailable(error)) return null;
+        throw error;
+      }
+    }
     return {
       ...input,
-      projectRoot: canonicalPath(input.projectRoot),
-      worktreePath: input.worktreePath ? canonicalPath(input.worktreePath) : null,
+      projectRoot,
+      worktreePath,
       threadId: input.threadId?.trim() || null,
       threadTitle: input.threadTitle?.trim() || null,
       clearBindings: normalizeClearBindings(input.clearBindings),
