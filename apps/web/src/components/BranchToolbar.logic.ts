@@ -84,6 +84,20 @@ export function resolveDraftEnvModeAfterBranchChange(input: {
   return "local";
 }
 
+export function shouldSelectRefAsWorktreeBase(input: {
+  requestedEnvMode: EnvMode;
+  activeProjectCwd: string;
+  activeWorktreePath: string | null;
+  selectedRefWorktreePath: string | null;
+}): boolean {
+  return (
+    input.requestedEnvMode === "worktree" &&
+    input.activeWorktreePath === null &&
+    (input.selectedRefWorktreePath === null ||
+      input.selectedRefWorktreePath === input.activeProjectCwd)
+  );
+}
+
 export function resolveBranchToolbarValue(input: {
   envMode: EnvMode;
   activeWorktreePath: string | null;
