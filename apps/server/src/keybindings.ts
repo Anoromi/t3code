@@ -199,6 +199,25 @@ const decodeResolvedKeybindingFromConfigExit = Schema.decodeExit(ResolvedKeybind
 const decodeRawKeybindingsEntriesExit = Schema.decodeUnknownExit(RawKeybindingsEntries);
 const encodeKeybindingsConfigPrettyJson = Schema.encodeEffect(KeybindingsConfigPrettyJson);
 
+function migrateLegacyProjectActionsEntry(entry: unknown): {
+  readonly entry: unknown;
+  readonly migrated: boolean;
+} {
+  if (
+    typeof entry !== "object" ||
+    entry === null ||
+    Array.isArray(entry) ||
+    !("command" in entry) ||
+    entry.command !== "commandBar.toggle"
+  ) {
+    return { entry, migrated: false };
+  }
+  return {
+    entry: { ...entry, command: "projectActions.toggle" },
+    migrated: true,
+  };
+}
+
 export interface KeybindingsConfigState {
   readonly keybindings: ResolvedKeybindingsConfig;
   readonly issues: readonly ServerConfigIssue[];
@@ -366,8 +385,9 @@ const make = Effect.gen(function* () {
       ),
     );
 
-    return yield* Effect.forEach(rawConfig, (entry) =>
+    return yield* Effect.forEach(rawConfig, (rawEntry) =>
       Effect.gen(function* () {
+        const { entry } = migrateLegacyProjectActionsEntry(rawEntry);
         const decodedRule = decodeKeybindingRuleExit(entry);
         if (decodedRule._tag === "Failure") {
           yield* Effect.logWarning("ignoring invalid keybinding entry", {
@@ -395,11 +415,12 @@ const make = Effect.gen(function* () {
     {
       readonly keybindings: readonly KeybindingRule[];
       readonly issues: readonly ServerConfigIssue[];
+      readonly migratedLegacyProjectActions: boolean;
     },
     KeybindingsConfigError
   > {
     if (!(yield* readConfigExists)) {
-      return { keybindings: [], issues: [] };
+      return { keybindings: [], issues: [], migratedLegacyProjectActions: false };
     }
 
     const rawConfig = yield* readRawConfig;
@@ -409,12 +430,17 @@ const make = Effect.gen(function* () {
       return {
         keybindings: [],
         issues: [malformedConfigIssue(detail)],
+        migratedLegacyProjectActions: false,
       };
     }
 
     const keybindings: KeybindingRule[] = [];
     const issues: ServerConfigIssue[] = [];
-    for (const [index, entry] of decodedEntries.value.entries()) {
+    let migratedLegacyProjectActions = false;
+    for (const [index, rawEntry] of decodedEntries.value.entries()) {
+      const migrated = migrateLegacyProjectActionsEntry(rawEntry);
+      const entry = migrated.entry;
+      migratedLegacyProjectActions ||= migrated.migrated;
       const decodedRule = decodeKeybindingRuleExit(entry);
       if (decodedRule._tag === "Failure") {
         const detail = Cause.pretty(decodedRule.cause);
@@ -443,7 +469,7 @@ const make = Effect.gen(function* () {
       keybindings.push(decodedRule.value);
     }
 
-    return { keybindings, issues };
+    return { keybindings, issues, migratedLegacyProjectActions };
   });
 
   const writeConfigAtomically = (rules: readonly KeybindingRule[]) => {
@@ -517,7 +543,8 @@ const make = Effect.gen(function* () {
         return;
       }
       const customConfig = migrateLegacyGeneratedCommandPaletteRule(runtimeConfig.keybindings);
-      const didMigrateLegacyGeneratedConfig = customConfig !== runtimeConfig.keybindings;
+      const didMigrateLegacyGeneratedConfig =
+        customConfig !== runtimeConfig.keybindings || runtimeConfig.migratedLegacyProjectActions;
       const existingCommands = new Set(customConfig.map((entry) => entry.command));
       const missingDefaults: KeybindingRule[] = [];
       const shortcutConflictWarnings: Array<{

@@ -35,7 +35,16 @@ import { isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { shellEnvironment } from "~/state/shell";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-const resolveOptions = (platform: string, availableEditors: ReadonlyArray<EditorId>) => {
+export interface OpenInOption {
+  readonly label: string;
+  readonly Icon: Icon;
+  readonly value: EditorId;
+}
+
+export const resolveOpenInOptions = (
+  platform: string,
+  availableEditors: ReadonlyArray<EditorId>,
+): ReadonlyArray<OpenInOption> => {
   const baseOptions: ReadonlyArray<{ label: string; Icon: Icon; value: EditorId }> = [
     {
       label: "Cursor",
@@ -169,7 +178,7 @@ export const OpenInPicker = memo(function OpenInPicker({
   const openInEditorMutation = useAtomCommand(shellEnvironment.openInEditor, "open in editor");
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(availableEditors);
   const options = useMemo(
-    () => resolveOptions(navigator.platform, availableEditors),
+    () => resolveOpenInOptions(navigator.platform, availableEditors),
     [availableEditors],
   );
   const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;

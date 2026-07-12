@@ -207,6 +207,40 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
+  it.effect("migrates the legacy command bar binding to project actions", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fileSystem.makeDirectory(path.dirname(keybindingsConfigPath), { recursive: true });
+      yield* fileSystem.writeFileString(
+        keybindingsConfigPath,
+        `[
+  {
+    "key": "mod+shift+p",
+    "command": "commandBar.toggle",
+    "when": "!terminalFocus"
+  }
+]
+`,
+      );
+
+      const keybindings = yield* Keybindings.Keybindings;
+      yield* keybindings.syncDefaultKeybindingsOnStartup;
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.isTrue(
+        persisted.some(
+          (rule) =>
+            rule.command === "projectActions.toggle" &&
+            rule.key === "mod+shift+p" &&
+            rule.when === "!terminalFocus",
+        ),
+      );
+      assert.isFalse(persisted.some((rule) => String(rule.command) === "commandBar.toggle"));
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
+
   it.effect("preserves a customized command-palette shortcut", () =>
     Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;

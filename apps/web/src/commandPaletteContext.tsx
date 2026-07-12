@@ -1,4 +1,5 @@
 import { createContext, use, type ReactNode } from "react";
+import { isCommandSurfaceOpen } from "./commandSurface";
 
 const OpenAddProjectCommandPaletteContext = createContext<(() => void) | null>(null);
 
@@ -23,7 +24,5 @@ export function useOpenAddProjectCommandPalette(): () => void {
 
 /** Read at event time so the chat tree does not subscribe to transient dialog state. */
 export function isCommandPaletteOpen(): boolean {
-  return (
-    typeof document !== "undefined" && document.querySelector("[data-command-palette]") !== null
-  );
+  return isCommandSurfaceOpen("command-palette");
 }

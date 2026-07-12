@@ -11,13 +11,12 @@ import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/envir
 import type { ScopedProjectRef, ScopedThreadRef } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 
-import { isCommandPaletteOpen } from "../commandPaletteContext";
+import { isAnyCommandSurfaceOpen } from "../commandSurface";
 import { isElectron } from "../env";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isMacPlatform } from "../lib/utils";
-import { isNavigationCommandMenuOpen } from "../navigationCommandMenu";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useProjects, useThreadShells } from "../state/entities";
 import { primaryServerKeybindingsAtom } from "../state/server";
@@ -39,7 +38,7 @@ function SidebarControl() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || isNavigationCommandMenuOpen()) return;
+      if (event.defaultPrevented || isAnyCommandSurfaceOpen()) return;
       if (resolveShortcutCommand(event, keybindings) !== "sidebar.toggle") return;
 
       event.preventDefault();
@@ -90,7 +89,7 @@ export function NavigationCommandMenuControl() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || isCommandPaletteOpen()) return;
+      if (event.defaultPrevented || isAnyCommandSurfaceOpen("navigation")) return;
       if (
         resolveShortcutCommand(event, keybindings, {
           context: { terminalFocus: isTerminalFocused() },

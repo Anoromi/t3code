@@ -69,7 +69,7 @@ const SCRIPT_ICONS: Array<{ id: ProjectScriptIcon; label: string }> = [
   { id: "debug", label: "Debug" },
 ];
 
-function ScriptIcon({
+export function ProjectScriptIconView({
   icon,
   className = "size-3.5",
 }: {
@@ -262,7 +262,7 @@ export default function ProjectScriptsControl({
                 />
               }
             >
-              <ScriptIcon icon={primaryScript.icon} />
+              <ProjectScriptIconView icon={primaryScript.icon} />
               <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
                 {primaryScript.name}
               </span>
@@ -288,7 +288,7 @@ export default function ProjectScriptsControl({
                     className={`group ${dropdownItemClassName}`}
                     onClick={() => onRunScript(script)}
                   >
-                    <ScriptIcon icon={script.icon} className="size-4" />
+                    <ProjectScriptIconView icon={script.icon} className="size-4" />
                     <span className="truncate">
                       {script.runOnWorktreeCreate ? `${script.name} (setup)` : script.name}
                     </span>
@@ -387,7 +387,7 @@ export default function ProjectScriptsControl({
                         />
                       }
                     >
-                      <ScriptIcon icon={icon} className="size-4.5" />
+                      <ProjectScriptIconView icon={icon} className="size-4.5" />
                     </PopoverTrigger>
                     <PopoverPopup align="start">
                       <div className="grid grid-cols-3 gap-2">
@@ -407,7 +407,7 @@ export default function ProjectScriptsControl({
                                 setIconPickerOpen(false);
                               }}
                             >
-                              <ScriptIcon icon={entry.id} className="size-4" />
+                              <ProjectScriptIconView icon={entry.id} className="size-4" />
                               <span>{entry.label}</span>
                             </button>
                           );
