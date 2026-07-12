@@ -95,3 +95,11 @@ agents.
   examples of idiomatic usage, tests, module structure, and API design.
 - When writing relay infrastructure code with Alchemy, inspect `.repos/alchemy-effect/` for examples of
   idiomatic usage, tests, module structure, and API design.
+
+### Thoroughly
+
+Let's be clear, I'm so so so so annoyed by goddamn issues that come up when I open the app and try to use it. Something like agent didn't implement the feature completely when I asked it to do something, or ui feature doesn't work because it decided not to test it. Unnacceptable. Almost always do that. In plan mode you can ask if this needs to be done but otherwise unless I ask not to do proper checks.
+The checks include:
+
+- Running `codex review` after changes to get feedback
+- creating tests, in some cases e2e tests to verify the feature
