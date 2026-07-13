@@ -1,6 +1,7 @@
 import {
   type EnvironmentId,
   isProviderDriverKind,
+  type KeybindingCommand,
   ProjectId,
   type ModelSelection,
   type ProviderDriverKind,
@@ -83,6 +84,22 @@ export function buildThreadTurnInterruptInput(thread: Pick<Thread, "id" | "sessi
     threadId: thread.id,
     ...(runningTurnId !== null ? { turnId: runningTurnId } : {}),
   };
+}
+
+export type ChatScopedShortcutAction = "focus-composer" | "interrupt-turn";
+
+export function resolveChatScopedShortcutAction(input: {
+  command: KeybindingCommand | null;
+  hasComposer: boolean;
+  session: Pick<NonNullable<Thread["session"]>, "status"> | null;
+}): ChatScopedShortcutAction | null {
+  if (input.command === "chat.composer.focus") {
+    return input.hasComposer ? "focus-composer" : null;
+  }
+  if (input.command === "thread.interrupt") {
+    return input.session?.status === "running" ? "interrupt-turn" : null;
+  }
+  return null;
 }
 
 export function reconcileMountedTerminalThreadIds(input: {

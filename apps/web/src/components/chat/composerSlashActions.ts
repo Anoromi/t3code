@@ -39,6 +39,19 @@ export function resolveFastModeDescriptor(input: {
   );
 }
 
+export function toggleFastModeOptionSelection(input: {
+  capabilities: ModelCapabilities;
+  selections: ReadonlyArray<ProviderOptionSelection> | null | undefined;
+}): ProviderOptionSelection[] | null {
+  const descriptor = resolveFastModeDescriptor(input);
+  if (!descriptor) return null;
+
+  return replaceProviderOptionSelection(input.selections, {
+    id: descriptor.id,
+    value: descriptor.currentValue !== true,
+  });
+}
+
 export function replaceProviderOptionSelection(
   selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
   nextSelection: ProviderOptionSelection,

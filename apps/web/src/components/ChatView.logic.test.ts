@@ -13,6 +13,7 @@ import {
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  resolveChatScopedShortcutAction,
   resolveSendEnvMode,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
@@ -91,6 +92,56 @@ describe("buildThreadTurnInterruptInput", () => {
     expect(buildThreadTurnInterruptInput(makeThread({ session: readySession }))).toEqual({
       threadId,
     });
+  });
+});
+
+describe("resolveChatScopedShortcutAction", () => {
+  it("focuses an available composer", () => {
+    expect(
+      resolveChatScopedShortcutAction({
+        command: "chat.composer.focus",
+        hasComposer: true,
+        session: null,
+      }),
+    ).toBe("focus-composer");
+    expect(
+      resolveChatScopedShortcutAction({
+        command: "chat.composer.focus",
+        hasComposer: false,
+        session: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("interrupts only a running session", () => {
+    expect(
+      resolveChatScopedShortcutAction({
+        command: "thread.interrupt",
+        hasComposer: true,
+        session: { status: "running" },
+      }),
+    ).toBe("interrupt-turn");
+    expect(
+      resolveChatScopedShortcutAction({
+        command: "thread.interrupt",
+        hasComposer: true,
+        session: { status: "starting" },
+      }),
+    ).toBeNull();
+    expect(
+      resolveChatScopedShortcutAction({
+        command: "thread.interrupt",
+        hasComposer: true,
+        session: { status: "ready" },
+      }),
+    ).toBeNull();
+    expect(
+      resolveChatScopedShortcutAction({
+        command: "thread.interrupt",
+        hasComposer: true,
+        session: null,
+      }),
+    ).toBeNull();
   });
 });
 

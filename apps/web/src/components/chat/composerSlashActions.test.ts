@@ -4,6 +4,7 @@ import {
   replaceProviderOptionSelection,
   resolveFastModeDescriptor,
   resolveReasoningDescriptor,
+  toggleFastModeOptionSelection,
 } from "./composerSlashActions";
 
 const capabilities = {
@@ -61,5 +62,45 @@ describe("composer slash actions", () => {
       { id: "contextWindow", value: "long" },
       { id: "effort", value: "high" },
     ]);
+  });
+
+  it("toggles fast mode while preserving unrelated selections", () => {
+    const selections = [
+      { id: "effort", value: "high" },
+      { id: "contextWindow", value: "long" },
+    ];
+    const enabled = toggleFastModeOptionSelection({ capabilities, selections });
+    expect(enabled).toEqual([...selections, { id: "fastMode", value: true }]);
+    expect(toggleFastModeOptionSelection({ capabilities, selections: enabled })).toEqual([
+      ...selections,
+      { id: "fastMode", value: false },
+    ]);
+  });
+
+  it("does not claim fast mode when the model has no live descriptor", () => {
+    expect(
+      toggleFastModeOptionSelection({
+        capabilities: { optionDescriptors: capabilities.optionDescriptors.slice(0, 1) },
+        selections: [{ id: "effort", value: "high" }],
+      }),
+    ).toBeNull();
+  });
+
+  it("does not claim a non-boolean descriptor named fastMode", () => {
+    expect(
+      toggleFastModeOptionSelection({
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "fastMode",
+              label: "Fast mode",
+              type: "select",
+              options: [{ id: "fast", label: "Fast", isDefault: true }],
+            },
+          ],
+        },
+        selections: [],
+      }),
+    ).toBeNull();
   });
 });

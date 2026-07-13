@@ -33,7 +33,7 @@ describe("buildNavigationCommandResults", () => {
   it("shows recent threads when the query is empty", () => {
     expect(
       buildNavigationCommandResults({ query: "", projects: [project], threads: [thread] }),
-    ).toMatchObject([{ type: "thread", title: "Fix command hotkeys" }]);
+    ).toMatchObject([{ type: "thread", title: "Fix command hotkeys", thread }]);
   });
 
   it("searches threads and projects and preserves scoped draft identity", () => {
