@@ -1,9 +1,11 @@
 import * as NodeChildProcess from "node:child_process";
 
 import { desktopDir, resolveElectronLaunchCommand } from "./electron-launcher.mjs";
+import { resolveElectronRuntimeEnvironment } from "./launch-environment.mjs";
 import { resolveDesktopOzoneArgs, resolveDesktopOzoneEnv } from "./runtime-args.mjs";
 
-const childEnv = { ...process.env, ...resolveDesktopOzoneEnv(process.env) };
+const childEnv = await resolveElectronRuntimeEnvironment(process.env);
+Object.assign(childEnv, resolveDesktopOzoneEnv(childEnv));
 delete childEnv.ELECTRON_RUN_AS_NODE;
 
 const electronCommand = resolveElectronLaunchCommand([

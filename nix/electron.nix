@@ -4,6 +4,7 @@
   lib,
   runCommand,
   util-linux,
+  xdg-utils,
 }:
 
 runCommand "t3code-electron-${electron_41.version}"
@@ -13,6 +14,12 @@ runCommand "t3code-electron-${electron_41.version}"
   ''
     mkdir -p "$out/bin"
     cp ${lib.getExe electron_41} "$out/bin/t3code-electron"
+
+    # Desktop integration remains a runtime dependency when the captured user
+    # PATH comes from a minimal Home Manager environment.
+    sed -i '2i\
+    export PATH=${lib.makeBinPath [ xdg-utils ]}:"\''${PATH:-}"' \
+      "$out/bin/t3code-electron"
 
     # Nixpkgs points Electron at an immutable, non-setuid sandbox helper.
     # Replace it with the best sandbox strategy available on the host.

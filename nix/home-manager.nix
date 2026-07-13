@@ -21,7 +21,11 @@ let
         printf '%s: expected a T3 Code flake at %s\n' "$0" "$repo_root" >&2
         exit 1
       fi
-      exec nix develop --impure ${lib.escapeShellArg "${self.outPath}#default"} \
+
+      source ${lib.escapeShellArg "${self.outPath}/nix/local-launch-environment.sh"}
+      t3code_capture_local_launch_environment
+
+      t3code_run_local_launch nix develop --impure ${lib.escapeShellArg "${self.outPath}#default"} \
         --command bash "$repo_root/scripts/run-local-desktop.sh" "$repo_root" "$@"
     '';
   };
