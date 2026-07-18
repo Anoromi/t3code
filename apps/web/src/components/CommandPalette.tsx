@@ -113,6 +113,7 @@ import { ProjectFavicon } from "./ProjectFavicon";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { resolveShortcutCommand } from "../keybindings";
+import { isNavigationCommandMenuOpen } from "../navigationCommandMenu";
 import {
   Command,
   CommandDialog,
@@ -393,6 +394,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.defaultPrevented) return;
+      if (isNavigationCommandMenuOpen()) return;
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
           terminalFocus: isTerminalFocused(),

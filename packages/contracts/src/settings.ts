@@ -5,6 +5,7 @@ import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString, TrimmedString } from "./baseSchemas.ts";
 import { DEFAULT_GIT_TEXT_GENERATION_MODEL, ProviderOptionSelections } from "./model.ts";
 import { ModelSelection } from "./orchestration.ts";
+import { DEFAULT_PROJECT_HYPRNAV_SETTINGS, ProjectHyprnavSettings } from "./hyprnav.ts";
 import { ProviderInstanceConfig, ProviderInstanceId } from "./providerInstance.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
@@ -28,6 +29,10 @@ export const SidebarProjectGroupingMode = Schema.Literals([
 ]);
 export type SidebarProjectGroupingMode = typeof SidebarProjectGroupingMode.Type;
 export const DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE: SidebarProjectGroupingMode = "repository";
+
+export const GroupedProjectHyprnavMode = Schema.Literals(["same", "separate"]);
+export type GroupedProjectHyprnavMode = typeof GroupedProjectHyprnavMode.Type;
+export const DEFAULT_GROUPED_PROJECT_HYPRNAV_MODE: GroupedProjectHyprnavMode = "same";
 export const MIN_SIDEBAR_THREAD_PREVIEW_COUNT = 1;
 export const MAX_SIDEBAR_THREAD_PREVIEW_COUNT = 15;
 export const SidebarThreadPreviewCount = Schema.Int.check(
@@ -39,6 +44,14 @@ export const SidebarThreadPreviewCount = Schema.Int.check(
 export type SidebarThreadPreviewCount = typeof SidebarThreadPreviewCount.Type;
 export const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: SidebarThreadPreviewCount = 6;
 
+export const GroupedProjectHyprnavState = Schema.Struct({
+  mode: GroupedProjectHyprnavMode.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_GROUPED_PROJECT_HYPRNAV_MODE)),
+  ),
+  defaultProjectKey: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type GroupedProjectHyprnavState = typeof GroupedProjectHyprnavState.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   autoOpenPlanSidebar: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -47,6 +60,9 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   diffIgnoreWhitespace: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  defaultProjectHyprnavSettings: ProjectHyprnavSettings.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PROJECT_HYPRNAV_SETTINGS)),
+  ),
   // Model favorites. Historically keyed by provider kind, now
   // widened to `ProviderInstanceId` so users can favorite a specific model
   // on a custom provider instance (e.g. "Codex Personal · gpt-5") without
@@ -78,6 +94,10 @@ export const ClientSettingsSchema = Schema.Struct({
   sidebarProjectGroupingOverrides: Schema.Record(
     TrimmedNonEmptyString,
     SidebarProjectGroupingMode,
+  ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  groupedProjectHyprnavStateByLogicalProjectKey: Schema.Record(
+    TrimmedNonEmptyString,
+    GroupedProjectHyprnavState,
   ).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   sidebarProjectSortOrder: SidebarProjectSortOrder.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_SORT_ORDER)),
@@ -538,6 +558,7 @@ export const ClientSettingsPatch = Schema.Struct({
   confirmThreadArchive: Schema.optionalKey(Schema.Boolean),
   confirmThreadDelete: Schema.optionalKey(Schema.Boolean),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
+  defaultProjectHyprnavSettings: Schema.optionalKey(ProjectHyprnavSettings),
   favorites: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({
@@ -562,6 +583,9 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),
+  ),
+  groupedProjectHyprnavStateByLogicalProjectKey: Schema.optionalKey(
+    Schema.Record(TrimmedNonEmptyString, GroupedProjectHyprnavState),
   ),
   sidebarProjectSortOrder: Schema.optionalKey(SidebarProjectSortOrder),
   sidebarThreadSortOrder: Schema.optionalKey(SidebarThreadSortOrder),
