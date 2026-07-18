@@ -104,4 +104,5 @@ Let's be clear, I'm so so so so annoyed by goddamn issues that come up when I op
 The checks include:
 
 - Running `codex review` after changes to get feedback
+- Never invoke `codex review` from inside an active `codex review`; review processes must not recursively review themselves.
 - creating tests, in some cases e2e tests to verify the feature
