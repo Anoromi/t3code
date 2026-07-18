@@ -1,8 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
-import * as NodeCrypto from "node:crypto";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
 import * as NodeTimersPromises from "node:timers/promises";
 
 import { issueRemoteWebSocketTicket } from "@t3tools/client-runtime/authorization";
@@ -18,6 +15,19 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "../backend/DesktopLocalEnvironmentAuth.ts";
+import {
+  buildCorkdiffConnectionUpdateExpression,
+  buildCorkdiffGhosttyArgs,
+  createCorkdiffGhosttyClassName,
+  createCorkdiffNvimServerAddress,
+} from "./ExternalCorkdiffCommand.ts";
+
+export {
+  buildCorkdiffConnectionUpdateExpression,
+  buildCorkdiffGhosttyArgs,
+  createCorkdiffGhosttyClassName,
+  createCorkdiffNvimServerAddress,
+};
 
 const COMMAND_TIMEOUT_MS = 10_000;
 const MAX_OUTPUT_BYTES = 64 * 1024;
@@ -26,7 +36,6 @@ const CLIENT_READY_ATTEMPTS = 25;
 const CLIENT_READY_DELAY_MS = 200;
 const CREDENTIAL_REFRESH_SKEW_MS = 30_000;
 const CREDENTIAL_REFRESH_RETRY_MS = 10_000;
-const CORKDIFF_GHOSTTY_CLASS_PREFIX = "dev.t3tools.t3code.corkdiff";
 const isEnvironmentAuthInvalidError = Schema.is(EnvironmentAuthInvalidError);
 
 interface CommandResult {
@@ -162,41 +171,6 @@ export function runCommand(
     throw new Error(`${command} timed out after ${String(COMMAND_TIMEOUT_MS)}ms.`);
   });
   return Promise.race([completion, timeout]).finally(() => timeoutController.abort());
-}
-
-export function createCorkdiffGhosttyClassName(threadId: string): string {
-  const suffix = NodeCrypto.createHash("sha256").update(threadId).digest("hex").slice(0, 12);
-  return `${CORKDIFF_GHOSTTY_CLASS_PREFIX}.t${suffix}`;
-}
-
-export function buildCorkdiffGhosttyArgs(input: {
-  readonly className: string;
-  readonly nvimServerAddress: string;
-  readonly threadId: string;
-}): readonly string[] {
-  return [
-    "--gtk-single-instance=false",
-    `--class=${input.className}`,
-    `--title=T3 Code Corkdiff ${input.threadId}`,
-    "-e",
-    "nvim",
-    "--listen",
-    input.nvimServerAddress,
-    "-c",
-    "lua require('codediff.config').options.t3code.server_url=vim.env.T3CODE_SERVER_URL",
-    "-c",
-    "lua vim.api.nvim_cmd({cmd='CorkDiff',args={'t3code',vim.env.T3CODE_THREAD_ID}}, {})",
-  ];
-}
-
-export function createCorkdiffNvimServerAddress(
-  threadId: string,
-  runtimeEnv: NodeJS.ProcessEnv,
-): string {
-  const threadHash = NodeCrypto.createHash("sha256").update(threadId).digest("hex").slice(0, 12);
-  const launchNonce = NodeCrypto.randomBytes(6).toString("hex");
-  const runtimeDirectory = runtimeEnv.XDG_RUNTIME_DIR?.trim() || NodeOS.tmpdir();
-  return NodePath.join(runtimeDirectory, `t3code-corkdiff-${threadHash}-${launchNonce}.sock`);
 }
 
 export function buildCorkdiffTicketUpdateExpression(ticket: string): string {
@@ -384,7 +358,10 @@ export class ExternalCorkdiffManager {
     throw new Error("Stale Corkdiff did not close before its replacement timeout.");
   }
 
-  async focusExisting(threadId: string): Promise<ExternalCorkdiffOpenResult | null> {
+  async focusExisting(
+    threadId: string,
+    connection?: ExternalCorkdiffConnection,
+  ): Promise<ExternalCorkdiffOpenResult | null> {
     const pending = this.inFlight.get(threadId);
     if (pending !== undefined) {
       const result = await pending;
@@ -397,8 +374,30 @@ export class ExternalCorkdiffManager {
       this.sessions.delete(threadId);
       return null;
     }
-    const session = this.sessions.get(threadId);
+    let session = this.sessions.get(threadId);
+    if (connection) {
+      const nvimServerAddress =
+        session?.nvimServerAddress ?? createCorkdiffNvimServerAddress(threadId, this.runtimeEnv);
+      const updateResult = await this.run("nvim", [
+        "--server",
+        nvimServerAddress,
+        "--remote-expr",
+        buildCorkdiffConnectionUpdateExpression(connection),
+      ]);
+      if (updateResult.code === 0) {
+        session = {
+          className,
+          nvimServerAddress,
+          workspaceId: client.workspaceId,
+          credentialRefreshAtMs: connection.expiresAtMs - CREDENTIAL_REFRESH_SKEW_MS,
+        };
+        this.sessions.set(threadId, session);
+      } else {
+        session = undefined;
+      }
+    }
     if (session === undefined || session.credentialRefreshAtMs <= this.now()) {
+      if (!connection) return null;
       await this.closeClient(className, client);
       this.sessions.delete(threadId);
       return null;
@@ -470,7 +469,7 @@ export class ExternalCorkdiffManager {
       "--server",
       session.nvimServerAddress,
       "--remote-expr",
-      buildCorkdiffTicketUpdateExpression(connection.token),
+      buildCorkdiffConnectionUpdateExpression(connection),
     ]);
     if (updateResult.code !== 0) {
       if ((await this.findClient(session.className)) === null) {
@@ -608,6 +607,15 @@ export const make = Effect.gen(function* () {
     if (existing !== null) return existing;
 
     const connection = yield* resolveConnection();
+    const adopted = yield* Effect.tryPromise({
+      try: () => manager.focusExisting(input.threadId, connection),
+      catch: (cause) => new ExternalCorkdiffCommandError({ operation: "inspect", cause }),
+    });
+    if (adopted !== null) {
+      yield* scheduleCredentialRefresh(input, connection.expiresAtMs);
+      return adopted;
+    }
+
     const result = yield* Effect.tryPromise({
       try: () => manager.launch(input, connection),
       catch: (cause) => new ExternalCorkdiffCommandError({ operation: "launch", cause }),

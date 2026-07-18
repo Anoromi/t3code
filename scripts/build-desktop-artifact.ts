@@ -1407,6 +1407,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // files through the asar (transparently redirected to the unpacked copy), so
     // there's no duplication.
     asarUnpack: [...DESKTOP_ASAR_UNPACK, "apps/server/dist/**", "**/node_modules/**"],
+    extraResources: [{ from: "ghostty-worktree.cjs", to: "ghostty-worktree.cjs" }],
   };
   const updateChannel = resolveDesktopUpdateChannel(version);
   const publishConfig = yield* resolveGitHubPublishConfig(updateChannel);
@@ -1686,6 +1687,10 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* fs.copy(distDirs.desktopDist, path.join(stageAppDir, "apps/desktop/dist-electron"));
   yield* fs.copy(distDirs.desktopResources, stageResourcesDir);
   yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
+  yield* fs.copyFile(
+    path.join(distDirs.desktopDist, "ghostty-worktree-entry.cjs"),
+    path.join(stageAppDir, "ghostty-worktree.cjs"),
+  );
 
   yield* assertPlatformBuildResources(
     options.platform,

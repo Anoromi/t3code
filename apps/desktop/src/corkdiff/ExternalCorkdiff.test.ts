@@ -61,13 +61,11 @@ describe("ExternalCorkdiff helpers", () => {
     ]);
   });
 
-  it("creates a private per-launch Neovim address without exposing the thread id", () => {
+  it("creates a stable per-thread Neovim address without exposing the thread id", () => {
     const address = createCorkdiffNvimServerAddress("thread-secret", {
       XDG_RUNTIME_DIR: "/run/user/1000",
     });
-    expect(address).toMatch(
-      /^\/run\/user\/1000\/t3code-corkdiff-[0-9a-f]{12}-[0-9a-f]{12}\.sock$/u,
-    );
+    expect(address).toMatch(/^\/run\/user\/1000\/t3code-corkdiff-[0-9a-f]{12}\.sock$/u);
     expect(address).not.toContain("thread-secret");
   });
 
@@ -377,7 +375,20 @@ describe("ExternalCorkdiffManager", () => {
     });
   });
 
-  it("closes an unmanaged Ghostty after restart so it can receive a fresh ticket", async () => {
+  it("leaves an unmanaged Ghostty intact until a fresh ticket is available", async () => {
+    const className = createCorkdiffGhosttyClassName("thread-1");
+    const run = vi.fn().mockResolvedValueOnce({
+      code: 0,
+      stdout: JSON.stringify([{ address: "0x104", class: className, workspace: { id: 104 } }]),
+      stderr: "",
+    });
+    const manager = new ExternalCorkdiffManager(run, {});
+
+    await expect(manager.focusExisting("thread-1")).resolves.toBeNull();
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("adopts a Hyprnav-launched Corkdiff through the shared per-thread socket", async () => {
     const className = createCorkdiffGhosttyClassName("thread-1");
     const run = vi
       .fn()
@@ -386,16 +397,30 @@ describe("ExternalCorkdiffManager", () => {
         stdout: JSON.stringify([{ address: "0x104", class: className, workspace: { id: 104 } }]),
         stderr: "",
       })
+      .mockResolvedValueOnce({ code: 0, stdout: "1", stderr: "" })
       .mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" })
-      .mockResolvedValueOnce({ code: 0, stdout: "[]", stderr: "" });
-    const manager = new ExternalCorkdiffManager(run, {});
+      .mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" });
+    const manager = new ExternalCorkdiffManager(run, {
+      XDG_RUNTIME_DIR: "/run/user/1000",
+    });
 
-    await expect(manager.focusExisting("thread-1")).resolves.toBeNull();
-    expect(run).toHaveBeenNthCalledWith(2, "hyprctl", ["dispatch", "closewindow", "address:0x104"]);
-    expect(run).toHaveBeenCalledTimes(3);
+    await expect(
+      manager.focusExisting("thread-1", {
+        serverUrl: "ws://127.0.0.1:3773/ws",
+        token: "fresh-ticket",
+        expiresAtMs: FUTURE_TICKET_EXPIRY,
+      }),
+    ).resolves.toEqual({ workspaceId: 104, reused: true });
+    expect(run).toHaveBeenNthCalledWith(2, "nvim", [
+      "--server",
+      "/run/user/1000/t3code-corkdiff-4b0a5fefc328.sock",
+      "--remote-expr",
+      expect.stringContaining("fresh-ticket"),
+    ]);
+    expect(run).not.toHaveBeenCalledWith("hyprctl", expect.arrayContaining(["closewindow"]));
   });
 
-  it("closes a managed Ghostty before its websocket ticket expires", async () => {
+  it("leaves an expired managed Ghostty intact until a replacement ticket is available", async () => {
     let now = 1_000;
     const className = createCorkdiffGhosttyClassName("thread-1");
     const liveClient = JSON.stringify([
@@ -420,7 +445,7 @@ describe("ExternalCorkdiffManager", () => {
     now = 31_000;
 
     await expect(manager.focusExisting("thread-1")).resolves.toBeNull();
-    expect(run).toHaveBeenNthCalledWith(4, "hyprctl", ["dispatch", "closewindow", "address:0x105"]);
+    expect(run).toHaveBeenCalledTimes(3);
   });
 
   it("refreshes a live managed Ghostty in place", async () => {
@@ -454,9 +479,7 @@ describe("ExternalCorkdiffManager", () => {
       "nvim",
       expect.arrayContaining([
         "--server",
-        expect.stringMatching(
-          /^\/run\/user\/1000\/t3code-corkdiff-[0-9a-f]{12}-[0-9a-f]{12}\.sock$/u,
-        ),
+        "/run/user/1000/t3code-corkdiff-4b0a5fefc328.sock",
         "--remote-expr",
         expect.stringContaining("fresh-ticket"),
       ]),
