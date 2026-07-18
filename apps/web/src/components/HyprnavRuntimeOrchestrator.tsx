@@ -10,10 +10,9 @@ import {
   createCancelableHyprnavDelay,
   computeActiveHyprnavCleanup,
   createActiveHyprnavRequestKey,
-  type HyprnavPublicationHistory,
   hyprnavCredentialRefreshDelay,
+  hyprnavPublicationHistory,
   isHyprnavDesktopRuntimeAvailable,
-  loadHyprnavPublicationHistory,
   markActiveHyprnavPublicationAttempt,
   persistHyprnavPublicationHistory,
   publishHyprnavRequests,
@@ -26,7 +25,6 @@ import { primaryServerAvailableEditorsAtom } from "../state/server";
 import { toastManager } from "./ui/toast";
 
 const HYPRNAV_BACKGROUND_RETRY_DELAY_MS = 5_000;
-const publicationHistory: HyprnavPublicationHistory = loadHyprnavPublicationHistory();
 
 export function HyprnavRuntimeOrchestrator({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
   const thread = useThreadShell(threadRef);
@@ -59,7 +57,7 @@ export function HyprnavRuntimeOrchestrator({ threadRef }: { readonly threadRef: 
     const delay = createCancelableHyprnavDelay();
     const credentialRefreshDelay = hyprnavCredentialRefreshDelay(effectiveSettings);
     const cleanup = computeActiveHyprnavCleanup({
-      history: publicationHistory,
+      history: hyprnavPublicationHistory,
       target,
       settings: effectiveSettings,
     });
@@ -85,22 +83,22 @@ export function HyprnavRuntimeOrchestrator({ threadRef }: { readonly threadRef: 
             isCurrent: () => !cancelled,
             onBeforeSync: () => {
               markActiveHyprnavPublicationAttempt({
-                history: publicationHistory,
+                history: hyprnavPublicationHistory,
                 target,
                 settings: effectiveSettings,
               });
-              persistHyprnavPublicationHistory(publicationHistory);
+              persistHyprnavPublicationHistory(hyprnavPublicationHistory);
             },
           });
           if (cancelled) return;
           if (result.status === "ok") {
             recordActiveHyprnavPublication({
-              history: publicationHistory,
+              history: hyprnavPublicationHistory,
               target,
               settings: effectiveSettings,
               ...(result.appliedScopes ? { appliedScopes: result.appliedScopes } : {}),
             });
-            persistHyprnavPublicationHistory(publicationHistory);
+            persistHyprnavPublicationHistory(hyprnavPublicationHistory);
             if (credentialRefreshDelay === null) return;
             await delay.wait(credentialRefreshDelay);
             continue;

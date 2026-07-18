@@ -9,7 +9,7 @@ import {
   type ProviderInstanceConfig,
 } from "@t3tools/contracts";
 
-import { usePrimarySettings, useUpdatePrimarySettings } from "../../hooks/useSettings";
+import { usePersistPrimarySettings, usePrimarySettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Button } from "../ui/button";
@@ -115,7 +115,7 @@ interface AddProviderInstanceDialogProps {
 
 export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderInstanceDialogProps) {
   const settings = usePrimarySettings();
-  const updateSettings = useUpdatePrimarySettings();
+  const persistSettings = usePersistPrimarySettings();
 
   const [wizardStep, setWizardStep] = useState(0);
   const [driver, setDriver] = useState<ProviderDriverKind>(DEFAULT_DRIVER_KIND);
@@ -128,6 +128,7 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
   // Errors are suppressed until the user has tried to submit once. After that
   // they update live so fixing the problem clears the message in place.
   const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   const existingIds = useMemo(
     () => new Set(Object.keys(settings.providerInstances ?? {})),
@@ -162,9 +163,9 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
     [driver],
   );
 
-  const handleSave = useCallback(() => {
+  const handleSave = useCallback(async () => {
     setHasAttemptedSubmit(true);
-    if (instanceIdError !== null) return;
+    if (instanceIdError !== null || isSaving) return;
 
     const config = configByDriver[driver] ?? {};
     const hasConfig = Object.keys(config).length > 0;
@@ -182,12 +183,14 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
     // keeps the type boundary honest and guards against any future drift in
     // the slug rules.
     const brandedId = ProviderInstanceId.make(instanceId);
-    const nextMap = {
-      ...settings.providerInstances,
-      [brandedId]: nextInstance,
-    };
+    setIsSaving(true);
     try {
-      updateSettings({ providerInstances: nextMap });
+      await persistSettings((currentSettings) => ({
+        providerInstances: {
+          ...currentSettings.providerInstances,
+          [brandedId]: nextInstance,
+        },
+      }));
       toastManager.add({
         type: "success",
         title: "Provider instance added",
@@ -200,6 +203,8 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
         title: "Could not add provider instance",
         description: error instanceof Error ? error.message : "Update failed.",
       });
+    } finally {
+      setIsSaving(false);
     }
   }, [
     driver,
@@ -209,9 +214,9 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
     instanceIdError,
     label,
     accentColor,
+    isSaving,
     onOpenChange,
-    settings.providerInstances,
-    updateSettings,
+    persistSettings,
   ]);
 
   return (
@@ -442,6 +447,7 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
             <Button
               variant="outline"
               size="sm"
+              disabled={isSaving}
               onClick={() => {
                 if (wizardStep === 0) {
                   onOpenChange(false);
@@ -453,12 +459,16 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
               {wizardStep === 0 ? "Cancel" : "Back"}
             </Button>
             {wizardStep < wizardSteps.length - 1 ? (
-              <Button size="sm" onClick={() => setWizardStep((step) => Math.min(2, step + 1))}>
+              <Button
+                size="sm"
+                disabled={isSaving}
+                onClick={() => setWizardStep((step) => Math.min(2, step + 1))}
+              >
                 Next
               </Button>
             ) : (
-              <Button size="sm" onClick={handleSave}>
-                Add instance
+              <Button size="sm" disabled={isSaving} onClick={() => void handleSave()}>
+                {isSaving ? "Adding…" : "Add instance"}
               </Button>
             )}
           </DialogFooter>

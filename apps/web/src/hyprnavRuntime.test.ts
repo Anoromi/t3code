@@ -1,4 +1,9 @@
-import { PRIMARY_LOCAL_ENVIRONMENT_ID, ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  type DesktopHyprnavSyncInput,
+  PRIMARY_LOCAL_ENVIRONMENT_ID,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
@@ -135,7 +140,10 @@ describe("hyprnavRuntime", () => {
   });
 
   it("publishes enriched requests with one refreshed Corkdiff connection", async () => {
-    const sync = vi.fn(async () => ({ status: "ok" as const, message: null }));
+    const sync = vi.fn(async (_input: DesktopHyprnavSyncInput) => ({
+      status: "ok" as const,
+      message: null,
+    }));
     vi.stubGlobal("window", {
       desktopBridge: { syncHyprnavEnvironment: sync },
     });
@@ -191,6 +199,452 @@ describe("hyprnavRuntime", () => {
         }),
       );
     } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("continues with independent targets after one target fails", async () => {
+    vi.useFakeTimers();
+    const sync = vi.fn(async (input: { projectRoot: string }) =>
+      input.projectRoot === "/missing"
+        ? { status: "error" as const, message: "project root missing" }
+        : { status: "ok" as const, message: null },
+    );
+    const afterSync = vi.fn();
+    vi.stubGlobal("window", {
+      desktopBridge: { syncHyprnavEnvironment: sync },
+    });
+    try {
+      const publication = publishHyprnavRequests({
+        requests: [
+          { ...request, projectRoot: "/missing" },
+          { ...request, projectRoot: "/healthy" },
+        ],
+        availableEditors: [],
+        resolvePreferredEditor: () => null,
+        onAfterSync: afterSync,
+      });
+      await vi.runAllTimersAsync();
+      await expect(publication).resolves.toEqual({
+        status: "error",
+        message: "project root missing",
+        appliedScopes: ["thread"],
+      });
+      expect(sync).toHaveBeenCalledWith(expect.objectContaining({ projectRoot: "/healthy" }));
+      expect(afterSync).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("publishes unrelated targets when Corkdiff credential resolution fails", async () => {
+    const sync = vi.fn(async () => ({ status: "ok" as const, message: null }));
+    const beforeSync = vi.fn();
+    const resolveConnection = vi.fn(async () => {
+      throw new Error("ticket unavailable");
+    });
+    vi.stubGlobal("window", {
+      desktopBridge: { syncHyprnavEnvironment: sync },
+    });
+    try {
+      await expect(
+        publishHyprnavRequests({
+          requests: [
+            {
+              ...request,
+              hyprnav: {
+                bindings: [
+                  {
+                    id: "corkdiff",
+                    slot: 8,
+                    scope: "thread",
+                    workspace: { mode: "managed" },
+                    action: "shell-command",
+                    command: "corkdiff {corkdiffServerUrl}",
+                  },
+                ],
+              },
+            },
+            {
+              ...request,
+              threadId: "thread-2",
+              hyprnav: {
+                bindings: [
+                  {
+                    id: "corkdiff-2",
+                    slot: 8,
+                    scope: "thread",
+                    workspace: { mode: "managed" },
+                    action: "shell-command",
+                    command: "corkdiff {corkdiffServerUrl}",
+                  },
+                ],
+              },
+            },
+            {
+              ...request,
+              projectRoot: "/independent",
+              threadId: null,
+              threadTitle: null,
+              hyprnav: {
+                bindings: [
+                  {
+                    id: "terminal",
+                    slot: 1,
+                    scope: "worktree",
+                    workspace: { mode: "managed" },
+                    action: "nothing",
+                  },
+                ],
+              },
+              lock: false,
+            },
+          ],
+          availableEditors: [],
+          resolvePreferredEditor: () => null,
+          resolveCorkdiffConnection: resolveConnection,
+          onBeforeSync: beforeSync,
+        }),
+      ).resolves.toEqual({
+        status: "error",
+        message: "ticket unavailable",
+        appliedScopes: ["thread", "worktree"],
+      });
+      expect(sync).toHaveBeenCalledTimes(3);
+      expect(resolveConnection).toHaveBeenCalledOnce();
+      expect(sync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          threadId: "thread-1",
+          lock: true,
+          clearBindings: [{ scope: "thread", slot: 8 }],
+        }),
+      );
+      expect(sync).toHaveBeenCalledWith(expect.objectContaining({ projectRoot: "/independent" }));
+      expect(beforeSync).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("skips repeated editor-dependent failures while publishing unrelated targets", async () => {
+    const sync = vi.fn(async (_input: DesktopHyprnavSyncInput) => ({
+      status: "ok" as const,
+      message: null,
+    }));
+    vi.stubGlobal("window", {
+      desktopBridge: { syncHyprnavEnvironment: sync },
+    });
+    const editorBinding = {
+      id: "editor",
+      slot: 2,
+      scope: "worktree" as const,
+      workspace: { mode: "managed" as const },
+      action: "open-favorite-editor" as const,
+    };
+    try {
+      await expect(
+        publishHyprnavRequests({
+          requests: [
+            {
+              ...request,
+              projectRoot: "/one",
+              threadId: null,
+              lock: false,
+              hyprnav: { bindings: [editorBinding] },
+            },
+            {
+              ...request,
+              projectRoot: "/two",
+              threadId: null,
+              lock: false,
+              hyprnav: { bindings: [editorBinding] },
+            },
+            {
+              ...request,
+              projectRoot: "/independent",
+              threadId: null,
+              lock: false,
+              hyprnav: { bindings: [{ ...editorBinding, action: "nothing" }] },
+            },
+          ],
+          availableEditors: [],
+          resolvePreferredEditor: () => null,
+        }),
+      ).resolves.toEqual({
+        status: "unavailable",
+        message: "No available favorite editor is configured.",
+        appliedScopes: ["worktree"],
+      });
+      expect(sync).toHaveBeenCalledTimes(3);
+      expect(sync).toHaveBeenCalledWith(expect.objectContaining({ projectRoot: "/independent" }));
+      expect(sync.mock.calls.flatMap(([input]) => input.hyprnav.bindings)).not.toContainEqual(
+        expect.objectContaining({ action: "open-favorite-editor" }),
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("publishes editor-independent bindings when no editor is available", async () => {
+    const sync = vi.fn(async () => ({ status: "ok" as const, message: null }));
+    vi.stubGlobal("window", {
+      desktopBridge: { syncHyprnavEnvironment: sync },
+    });
+    try {
+      await expect(
+        publishHyprnavRequests({
+          requests: [
+            {
+              ...request,
+              threadId: null,
+              lock: false,
+              hyprnav: {
+                bindings: [
+                  {
+                    id: "terminal",
+                    slot: 1,
+                    scope: "worktree",
+                    workspace: { mode: "managed" },
+                    action: "worktree-terminal",
+                  },
+                  {
+                    id: "editor",
+                    slot: 2,
+                    scope: "worktree",
+                    workspace: { mode: "managed" },
+                    action: "open-favorite-editor",
+                  },
+                ],
+              },
+            },
+          ],
+          availableEditors: [],
+          resolvePreferredEditor: () => null,
+        }),
+      ).resolves.toEqual({
+        status: "unavailable",
+        message: "No available favorite editor is configured.",
+        appliedScopes: ["worktree"],
+      });
+      expect(sync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          hyprnav: {
+            bindings: [expect.objectContaining({ id: "terminal" })],
+          },
+          clearBindings: expect.arrayContaining([{ scope: "worktree", slot: 2 }]),
+        }),
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("resolves Corkdiff credentials for non-thread URL placeholders", async () => {
+    const sync = vi.fn(async () => ({ status: "ok" as const, message: null }));
+    const resolveConnection = vi.fn(async () => ({
+      serverUrl: "ws://127.0.0.1/ws?token=fresh",
+      token: null,
+    }));
+    vi.stubGlobal("window", {
+      desktopBridge: { syncHyprnavEnvironment: sync },
+    });
+    try {
+      await expect(
+        publishHyprnavRequests({
+          requests: [
+            {
+              ...request,
+              threadId: null,
+              lock: false,
+              hyprnav: {
+                bindings: [
+                  {
+                    id: "url",
+                    slot: 5,
+                    scope: "worktree",
+                    workspace: { mode: "managed" },
+                    action: "shell-command",
+                    command: "notify-send {corkdiffServerUrl}",
+                  },
+                ],
+              },
+            },
+          ],
+          availableEditors: [],
+          resolvePreferredEditor: () => null,
+          resolveCorkdiffConnection: resolveConnection,
+        }),
+      ).resolves.toEqual({
+        status: "ok",
+        message: null,
+        appliedScopes: ["worktree"],
+      });
+      expect(resolveConnection).toHaveBeenCalledOnce();
+      expect(sync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          corkdiffConnection: {
+            serverUrl: "ws://127.0.0.1/ws?token=fresh",
+            token: null,
+          },
+        }),
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("rejects a non-thread Corkdiff launch binding without blocking other bindings", async () => {
+    const sync = vi.fn(async () => ({ status: "ok" as const, message: null }));
+    const resolveConnection = vi.fn();
+    vi.stubGlobal("window", {
+      desktopBridge: { syncHyprnavEnvironment: sync },
+    });
+    try {
+      await expect(
+        publishHyprnavRequests({
+          requests: [
+            {
+              ...request,
+              threadId: null,
+              lock: false,
+              hyprnav: {
+                bindings: [
+                  {
+                    id: "invalid-launch",
+                    slot: 8,
+                    scope: "worktree",
+                    workspace: { mode: "managed" },
+                    action: "shell-command",
+                    command: "{corkdiffLaunchCommand}",
+                  },
+                  {
+                    id: "terminal",
+                    slot: 1,
+                    scope: "worktree",
+                    workspace: { mode: "managed" },
+                    action: "nothing",
+                  },
+                ],
+              },
+            },
+          ],
+          availableEditors: [],
+          resolvePreferredEditor: () => null,
+          resolveCorkdiffConnection: resolveConnection,
+        }),
+      ).resolves.toEqual({
+        status: "error",
+        message: "Hyprnav command requires {corkdiffLaunchCommand} for this scope.",
+        appliedScopes: ["worktree"],
+      });
+      expect(resolveConnection).not.toHaveBeenCalled();
+      expect(sync).toHaveBeenCalledWith(
+        expect.objectContaining({
+          hyprnav: { bindings: [expect.objectContaining({ id: "terminal" })] },
+          clearBindings: expect.arrayContaining([{ scope: "worktree", slot: 8 }]),
+        }),
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("reuses a batch-wide runtime-unavailable failure after retries", async () => {
+    vi.useFakeTimers();
+    const sync = vi.fn(async () => ({
+      status: "unavailable" as const,
+      message: "hyprnav is not installed or not available in PATH.",
+    }));
+    vi.stubGlobal("window", {
+      desktopBridge: { syncHyprnavEnvironment: sync },
+    });
+    try {
+      const publication = publishHyprnavRequests({
+        requests: [
+          {
+            ...request,
+            projectRoot: "/one",
+            threadId: null,
+            lock: false,
+            hyprnav: {
+              bindings: [
+                {
+                  id: "terminal",
+                  slot: 1,
+                  scope: "worktree",
+                  workspace: { mode: "managed" },
+                  action: "nothing",
+                },
+              ],
+            },
+          },
+          {
+            ...request,
+            projectRoot: "/two",
+            threadId: null,
+            lock: false,
+            hyprnav: {
+              bindings: [
+                {
+                  id: "terminal",
+                  slot: 1,
+                  scope: "worktree",
+                  workspace: { mode: "managed" },
+                  action: "nothing",
+                },
+              ],
+            },
+          },
+        ],
+        availableEditors: [],
+        resolvePreferredEditor: () => null,
+      });
+      await vi.runAllTimersAsync();
+      await expect(publication).resolves.toEqual({
+        status: "unavailable",
+        message: "hyprnav is not installed or not available in PATH.",
+      });
+      expect(sync).toHaveBeenCalledTimes(3);
+      expect(sync).not.toHaveBeenCalledWith(expect.objectContaining({ projectRoot: "/two" }));
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("continues after a target-specific unavailable dependency", async () => {
+    vi.useFakeTimers();
+    const sync = vi.fn(async (input: { projectRoot: string }) =>
+      input.projectRoot === "/socket-probe"
+        ? {
+            status: "unavailable" as const,
+            message: "nvim is not installed or not available in PATH.",
+          }
+        : { status: "ok" as const, message: null },
+    );
+    vi.stubGlobal("window", {
+      desktopBridge: { syncHyprnavEnvironment: sync },
+    });
+    try {
+      const publication = publishHyprnavRequests({
+        requests: [
+          { ...request, projectRoot: "/socket-probe" },
+          { ...request, projectRoot: "/independent" },
+        ],
+        availableEditors: [],
+        resolvePreferredEditor: () => null,
+      });
+      await vi.runAllTimersAsync();
+      await expect(publication).resolves.toEqual({
+        status: "unavailable",
+        message: "nvim is not installed or not available in PATH.",
+        appliedScopes: ["thread"],
+      });
+      expect(sync).toHaveBeenCalledTimes(4);
+      expect(sync).toHaveBeenCalledWith(expect.objectContaining({ projectRoot: "/independent" }));
+    } finally {
+      vi.useRealTimers();
       vi.unstubAllGlobals();
     }
   });
