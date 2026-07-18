@@ -2337,6 +2337,60 @@ function ChatViewContent(props: ChatViewProps) {
     }
   }, [activeThreadRef, diffOpen, isServerThread, onDiffPanelOpen]);
 
+  const openDiffFallback = useCallback(() => {
+    if (!isServerThread) return;
+    if (!diffOpen) {
+      onDiffPanelOpen?.();
+    }
+    if (activeThreadRef) {
+      useRightPanelStore.getState().open(activeThreadRef, "diff");
+    }
+  }, [activeThreadRef, diffOpen, isServerThread, onDiffPanelOpen]);
+
+  const onToggleDiffShortcut = useCallback(() => {
+    const openExternalCorkdiff = window.desktopBridge?.openExternalCorkdiff;
+    // External Corkdiff runs in a local Ghostty process and Electron main owns
+    // only the primary backend credential. Remote paths and credentials stay
+    // in their environment, so those threads retain the in-app viewer.
+    if (
+      openExternalCorkdiff &&
+      isServerThread &&
+      activeThreadId &&
+      activeThread?.environmentId === primaryEnvironmentId
+    ) {
+      if (!activeWorkspaceRoot) {
+        toastManager.add({
+          type: "error",
+          title: "Unable to open Corkdiff",
+          description: "The active thread does not have a working directory.",
+        });
+        openDiffFallback();
+        return;
+      }
+      void openExternalCorkdiff({
+        cwd: activeWorkspaceRoot,
+        threadId: activeThreadId,
+      }).catch((error: unknown) => {
+        toastManager.add({
+          type: "error",
+          title: "Unable to open Corkdiff",
+          description: error instanceof Error ? error.message : "External Corkdiff failed to open.",
+        });
+        openDiffFallback();
+      });
+      return;
+    }
+    onToggleDiff();
+  }, [
+    activeThread?.environmentId,
+    activeThreadId,
+    activeWorkspaceRoot,
+    isServerThread,
+    openDiffFallback,
+    onToggleDiff,
+    primaryEnvironmentId,
+  ]);
+
   const envLocked = Boolean(
     activeThread &&
     (activeThread.messages.length > 0 ||
@@ -3933,7 +3987,7 @@ function ChatViewContent(props: ChatViewProps) {
       if (command === "diff.toggle") {
         event.preventDefault();
         event.stopPropagation();
-        onToggleDiff();
+        onToggleDiffShortcut();
         return;
       }
 
@@ -3969,7 +4023,7 @@ function ChatViewContent(props: ChatViewProps) {
     splitTerminal,
     splitPanelTerminal,
     keybindings,
-    onToggleDiff,
+    onToggleDiffShortcut,
     toggleRightPanel,
     toggleTerminalVisibility,
     composerRef,
