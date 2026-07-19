@@ -585,6 +585,67 @@ describe("ExternalCorkdiffManager", () => {
     expect(manager.claimCredentialRefreshOwnership("thread-1", firstGeneration)).toBe(false);
   });
 
+  it("does not apply an old refresh that resolves after newer credentials were installed", async () => {
+    const className = createCorkdiffGhosttyClassName("thread-1");
+    const liveClient = JSON.stringify([
+      { address: "0x104d", class: className, workspace: { id: 104 } },
+    ]);
+    const run = vi.fn(async (command: string, args: readonly string[]) => {
+      if (command === "hyprctl" && args[0] === "-j") {
+        return { code: 0, stdout: liveClient, stderr: "" };
+      }
+      if (command === "nvim") {
+        return { code: 0, stdout: "1", stderr: "" };
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    });
+    const manager = new ExternalCorkdiffManager(run, {
+      XDG_RUNTIME_DIR: "/run/user/1000",
+    });
+    const initialConnection = {
+      serverUrl: "ws://initial-backend:3773/ws",
+      token: "initial-ticket",
+      expiresAtMs: FUTURE_TICKET_EXPIRY,
+    };
+    await manager.focusExisting("thread-1", initialConnection);
+
+    const oldGeneration = manager.beginOpenRequest("thread-1");
+    expect(manager.claimCredentialRefreshOwnership("thread-1", oldGeneration)).toBe(true);
+    let resolveOldConnection!: (connection: typeof initialConnection) => void;
+    const oldConnection = new Promise<typeof initialConnection>((resolve) => {
+      resolveOldConnection = resolve;
+    });
+    const oldRefresh = oldConnection.then((connection) =>
+      manager.refreshCredentialIfOwner("thread-1", oldGeneration, connection),
+    );
+
+    const newGeneration = manager.beginOpenRequest("thread-1");
+    const newConnection = {
+      serverUrl: "ws://new-backend:3773/ws",
+      token: "new-ticket",
+      expiresAtMs: FUTURE_TICKET_EXPIRY + 1_000,
+    };
+    await manager.focusExisting("thread-1", newConnection, newGeneration);
+    resolveOldConnection({
+      serverUrl: "ws://old-backend:3773/ws",
+      token: "old-ticket",
+      expiresAtMs: FUTURE_TICKET_EXPIRY - 1_000,
+    });
+
+    await expect(oldRefresh).resolves.toBe("superseded");
+    expect(manager.isCredentialRefreshOwner("thread-1", newGeneration)).toBe(true);
+    const nvimCalls = run.mock.calls.filter(([command]) => command === "nvim");
+    expect(nvimCalls).toHaveLength(2);
+    expect(nvimCalls[1]).toEqual([
+      "nvim",
+      expect.arrayContaining(["--remote-expr", expect.stringContaining("new-ticket")]),
+    ]);
+    expect(run).not.toHaveBeenCalledWith(
+      "nvim",
+      expect.arrayContaining(["--remote-expr", expect.stringContaining("old-ticket")]),
+    );
+  });
+
   it("keeps an expired managed Ghostty focusable while credential replacement is pending", async () => {
     const className = createCorkdiffGhosttyClassName("thread-1");
     const liveClient = JSON.stringify([

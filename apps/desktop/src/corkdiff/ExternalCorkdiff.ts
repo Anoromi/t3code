@@ -79,7 +79,7 @@ interface ExternalCorkdiffSession {
   readonly credentialRefreshFailed: boolean;
 }
 
-export type ExternalCorkdiffCredentialRefreshResult = "refreshed" | "closed";
+export type ExternalCorkdiffCredentialRefreshResult = "refreshed" | "closed" | "superseded";
 
 export class ExternalCorkdiffCommandError extends Schema.TaggedErrorClass<ExternalCorkdiffCommandError>()(
   "ExternalCorkdiffCommandError",
@@ -303,7 +303,7 @@ export const runExternalCorkdiffCredentialRefreshLoop = Effect.fn(
       yield* Effect.sleep(Duration.millis(CREDENTIAL_REFRESH_RETRY_MS));
       continue;
     }
-    if (refreshed.value === "closed") return;
+    if (refreshed.value !== "refreshed") return;
     expiresAtMs = connection.value.expiresAtMs;
   }
 });
@@ -558,6 +558,7 @@ export class ExternalCorkdiffManager {
         this.sessions.set(threadId, session);
         if (options.openRequestGeneration !== undefined) {
           this.installedConnectionGenerationByThread.set(threadId, options.openRequestGeneration);
+          this.claimCredentialRefreshOwnership(threadId, options.openRequestGeneration);
         }
       } else {
         if (inspectedSession !== undefined && options.preserveManagedSessionOnFailure) {
@@ -679,6 +680,33 @@ export class ExternalCorkdiffManager {
     return "refreshed";
   }
 
+  async refreshCredentialIfOwner(
+    threadId: string,
+    ownerGeneration: number,
+    connection: ExternalCorkdiffConnection,
+  ): Promise<ExternalCorkdiffCredentialRefreshResult> {
+    const previous = this.adoptionChains.get(threadId);
+    let refreshResult: ExternalCorkdiffCredentialRefreshResult = "superseded";
+    const refreshPromise = (previous ?? Promise.resolve(null))
+      .catch(() => null)
+      .then(async (adopted) => {
+        if (!this.isCredentialRefreshOwner(threadId, ownerGeneration)) return adopted;
+        refreshResult = await this.refreshCredential(threadId, connection);
+        if (refreshResult !== "refreshed") return null;
+        const session = this.sessions.get(threadId);
+        return adopted ?? (session ? { workspaceId: session.workspaceId, reused: true } : null);
+      });
+    this.adoptionChains.set(threadId, refreshPromise);
+    try {
+      await refreshPromise;
+      return refreshResult;
+    } finally {
+      if (this.adoptionChains.get(threadId) === refreshPromise) {
+        this.adoptionChains.delete(threadId);
+      }
+    }
+  }
+
   private async launchFresh(
     input: ExternalCorkdiffOpenInput,
     connection: ExternalCorkdiffConnection,
@@ -787,7 +815,8 @@ export const make = Effect.gen(function* () {
         initialExpiresAtMs,
         isCurrent: () => manager.isCredentialRefreshOwner(input.threadId, openRequestGeneration),
         resolveConnection,
-        refresh: (connection) => manager.refreshCredential(input.threadId, connection),
+        refresh: (connection) =>
+          manager.refreshCredentialIfOwner(input.threadId, openRequestGeneration, connection),
       }).pipe(Effect.forkDetach);
     },
   );
