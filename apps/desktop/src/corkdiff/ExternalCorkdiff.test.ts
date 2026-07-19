@@ -502,6 +502,7 @@ describe("ExternalCorkdiffManager", () => {
       .mockRejectedValueOnce(new Error("nvim timed out"))
       .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" })
       .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" })
       .mockRejectedValueOnce(new Error("nvim timed out again"))
       .mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" })
       .mockResolvedValueOnce({ code: 0, stdout: "[]", stderr: "" });
@@ -575,6 +576,83 @@ describe("ExternalCorkdiffManager", () => {
 
     await expect(manager.focusExisting(input.threadId)).resolves.toBeNull();
     expect(run).toHaveBeenCalledTimes(9);
+  });
+
+  it("does not let a rejected stale probe delete a replacement session", async () => {
+    let rejectProbe!: (error: Error) => void;
+    const probeResult = new Promise<{ code: number; stdout: string; stderr: string }>(
+      (_resolve, reject) => {
+        rejectProbe = reject;
+      },
+    );
+    const className = createCorkdiffGhosttyClassName("thread-1");
+    const oldClient = JSON.stringify([
+      { address: "0x110", class: className, workspace: { id: 110 } },
+    ]);
+    const newClient = JSON.stringify([
+      { address: "0x111", class: className, workspace: { id: 111 } },
+    ]);
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce({ code: 0, stdout: "110\n", stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: oldClient, stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: oldClient, stderr: "" })
+      .mockReturnValueOnce(probeResult)
+      .mockResolvedValueOnce({ code: 0, stdout: "111\n", stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: newClient, stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: newClient, stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" });
+    const manager = new ExternalCorkdiffManager(run, {});
+    const input = { cwd: "/tmp/project", threadId: "thread-1" };
+    const connection = {
+      serverUrl: "ws://127.0.0.1:3773/ws",
+      token: "ticket",
+      expiresAtMs: FUTURE_TICKET_EXPIRY,
+    };
+    await manager.launch(input, connection);
+
+    const staleProbe = manager.focusExisting(input.threadId, connection);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(4));
+    await manager.launch(input, connection);
+    rejectProbe(new Error("stale probe timed out"));
+    await expect(staleProbe).resolves.toBeNull();
+
+    await expect(manager.focusExisting(input.threadId)).resolves.toEqual({
+      workspaceId: 111,
+      reused: true,
+    });
+    expect(run).not.toHaveBeenCalledWith("hyprctl", expect.arrayContaining(["closewindow"]));
+  });
+
+  it("reports a managed window closed when it exits during a rejected refresh", async () => {
+    const className = createCorkdiffGhosttyClassName("thread-1");
+    const liveClient = JSON.stringify([
+      { address: "0x112", class: className, workspace: { id: 112 } },
+    ]);
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce({ code: 0, stdout: "112\n", stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" })
+      .mockRejectedValueOnce(new Error("nvim timed out"))
+      .mockResolvedValueOnce({ code: 0, stdout: "[]", stderr: "" });
+    const manager = new ExternalCorkdiffManager(run, {});
+    const input = { cwd: "/tmp/project", threadId: "thread-1" };
+    await manager.launch(input, {
+      serverUrl: "ws://127.0.0.1:3773/ws",
+      token: "old-ticket",
+      expiresAtMs: FUTURE_TICKET_EXPIRY,
+    });
+
+    await expect(
+      manager.refreshCredential(input.threadId, {
+        serverUrl: "ws://127.0.0.1:3773/ws",
+        token: "fresh-ticket",
+        expiresAtMs: FUTURE_TICKET_EXPIRY,
+      }),
+    ).resolves.toBe("closed");
+    expect(run).toHaveBeenCalledTimes(5);
   });
 
   it("stops credential refresh when the managed window was closed", async () => {

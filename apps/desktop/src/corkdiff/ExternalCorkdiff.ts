@@ -340,6 +340,12 @@ export class ExternalCorkdiffManager {
     return next;
   }
 
+  private deleteSessionIfCurrent(threadId: string, generation: number): void {
+    if (this.sessions.get(threadId)?.generation === generation) {
+      this.sessions.delete(threadId);
+    }
+  }
+
   private async waitForClient(className: string): Promise<CorkdiffClient> {
     for (let attempt = 0; attempt < this.readiness.attempts; attempt += 1) {
       const client = await this.findClient(className);
@@ -361,7 +367,8 @@ export class ExternalCorkdiffManager {
       throw new Error(closeResult.stderr.trim() || "Failed to close stale Corkdiff.");
     }
     for (let attempt = 0; attempt < this.readiness.attempts; attempt += 1) {
-      if ((await this.findClient(className)) === null) return;
+      const remainingClient = await this.findClient(className);
+      if (remainingClient === null || remainingClient.address !== client.address) return;
       if (attempt + 1 < this.readiness.attempts) {
         await NodeTimersPromises.setTimeout(this.readiness.delayMs, undefined, { ref: false });
       }
@@ -380,12 +387,16 @@ export class ExternalCorkdiffManager {
     }
 
     const className = createCorkdiffGhosttyClassName(threadId);
+    const sessionBeforeInspection = this.sessions.get(threadId);
     const client = await this.findClient(className);
     if (client === null) {
-      this.sessions.delete(threadId);
+      if (sessionBeforeInspection !== undefined) {
+        this.deleteSessionIfCurrent(threadId, sessionBeforeInspection.generation);
+      }
       return null;
     }
-    let session = this.sessions.get(threadId);
+    const inspectedSession = this.sessions.get(threadId);
+    let session = inspectedSession;
     if (connection) {
       const nvimServerAddress =
         session?.nvimServerAddress ?? createCorkdiffNvimServerAddress(threadId, this.runtimeEnv);
@@ -398,8 +409,16 @@ export class ExternalCorkdiffManager {
           buildCorkdiffConnectionUpdateExpression(connection),
         ]);
       } catch {
+        if (
+          inspectedSession !== undefined &&
+          this.sessions.get(threadId)?.generation !== inspectedSession.generation
+        ) {
+          return null;
+        }
         await this.closeClient(className, client);
-        this.sessions.delete(threadId);
+        if (inspectedSession !== undefined) {
+          this.deleteSessionIfCurrent(threadId, inspectedSession.generation);
+        }
         return null;
       }
       if (updateResult.code === 0) {
@@ -419,8 +438,16 @@ export class ExternalCorkdiffManager {
     if (session?.credentialRefreshFailed === true && !connection) return null;
     if (session === undefined) {
       if (!connection) return null;
+      if (
+        inspectedSession !== undefined &&
+        this.sessions.get(threadId)?.generation !== inspectedSession.generation
+      ) {
+        return null;
+      }
       await this.closeClient(className, client);
-      this.sessions.delete(threadId);
+      if (inspectedSession !== undefined) {
+        this.deleteSessionIfCurrent(threadId, inspectedSession.generation);
+      }
       return null;
     }
 
@@ -431,7 +458,7 @@ export class ExternalCorkdiffManager {
     ]);
     if (focusResult.code !== 0) {
       if ((await this.findClient(className)) === null) {
-        this.sessions.delete(threadId);
+        this.deleteSessionIfCurrent(threadId, session.generation);
         return null;
       }
       throw new Error(
@@ -445,7 +472,7 @@ export class ExternalCorkdiffManager {
     ]);
     if (focusWindowResult.code !== 0) {
       if ((await this.findClient(className)) === null) {
-        this.sessions.delete(threadId);
+        this.deleteSessionIfCurrent(threadId, session.generation);
         return null;
       }
       throw new Error(focusWindowResult.stderr.trim() || "Failed to focus Corkdiff.");
@@ -487,7 +514,7 @@ export class ExternalCorkdiffManager {
     if (session === undefined) return "closed";
     const client = await this.findClient(session.className);
     if (client === null) {
-      this.sessions.delete(threadId);
+      this.deleteSessionIfCurrent(threadId, session.generation);
       return "closed";
     }
     let updateResult: CommandResult;
@@ -499,6 +526,10 @@ export class ExternalCorkdiffManager {
         buildCorkdiffConnectionUpdateExpression(connection),
       ]);
     } catch (error) {
+      if ((await this.findClient(session.className)) === null) {
+        this.deleteSessionIfCurrent(threadId, session.generation);
+        return "closed";
+      }
       this.updateSessionIfCurrent(threadId, session.generation, (current) => ({
         ...current,
         credentialRefreshFailed: true,
@@ -507,7 +538,7 @@ export class ExternalCorkdiffManager {
     }
     if (updateResult.code !== 0) {
       if ((await this.findClient(session.className)) === null) {
-        this.sessions.delete(threadId);
+        this.deleteSessionIfCurrent(threadId, session.generation);
         return "closed";
       }
       this.updateSessionIfCurrent(threadId, session.generation, (current) => ({
