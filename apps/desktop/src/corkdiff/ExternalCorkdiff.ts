@@ -455,6 +455,7 @@ export class ExternalCorkdiffManager {
         return this.focusExisting(threadId);
       }
       const previous = this.adoptionChains.get(threadId);
+      const previousInstalledGeneration = this.installedConnectionGenerationByThread.get(threadId);
       const adoptionPromise = (previous ?? Promise.resolve(null))
         .catch(() => null)
         .then(() =>
@@ -462,7 +463,30 @@ export class ExternalCorkdiffManager {
             preserveManagedSessionOnFailure: previous !== undefined,
             ...(openRequestGeneration !== undefined ? { openRequestGeneration } : {}),
           }),
-        );
+        )
+        .then((result) => {
+          if (
+            result !== null &&
+            openRequestGeneration !== undefined &&
+            this.isConnectionGenerationInstalled(threadId, openRequestGeneration)
+          ) {
+            this.claimCredentialRefreshOwnership(threadId, openRequestGeneration);
+          }
+          return result;
+        })
+        .catch((cause) => {
+          if (
+            openRequestGeneration !== undefined &&
+            this.isConnectionGenerationInstalled(threadId, openRequestGeneration)
+          ) {
+            if (previousInstalledGeneration === undefined) {
+              this.installedConnectionGenerationByThread.delete(threadId);
+            } else {
+              this.installedConnectionGenerationByThread.set(threadId, previousInstalledGeneration);
+            }
+          }
+          throw cause;
+        });
       this.adoptionChains.set(threadId, adoptionPromise);
       try {
         return await adoptionPromise;
@@ -558,7 +582,6 @@ export class ExternalCorkdiffManager {
         this.sessions.set(threadId, session);
         if (options.openRequestGeneration !== undefined) {
           this.installedConnectionGenerationByThread.set(threadId, options.openRequestGeneration);
-          this.claimCredentialRefreshOwnership(threadId, options.openRequestGeneration);
         }
       } else {
         if (inspectedSession !== undefined && options.preserveManagedSessionOnFailure) {
