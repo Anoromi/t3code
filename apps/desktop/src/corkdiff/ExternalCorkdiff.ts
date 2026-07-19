@@ -75,7 +75,6 @@ interface ExternalCorkdiffSession {
   readonly className: string;
   readonly nvimServerAddress: string;
   readonly workspaceId: number;
-  readonly credentialRefreshAtMs: number;
 }
 
 export type ExternalCorkdiffCredentialRefreshResult = "refreshed" | "closed";
@@ -304,18 +303,15 @@ export class ExternalCorkdiffManager {
   private readonly run: RunCommand;
   private readonly runtimeEnv: NodeJS.ProcessEnv;
   private readonly readiness: { readonly attempts: number; readonly delayMs: number };
-  private readonly now: () => number;
 
   constructor(
     run: RunCommand,
     runtimeEnv: NodeJS.ProcessEnv,
     readiness = { attempts: CLIENT_READY_ATTEMPTS, delayMs: CLIENT_READY_DELAY_MS },
-    now: () => number = Date.now,
   ) {
     this.run = run;
     this.runtimeEnv = runtimeEnv;
     this.readiness = readiness;
-    this.now = now;
   }
 
   private async findClient(className: string): Promise<CorkdiffClient | null> {
@@ -389,14 +385,13 @@ export class ExternalCorkdiffManager {
           className,
           nvimServerAddress,
           workspaceId: client.workspaceId,
-          credentialRefreshAtMs: connection.expiresAtMs - CREDENTIAL_REFRESH_SKEW_MS,
         };
         this.sessions.set(threadId, session);
       } else {
         session = undefined;
       }
     }
-    if (session === undefined || session.credentialRefreshAtMs <= this.now()) {
+    if (session === undefined) {
       if (!connection) return null;
       await this.closeClient(className, client);
       this.sessions.delete(threadId);
@@ -481,7 +476,6 @@ export class ExternalCorkdiffManager {
     this.sessions.set(threadId, {
       ...session,
       workspaceId: client.workspaceId,
-      credentialRefreshAtMs: connection.expiresAtMs - CREDENTIAL_REFRESH_SKEW_MS,
     });
     return "refreshed";
   }
@@ -524,7 +518,6 @@ export class ExternalCorkdiffManager {
       className,
       nvimServerAddress,
       workspaceId: client.workspaceId,
-      credentialRefreshAtMs: connection.expiresAtMs - CREDENTIAL_REFRESH_SKEW_MS,
     });
     return { workspaceId: client.workspaceId, reused: false };
   }

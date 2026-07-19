@@ -231,38 +231,41 @@ export function expandHyprnavCommandTemplate(
   | { readonly ok: true; readonly command: string }
   | { readonly ok: false; readonly message: string } {
   let failure: string | null = null;
-  const command = template.replaceAll(/\{([A-Za-z][A-Za-z0-9]*)\}/gu, (_match, name: string) => {
-    const replacements: Record<string, string | null> = {
-      projectRoot: quoteShellArg(context.projectRoot),
-      worktreePath: quoteShellArg(context.targetPath),
-      threadId: context.threadId ? quoteShellArg(context.threadId) : null,
-      corkdiffServerUrl: context.corkdiffConnection
-        ? quoteShellArg(context.corkdiffConnection.serverUrl)
-        : null,
-      corkdiffToken: context.corkdiffConnection
-        ? quoteShellArg(context.corkdiffConnection.token ?? "")
-        : null,
-      corkdiffLaunchCommand:
-        context.corkdiffConnection && context.threadId
-          ? buildCorkdiffCommand({
-              cwd: context.targetPath,
-              connection: context.corkdiffConnection,
-              threadId: context.threadId,
-              runtimeEnv: context.runtimeEnv ?? process.env,
-            })
+  const command = template.replaceAll(
+    /(?<!\$)\{([A-Za-z][A-Za-z0-9]*)\}/gu,
+    (_match, name: string) => {
+      const replacements: Record<string, string | null> = {
+        projectRoot: quoteShellArg(context.projectRoot),
+        worktreePath: quoteShellArg(context.targetPath),
+        threadId: context.threadId ? quoteShellArg(context.threadId) : null,
+        corkdiffServerUrl: context.corkdiffConnection
+          ? quoteShellArg(context.corkdiffConnection.serverUrl)
           : null,
-    };
-    if (!(name in replacements)) {
-      failure = `Hyprnav command uses an unknown placeholder: {${name}}.`;
-      return "";
-    }
-    const replacement = replacements[name];
-    if (replacement === null || replacement === undefined) {
-      failure = `Hyprnav command requires {${name}} for this scope.`;
-      return "";
-    }
-    return replacement;
-  });
+        corkdiffToken: context.corkdiffConnection
+          ? quoteShellArg(context.corkdiffConnection.token ?? "")
+          : null,
+        corkdiffLaunchCommand:
+          context.corkdiffConnection && context.threadId
+            ? buildCorkdiffCommand({
+                cwd: context.targetPath,
+                connection: context.corkdiffConnection,
+                threadId: context.threadId,
+                runtimeEnv: context.runtimeEnv ?? process.env,
+              })
+            : null,
+      };
+      if (!(name in replacements)) {
+        failure = `Hyprnav command uses an unknown placeholder: {${name}}.`;
+        return "";
+      }
+      const replacement = replacements[name];
+      if (replacement === null || replacement === undefined) {
+        failure = `Hyprnav command requires {${name}} for this scope.`;
+        return "";
+      }
+      return replacement;
+    },
+  );
   return failure === null ? { ok: true, command } : { ok: false, message: failure };
 }
 

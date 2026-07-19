@@ -91,6 +91,20 @@ describe("Hyprnav helpers", () => {
     });
   });
 
+  it("preserves shell parameter expansions while replacing Hyprnav placeholders", () => {
+    expect(
+      expandHyprnavCommandTemplate('cd "${HOME}/src" && printf "%s\\n" {projectRoot}', {
+        projectRoot: "/repo with spaces",
+        targetPath: "/repo with spaces",
+        threadId: null,
+        corkdiffConnection: null,
+      }),
+    ).toEqual({
+      ok: true,
+      command: 'cd "${HOME}/src" && printf "%s\\n" \'/repo with spaces\'',
+    });
+  });
+
   it("expands Corkdiff with the current desktop connection environment", () => {
     const result = expandHyprnavCommandTemplate("{corkdiffLaunchCommand}", {
       projectRoot: "/repo",

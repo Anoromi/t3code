@@ -420,8 +420,7 @@ describe("ExternalCorkdiffManager", () => {
     expect(run).not.toHaveBeenCalledWith("hyprctl", expect.arrayContaining(["closewindow"]));
   });
 
-  it("leaves an expired managed Ghostty intact until a replacement ticket is available", async () => {
-    let now = 1_000;
+  it("keeps an expired managed Ghostty focusable while credential replacement is pending", async () => {
     const className = createCorkdiffGhosttyClassName("thread-1");
     const liveClient = JSON.stringify([
       { address: "0x105", class: className, workspace: { id: 105 } },
@@ -433,7 +432,7 @@ describe("ExternalCorkdiffManager", () => {
       .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" })
       .mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" })
       .mockResolvedValueOnce({ code: 0, stdout: "[]", stderr: "" });
-    const manager = new ExternalCorkdiffManager(run, {}, { attempts: 1, delayMs: 0 }, () => now);
+    const manager = new ExternalCorkdiffManager(run, {}, { attempts: 1, delayMs: 0 });
     await manager.launch(
       { cwd: "/tmp/project", threadId: "thread-1" },
       {
@@ -442,10 +441,13 @@ describe("ExternalCorkdiffManager", () => {
         expiresAtMs: 61_000,
       },
     );
-    now = 31_000;
-
-    await expect(manager.focusExisting("thread-1")).resolves.toBeNull();
-    expect(run).toHaveBeenCalledTimes(3);
+    await expect(manager.focusExisting("thread-1")).resolves.toEqual({
+      workspaceId: 105,
+      reused: true,
+    });
+    expect(run).toHaveBeenCalledTimes(5);
+    expect(run).not.toHaveBeenCalledWith("nvim", expect.anything());
+    expect(run).not.toHaveBeenCalledWith("hyprctl", expect.arrayContaining(["closewindow"]));
   });
 
   it("refreshes a live managed Ghostty in place", async () => {
