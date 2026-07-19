@@ -703,6 +703,72 @@ describe("ExternalCorkdiffManager", () => {
     );
   });
 
+  it("rolls a failed queued adoption back to the adoption that completed before it", async () => {
+    const className = createCorkdiffGhosttyClassName("thread-1");
+    const liveClient = JSON.stringify([
+      { address: "0x104f", class: className, workspace: { id: 104 } },
+    ]);
+    let releaseSecondUpdate!: () => void;
+    const secondUpdateWait = new Promise<void>((resolve) => {
+      releaseSecondUpdate = resolve;
+    });
+    let markSecondUpdateStarted!: () => void;
+    const secondUpdateStarted = new Promise<void>((resolve) => {
+      markSecondUpdateStarted = resolve;
+    });
+    let activeToken = "";
+    const run = vi.fn(async (command: string, args: readonly string[]) => {
+      if (command === "hyprctl" && args[0] === "-j") {
+        return { code: 0, stdout: liveClient, stderr: "" };
+      }
+      if (command === "nvim") {
+        const expression = args.at(-1) ?? "";
+        const token = expression.includes("third-ticket")
+          ? "third-ticket"
+          : expression.includes("second-ticket")
+            ? "second-ticket"
+            : expression.includes("first-ticket")
+              ? "first-ticket"
+              : "initial-ticket";
+        if (token === "second-ticket") {
+          markSecondUpdateStarted();
+          await secondUpdateWait;
+        }
+        activeToken = token;
+        return { code: 0, stdout: "1", stderr: "" };
+      }
+      if (command === "hyprctl" && args[1] === "workspace" && activeToken === "third-ticket") {
+        return { code: 1, stdout: "", stderr: "third focus failed" };
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    });
+    const manager = new ExternalCorkdiffManager(run, {
+      XDG_RUNTIME_DIR: "/run/user/1000",
+    });
+    const connection = (token: string) => ({
+      serverUrl: "ws://127.0.0.1:3773/ws",
+      token,
+      expiresAtMs: FUTURE_TICKET_EXPIRY,
+    });
+    await manager.focusExisting("thread-1", connection("initial-ticket"));
+    const firstGeneration = manager.beginOpenRequest("thread-1");
+    await manager.focusExisting("thread-1", connection("first-ticket"), firstGeneration);
+
+    const secondGeneration = manager.beginOpenRequest("thread-1");
+    const second = manager.focusExisting("thread-1", connection("second-ticket"), secondGeneration);
+    await secondUpdateStarted;
+    const thirdGeneration = manager.beginOpenRequest("thread-1");
+    const third = manager.focusExisting("thread-1", connection("third-ticket"), thirdGeneration);
+    releaseSecondUpdate();
+
+    await expect(second).resolves.toEqual({ workspaceId: 104, reused: true });
+    await expect(third).rejects.toThrow("third focus failed");
+    expect(manager.isCredentialRefreshOwner("thread-1", secondGeneration)).toBe(true);
+    expect(manager.isConnectionGenerationInstalled("thread-1", secondGeneration)).toBe(true);
+    expect(manager.isCredentialRefreshOwner("thread-1", firstGeneration)).toBe(false);
+    expect(manager.isConnectionGenerationInstalled("thread-1", thirdGeneration)).toBe(false);
+  });
+
   it("keeps an expired managed Ghostty focusable while credential replacement is pending", async () => {
     const className = createCorkdiffGhosttyClassName("thread-1");
     const liveClient = JSON.stringify([

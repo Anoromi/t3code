@@ -455,15 +455,18 @@ export class ExternalCorkdiffManager {
         return this.focusExisting(threadId);
       }
       const previous = this.adoptionChains.get(threadId);
-      const previousInstalledGeneration = this.installedConnectionGenerationByThread.get(threadId);
+      let previousInstalledGeneration: number | undefined;
+      let capturedPreviousInstalledGeneration = false;
       const adoptionPromise = (previous ?? Promise.resolve(null))
         .catch(() => null)
-        .then(() =>
-          this.focusExistingOnce(threadId, connection, {
+        .then(() => {
+          previousInstalledGeneration = this.installedConnectionGenerationByThread.get(threadId);
+          capturedPreviousInstalledGeneration = true;
+          return this.focusExistingOnce(threadId, connection, {
             preserveManagedSessionOnFailure: previous !== undefined,
             ...(openRequestGeneration !== undefined ? { openRequestGeneration } : {}),
-          }),
-        )
+          });
+        })
         .then((result) => {
           if (
             result !== null &&
@@ -476,6 +479,7 @@ export class ExternalCorkdiffManager {
         })
         .catch((cause) => {
           if (
+            capturedPreviousInstalledGeneration &&
             openRequestGeneration !== undefined &&
             this.isConnectionGenerationInstalled(threadId, openRequestGeneration)
           ) {
