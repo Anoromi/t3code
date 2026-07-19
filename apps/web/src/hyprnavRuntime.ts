@@ -327,6 +327,22 @@ export function hyprnavCredentialRefreshDelay(settings: ProjectHyprnavSettings):
   return hyprnavNeedsCorkdiffConnection(settings) ? HYPRNAV_CREDENTIAL_REFRESH_DELAY_MS : null;
 }
 
+export function hyprnavSyncNeedsScopeRetry(
+  request: DesktopHyprnavSyncInput,
+  result: DesktopHyprnavSyncResult,
+): boolean {
+  if (result.status !== "ok" || result.appliedScopes === undefined) return false;
+
+  const requestedScopes = new Set<ProjectHyprnavScope>([
+    ...request.hyprnav.bindings.map((binding) => binding.scope),
+    ...(request.clearBindings ?? []).map((binding) => binding.scope),
+    ...(request.clearNames ?? []).map((binding) => binding.scope),
+    ...(request.lock && request.threadId ? (["thread"] as const) : []),
+  ]);
+  const appliedScopes = new Set(result.appliedScopes);
+  return [...requestedScopes].some((scope) => !appliedScopes.has(scope));
+}
+
 export function waitForHyprnavRetry(delayMs: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, delayMs);

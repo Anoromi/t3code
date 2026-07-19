@@ -13,6 +13,7 @@ import {
   createActiveHyprnavRequestKey,
   HYPRNAV_CREDENTIAL_REFRESH_DELAY_MS,
   hyprnavCredentialRefreshDelay,
+  hyprnavSyncNeedsScopeRetry,
   type HyprnavPublicationHistory,
   isHyprnavDesktopRuntimeAvailable,
   loadHyprnavPublicationHistory,
@@ -82,6 +83,46 @@ describe("hyprnavRuntime", () => {
       }),
     ).resolves.toEqual({ status: "unavailable", message: "missing" });
     expect(failedSync).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps retrying when stale-worktree recovery omits requested scopes", () => {
+    const scopedRequest: DesktopHyprnavSyncInput = {
+      ...request,
+      hyprnav: {
+        bindings: [
+          {
+            id: "project",
+            slot: 1,
+            scope: "project",
+            workspace: { mode: "managed" },
+            action: "nothing",
+          },
+          {
+            id: "worktree",
+            slot: 2,
+            scope: "worktree",
+            workspace: { mode: "managed" },
+            action: "nothing",
+          },
+        ],
+      },
+    };
+
+    expect(
+      hyprnavSyncNeedsScopeRetry(scopedRequest, {
+        status: "ok",
+        message: null,
+        appliedScopes: ["project"],
+      }),
+    ).toBe(true);
+    expect(
+      hyprnavSyncNeedsScopeRetry(scopedRequest, {
+        status: "ok",
+        message: null,
+        appliedScopes: ["project", "worktree", "thread"],
+      }),
+    ).toBe(false);
+    expect(hyprnavSyncNeedsScopeRetry(scopedRequest, { status: "ok", message: null })).toBe(false);
   });
 
   it("does not retry an obsolete publication after the active thread changes", async () => {

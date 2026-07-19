@@ -311,6 +311,7 @@ export const runExternalCorkdiffCredentialRefreshLoop = Effect.fn(
 export class ExternalCorkdiffManager {
   private readonly sessions = new Map<string, ExternalCorkdiffSession>();
   private readonly inFlight = new Map<string, Promise<ExternalCorkdiffOpenResult>>();
+  private readonly focusInFlight = new Map<string, Promise<ExternalCorkdiffOpenResult | null>>();
   private nextSessionGeneration = 0;
   private readonly run: RunCommand;
   private readonly runtimeEnv: NodeJS.ProcessEnv;
@@ -410,6 +411,25 @@ export class ExternalCorkdiffManager {
   }
 
   async focusExisting(
+    threadId: string,
+    connection?: ExternalCorkdiffConnection,
+  ): Promise<ExternalCorkdiffOpenResult | null> {
+    const operationKey = `${threadId}\0${connection ? "adopt" : "inspect"}`;
+    const pendingFocus = this.focusInFlight.get(operationKey);
+    if (pendingFocus !== undefined) return pendingFocus;
+
+    const focusPromise = this.focusExistingOnce(threadId, connection);
+    this.focusInFlight.set(operationKey, focusPromise);
+    try {
+      return await focusPromise;
+    } finally {
+      if (this.focusInFlight.get(operationKey) === focusPromise) {
+        this.focusInFlight.delete(operationKey);
+      }
+    }
+  }
+
+  private async focusExistingOnce(
     threadId: string,
     connection?: ExternalCorkdiffConnection,
   ): Promise<ExternalCorkdiffOpenResult | null> {

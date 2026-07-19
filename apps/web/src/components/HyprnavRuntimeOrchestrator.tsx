@@ -12,6 +12,7 @@ import {
   createActiveHyprnavRequestKey,
   hyprnavCredentialRefreshDelay,
   hyprnavPublicationHistory,
+  hyprnavSyncNeedsScopeRetry,
   isHyprnavDesktopRuntimeAvailable,
   markActiveHyprnavPublicationAttempt,
   persistHyprnavPublicationHistory,
@@ -61,23 +62,22 @@ export function HyprnavRuntimeOrchestrator({ threadRef }: { readonly threadRef: 
       target,
       settings: effectiveSettings,
     });
+    const request = {
+      projectRoot: target.projectRoot,
+      worktreePath: target.worktreePath,
+      threadId: target.threadId,
+      threadTitle: target.threadTitle,
+      hyprnav: effectiveSettings,
+      clearBindings: cleanup.clearBindings,
+      clearNames: cleanup.clearNames,
+      lock: true,
+    } as const;
     void (async () => {
       for (;;) {
         if (cancelled) return;
         try {
           const result = await publishHyprnavRequests({
-            requests: [
-              {
-                projectRoot: target.projectRoot,
-                worktreePath: target.worktreePath,
-                threadId: target.threadId,
-                threadTitle: target.threadTitle,
-                hyprnav: effectiveSettings,
-                clearBindings: cleanup.clearBindings,
-                clearNames: cleanup.clearNames,
-                lock: true,
-              },
-            ],
+            requests: [request],
             availableEditors,
             resolvePreferredEditor: resolveAndPersistPreferredEditor,
             isCurrent: () => !cancelled,
@@ -99,6 +99,10 @@ export function HyprnavRuntimeOrchestrator({ threadRef }: { readonly threadRef: 
               ...(result.appliedScopes ? { appliedScopes: result.appliedScopes } : {}),
             });
             persistHyprnavPublicationHistory(hyprnavPublicationHistory);
+            if (hyprnavSyncNeedsScopeRetry(request, result)) {
+              await delay.wait(HYPRNAV_BACKGROUND_RETRY_DELAY_MS);
+              continue;
+            }
             if (credentialRefreshDelay === null) return;
             await delay.wait(credentialRefreshDelay);
             continue;

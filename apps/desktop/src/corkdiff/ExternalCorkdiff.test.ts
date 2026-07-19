@@ -420,6 +420,44 @@ describe("ExternalCorkdiffManager", () => {
     expect(run).not.toHaveBeenCalledWith("hyprctl", expect.arrayContaining(["closewindow"]));
   });
 
+  it("coalesces concurrent adoption before a failed duplicate can close the viewer", async () => {
+    let resolveRefresh!: (result: { code: number; stdout: string; stderr: string }) => void;
+    const refreshResult = new Promise<{ code: number; stdout: string; stderr: string }>(
+      (resolve) => {
+        resolveRefresh = resolve;
+      },
+    );
+    const className = createCorkdiffGhosttyClassName("thread-1");
+    const liveClient = JSON.stringify([
+      { address: "0x104a", class: className, workspace: { id: 104 } },
+    ]);
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" })
+      .mockReturnValueOnce(refreshResult)
+      .mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" })
+      .mockRejectedValueOnce(new Error("duplicate refresh must not run"));
+    const manager = new ExternalCorkdiffManager(run, {
+      XDG_RUNTIME_DIR: "/run/user/1000",
+    });
+    const connection = {
+      serverUrl: "ws://127.0.0.1:3773/ws",
+      token: "fresh-ticket",
+      expiresAtMs: FUTURE_TICKET_EXPIRY,
+    };
+
+    const first = manager.focusExisting("thread-1", connection);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    const second = manager.focusExisting("thread-1", connection);
+    resolveRefresh({ code: 0, stdout: "1", stderr: "" });
+
+    await expect(first).resolves.toEqual({ workspaceId: 104, reused: true });
+    await expect(second).resolves.toEqual({ workspaceId: 104, reused: true });
+    expect(run).toHaveBeenCalledTimes(4);
+    expect(run).not.toHaveBeenCalledWith("hyprctl", expect.arrayContaining(["closewindow"]));
+  });
+
   it("keeps an expired managed Ghostty focusable while credential replacement is pending", async () => {
     const className = createCorkdiffGhosttyClassName("thread-1");
     const liveClient = JSON.stringify([
