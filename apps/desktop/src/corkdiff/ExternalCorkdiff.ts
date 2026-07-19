@@ -191,20 +191,29 @@ export function parseWorkspaceId(stdout: string): number | null {
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+export function findClientsForClass(
+  clients: readonly HyprClient[],
+  className: string,
+): CorkdiffClient[] {
+  return clients.flatMap((client) => {
+    if (client.class !== className) return [];
+    const workspaceId = client.workspace?.id;
+    const address = client.address;
+    return typeof workspaceId === "number" &&
+      Number.isSafeInteger(workspaceId) &&
+      workspaceId > 0 &&
+      typeof address === "string" &&
+      address.trim().length > 0
+      ? [{ address, workspaceId }]
+      : [];
+  });
+}
+
 export function findClientForClass(
   clients: readonly HyprClient[],
   className: string,
 ): CorkdiffClient | null {
-  const match = clients.find((client) => client.class === className);
-  const workspaceId = match?.workspace?.id;
-  const address = match?.address;
-  return typeof workspaceId === "number" &&
-    Number.isSafeInteger(workspaceId) &&
-    workspaceId > 0 &&
-    typeof address === "string" &&
-    address.trim().length > 0
-    ? { address, workspaceId }
-    : null;
+  return findClientsForClass(clients, className)[0] ?? null;
 }
 
 export function buildCorkdiffEnvironment(
@@ -317,15 +326,19 @@ export class ExternalCorkdiffManager {
     this.readiness = readiness;
   }
 
-  private async findClient(className: string): Promise<CorkdiffClient | null> {
+  private async findClients(className: string): Promise<CorkdiffClient[]> {
     const clientsResult = await this.run("hyprctl", ["-j", "clients"]);
     if (clientsResult.code !== 0) {
       throw new Error(clientsResult.stderr.trim() || "hyprctl clients failed.");
     }
     const parsed: unknown = JSON.parse(clientsResult.stdout);
     return Array.isArray(parsed)
-      ? findClientForClass(parsed as readonly HyprClient[], className)
-      : null;
+      ? findClientsForClass(parsed as readonly HyprClient[], className)
+      : [];
+  }
+
+  private async findClient(className: string): Promise<CorkdiffClient | null> {
+    return (await this.findClients(className))[0] ?? null;
   }
 
   private updateSessionIfCurrent(
@@ -344,6 +357,26 @@ export class ExternalCorkdiffManager {
     if (this.sessions.get(threadId)?.generation === generation) {
       this.sessions.delete(threadId);
     }
+  }
+
+  private async resolveCredentialRefreshFailure(
+    threadId: string,
+    session: ExternalCorkdiffSession,
+    cause: unknown,
+  ): Promise<ExternalCorkdiffCredentialRefreshResult> {
+    this.updateSessionIfCurrent(threadId, session.generation, (current) => ({
+      ...current,
+      credentialRefreshFailed: true,
+    }));
+    try {
+      if ((await this.findClient(session.className)) === null) {
+        this.deleteSessionIfCurrent(threadId, session.generation);
+        return "closed";
+      }
+    } catch {
+      throw cause;
+    }
+    throw cause;
   }
 
   private async waitForClient(className: string): Promise<CorkdiffClient> {
@@ -367,8 +400,8 @@ export class ExternalCorkdiffManager {
       throw new Error(closeResult.stderr.trim() || "Failed to close stale Corkdiff.");
     }
     for (let attempt = 0; attempt < this.readiness.attempts; attempt += 1) {
-      const remainingClient = await this.findClient(className);
-      if (remainingClient === null || remainingClient.address !== client.address) return;
+      const remainingClients = await this.findClients(className);
+      if (!remainingClients.some((candidate) => candidate.address === client.address)) return;
       if (attempt + 1 < this.readiness.attempts) {
         await NodeTimersPromises.setTimeout(this.readiness.delayMs, undefined, { ref: false });
       }
@@ -526,26 +559,14 @@ export class ExternalCorkdiffManager {
         buildCorkdiffConnectionUpdateExpression(connection),
       ]);
     } catch (error) {
-      if ((await this.findClient(session.className)) === null) {
-        this.deleteSessionIfCurrent(threadId, session.generation);
-        return "closed";
-      }
-      this.updateSessionIfCurrent(threadId, session.generation, (current) => ({
-        ...current,
-        credentialRefreshFailed: true,
-      }));
-      throw error;
+      return this.resolveCredentialRefreshFailure(threadId, session, error);
     }
     if (updateResult.code !== 0) {
-      if ((await this.findClient(session.className)) === null) {
-        this.deleteSessionIfCurrent(threadId, session.generation);
-        return "closed";
-      }
-      this.updateSessionIfCurrent(threadId, session.generation, (current) => ({
-        ...current,
-        credentialRefreshFailed: true,
-      }));
-      throw new Error(updateResult.stderr.trim() || "Failed to refresh Corkdiff credentials.");
+      return this.resolveCredentialRefreshFailure(
+        threadId,
+        session,
+        new Error(updateResult.stderr.trim() || "Failed to refresh Corkdiff credentials."),
+      );
     }
     this.updateSessionIfCurrent(threadId, session.generation, (current) => ({
       ...current,
