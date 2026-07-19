@@ -12,6 +12,7 @@ import type { Thread } from "../types";
 import {
   MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
+  acquireScopedActionLock,
   buildExpiredTerminalContextToastCopy,
   buildThreadTurnInterruptInput,
   createLocalDispatchSnapshot,
@@ -20,6 +21,7 @@ import {
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  resolveChatScopedShortcutAction,
   resolveSendEnvMode,
   shouldWriteThreadErrorToCurrentServerThread,
 } from "./ChatView.logic";
@@ -98,6 +100,65 @@ describe("buildThreadTurnInterruptInput", () => {
     expect(buildThreadTurnInterruptInput(makeThread({ session: readySession }))).toEqual({
       threadId,
     });
+  });
+});
+
+describe("resolveChatScopedShortcutAction", () => {
+  it("focuses an available composer", () => {
+    expect(
+      resolveChatScopedShortcutAction({
+        command: "chat.composer.focus",
+        hasComposer: true,
+        session: null,
+      }),
+    ).toBe("focus-composer");
+    expect(
+      resolveChatScopedShortcutAction({
+        command: "chat.composer.focus",
+        hasComposer: false,
+        session: null,
+      }),
+    ).toBeNull();
+  });
+
+  it("interrupts only a running session", () => {
+    expect(
+      resolveChatScopedShortcutAction({
+        command: "thread.interrupt",
+        hasComposer: true,
+        session: { status: "running" },
+      }),
+    ).toBe("interrupt-turn");
+    expect(
+      resolveChatScopedShortcutAction({
+        command: "thread.interrupt",
+        hasComposer: true,
+        session: { status: "starting" },
+      }),
+    ).toBeNull();
+    expect(
+      resolveChatScopedShortcutAction({
+        command: "thread.interrupt",
+        hasComposer: true,
+        session: null,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("acquireScopedActionLock", () => {
+  it("blocks duplicate work per scope without blocking another scope", () => {
+    const inFlightScopes = new Set<string>();
+    const releaseFirst = acquireScopedActionLock(inFlightScopes, "thread-a");
+
+    expect(releaseFirst).not.toBeNull();
+    expect(acquireScopedActionLock(inFlightScopes, "thread-a")).toBeNull();
+    const releaseSecond = acquireScopedActionLock(inFlightScopes, "thread-b");
+    expect(releaseSecond).not.toBeNull();
+
+    releaseFirst?.();
+    expect(acquireScopedActionLock(inFlightScopes, "thread-a")).not.toBeNull();
+    releaseSecond?.();
   });
 });
 

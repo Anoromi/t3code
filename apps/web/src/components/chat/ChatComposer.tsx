@@ -42,6 +42,7 @@ import {
 } from "react";
 import {
   clampCollapsedComposerCursor,
+  canRunStandaloneComposerSlashCommand,
   type ComposerTrigger,
   collapseExpandedComposerCursor,
   detectComposerTrigger,
@@ -90,6 +91,7 @@ import {
   replaceProviderOptionSelection,
   resolveFastModeDescriptor,
   resolveReasoningDescriptor,
+  toggleFastModeOptionSelection,
 } from "./composerSlashActions";
 import {
   getComposerPromptInjectionState,
@@ -1012,6 +1014,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       prompt,
     ],
   );
+  const canRunStandaloneSlashCommand = canRunStandaloneComposerSlashCommand({
+    imageCount: composerImages.length,
+    terminalContextCount: composerTerminalContexts.length,
+    elementContextCount: composerElementContexts.length,
+    previewAnnotationCount: composerPreviewAnnotations.length,
+    reviewCommentCount: composerReviewComments.length,
+  });
 
   // ------------------------------------------------------------------
   // Derived: composer trigger / menu
@@ -1199,7 +1208,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               },
             ]
           : []),
-        ...(fastModeDescriptor
+        ...(fastModeDescriptor && canRunStandaloneSlashCommand
           ? [
               {
                 id: "slash:fast",
@@ -1261,6 +1270,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeProjectCwd,
     branchRefState.isPending,
     canChangeWorktreeContext,
+    canRunStandaloneSlashCommand,
     composerMenuSlashCommand,
     composerTrigger,
     fastModeDescriptor,
@@ -1892,15 +1902,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (item.command === "plan" || item.command === "default") {
           void handleInteractionModeChange(item.command);
         } else if (item.command === "fast" && fastModeDescriptor) {
-          const nextOptions = replaceProviderOptionSelection(selectedModelOptionsForDispatch, {
-            id: fastModeDescriptor.id,
-            value: fastModeDescriptor.currentValue !== true,
+          const nextOptions = toggleFastModeOptionSelection({
+            capabilities: selectedModelCapabilities,
+            selections: selectedModelOptionsForDispatch,
           });
-          setComposerDraftProviderModelOptions(composerDraftTarget, selectedProvider, nextOptions, {
-            instanceId: selectedInstanceId,
-            model: selectedModel,
-            persistSticky: true,
-          });
+          if (nextOptions) {
+            setComposerDraftProviderModelOptions(
+              composerDraftTarget,
+              selectedProvider,
+              nextOptions,
+              {
+                instanceId: selectedInstanceId,
+                model: selectedModel,
+                persistSticky: true,
+              },
+            );
+          }
         }
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -2061,6 +2078,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       runContextEnvMode,
       selectedInstanceId,
       selectedModel,
+      selectedModelCapabilities,
       selectedModelOptionsForDispatch,
       selectedProvider,
       setComposerDraftProviderModelOptions,

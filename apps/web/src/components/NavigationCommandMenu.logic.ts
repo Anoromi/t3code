@@ -44,6 +44,7 @@ export type NavigationCommandItem =
       readonly branch: string | null;
       readonly worktreePath: string | null;
       readonly recencyAt: string;
+      readonly thread: EnvironmentThreadShell;
     }
   | {
       readonly type: "project";
@@ -136,6 +137,7 @@ export function buildNavigationCommandResults(input: {
       branch: thread.branch,
       worktreePath: thread.worktreePath,
       recencyAt: threadRecencyAt,
+      thread,
     });
   }
 
