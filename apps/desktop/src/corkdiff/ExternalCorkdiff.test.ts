@@ -570,6 +570,19 @@ describe("ExternalCorkdiffManager", () => {
     expect(run).toHaveBeenCalledTimes(4);
   });
 
+  it("transfers refresh ownership only after the newer connection succeeds", () => {
+    const manager = new ExternalCorkdiffManager(vi.fn(), {});
+    const firstGeneration = manager.beginOpenRequest("thread-1");
+    expect(manager.claimCredentialRefreshOwnership("thread-1", firstGeneration)).toBe(true);
+
+    const newerGeneration = manager.beginOpenRequest("thread-1");
+    expect(manager.isCredentialRefreshOwner("thread-1", firstGeneration)).toBe(true);
+    expect(manager.claimCredentialRefreshOwnership("thread-1", newerGeneration)).toBe(true);
+    expect(manager.isCredentialRefreshOwner("thread-1", firstGeneration)).toBe(false);
+    expect(manager.isCredentialRefreshOwner("thread-1", newerGeneration)).toBe(true);
+    expect(manager.claimCredentialRefreshOwnership("thread-1", firstGeneration)).toBe(false);
+  });
+
   it("keeps an expired managed Ghostty focusable while credential replacement is pending", async () => {
     const className = createCorkdiffGhosttyClassName("thread-1");
     const liveClient = JSON.stringify([

@@ -317,6 +317,7 @@ export class ExternalCorkdiffManager {
   >();
   private readonly adoptionChains = new Map<string, Promise<ExternalCorkdiffOpenResult | null>>();
   private readonly openRequestGenerationByThread = new Map<string, number>();
+  private readonly credentialRefreshOwnerByThread = new Map<string, number>();
   private nextSessionGeneration = 0;
   private readonly run: RunCommand;
   private readonly runtimeEnv: NodeJS.ProcessEnv;
@@ -340,6 +341,17 @@ export class ExternalCorkdiffManager {
 
   isOpenRequestCurrent(threadId: string, generation: number): boolean {
     return this.openRequestGenerationByThread.get(threadId) === generation;
+  }
+
+  claimCredentialRefreshOwnership(threadId: string, generation: number): boolean {
+    const current = this.credentialRefreshOwnerByThread.get(threadId);
+    if (current !== undefined && current > generation) return false;
+    this.credentialRefreshOwnerByThread.set(threadId, generation);
+    return true;
+  }
+
+  isCredentialRefreshOwner(threadId: string, generation: number): boolean {
+    return this.credentialRefreshOwnerByThread.get(threadId) === generation;
   }
 
   private async findClients(className: string): Promise<CorkdiffClient[]> {
@@ -721,8 +733,6 @@ export const make = Effect.gen(function* () {
   const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth;
   const httpClient = yield* HttpClient.HttpClient;
   const manager = new ExternalCorkdiffManager(runCommand, process.env);
-  const refreshGenerationByThread = new Map<string, number>();
-
   const resolveConnection = Effect.fn("desktop.corkdiff.resolveConnection")(function* () {
     const primary = yield* pool.primary;
     const config = yield* primary.currentConfig;
@@ -755,12 +765,15 @@ export const make = Effect.gen(function* () {
   });
 
   const scheduleCredentialRefresh = Effect.fn("desktop.corkdiff.scheduleCredentialRefresh")(
-    function* (input: ExternalCorkdiffOpenInput, initialExpiresAtMs: number) {
-      const generation = (refreshGenerationByThread.get(input.threadId) ?? 0) + 1;
-      refreshGenerationByThread.set(input.threadId, generation);
+    function* (
+      input: ExternalCorkdiffOpenInput,
+      initialExpiresAtMs: number,
+      openRequestGeneration: number,
+    ) {
+      if (!manager.claimCredentialRefreshOwnership(input.threadId, openRequestGeneration)) return;
       yield* runExternalCorkdiffCredentialRefreshLoop({
         initialExpiresAtMs,
-        isCurrent: () => refreshGenerationByThread.get(input.threadId) === generation,
+        isCurrent: () => manager.isCredentialRefreshOwner(input.threadId, openRequestGeneration),
         resolveConnection,
         refresh: (connection) => manager.refreshCredential(input.threadId, connection),
       }).pipe(Effect.forkDetach);
@@ -783,9 +796,7 @@ export const make = Effect.gen(function* () {
       catch: (cause) => new ExternalCorkdiffCommandError({ operation: "inspect", cause }),
     });
     if (adopted !== null) {
-      if (manager.isOpenRequestCurrent(input.threadId, openRequestGeneration)) {
-        yield* scheduleCredentialRefresh(input, connection.expiresAtMs);
-      }
+      yield* scheduleCredentialRefresh(input, connection.expiresAtMs, openRequestGeneration);
       return adopted;
     }
     if (!manager.isOpenRequestCurrent(input.threadId, openRequestGeneration)) {
@@ -799,7 +810,7 @@ export const make = Effect.gen(function* () {
       try: () => manager.launch(input, connection),
       catch: (cause) => new ExternalCorkdiffCommandError({ operation: "launch", cause }),
     });
-    yield* scheduleCredentialRefresh(input, connection.expiresAtMs);
+    yield* scheduleCredentialRefresh(input, connection.expiresAtMs, openRequestGeneration);
     return result;
   });
 
