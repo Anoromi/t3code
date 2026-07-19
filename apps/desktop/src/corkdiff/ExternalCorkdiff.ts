@@ -311,7 +311,11 @@ export const runExternalCorkdiffCredentialRefreshLoop = Effect.fn(
 export class ExternalCorkdiffManager {
   private readonly sessions = new Map<string, ExternalCorkdiffSession>();
   private readonly inFlight = new Map<string, Promise<ExternalCorkdiffOpenResult>>();
-  private readonly focusInFlight = new Map<string, Promise<ExternalCorkdiffOpenResult | null>>();
+  private readonly inspectionInFlight = new Map<
+    string,
+    Promise<ExternalCorkdiffOpenResult | null>
+  >();
+  private readonly adoptionChains = new Map<string, Promise<ExternalCorkdiffOpenResult | null>>();
   private nextSessionGeneration = 0;
   private readonly run: RunCommand;
   private readonly runtimeEnv: NodeJS.ProcessEnv;
@@ -414,17 +418,35 @@ export class ExternalCorkdiffManager {
     threadId: string,
     connection?: ExternalCorkdiffConnection,
   ): Promise<ExternalCorkdiffOpenResult | null> {
-    const operationKey = `${threadId}\0${connection ? "adopt" : "inspect"}`;
-    const pendingFocus = this.focusInFlight.get(operationKey);
-    if (pendingFocus !== undefined) return pendingFocus;
+    if (connection) {
+      const previous = this.adoptionChains.get(threadId);
+      const adoptionPromise = (previous ?? Promise.resolve(null))
+        .catch(() => null)
+        .then(() =>
+          this.focusExistingOnce(threadId, connection, {
+            preserveManagedSessionOnFailure: previous !== undefined,
+          }),
+        );
+      this.adoptionChains.set(threadId, adoptionPromise);
+      try {
+        return await adoptionPromise;
+      } finally {
+        if (this.adoptionChains.get(threadId) === adoptionPromise) {
+          this.adoptionChains.delete(threadId);
+        }
+      }
+    }
 
-    const focusPromise = this.focusExistingOnce(threadId, connection);
-    this.focusInFlight.set(operationKey, focusPromise);
+    const pendingInspection = this.inspectionInFlight.get(threadId);
+    if (pendingInspection !== undefined) return pendingInspection;
+
+    const focusPromise = this.focusExistingOnce(threadId);
+    this.inspectionInFlight.set(threadId, focusPromise);
     try {
       return await focusPromise;
     } finally {
-      if (this.focusInFlight.get(operationKey) === focusPromise) {
-        this.focusInFlight.delete(operationKey);
+      if (this.inspectionInFlight.get(threadId) === focusPromise) {
+        this.inspectionInFlight.delete(threadId);
       }
     }
   }
@@ -432,6 +454,7 @@ export class ExternalCorkdiffManager {
   private async focusExistingOnce(
     threadId: string,
     connection?: ExternalCorkdiffConnection,
+    options: { readonly preserveManagedSessionOnFailure?: boolean } = {},
   ): Promise<ExternalCorkdiffOpenResult | null> {
     const pending = this.inFlight.get(threadId);
     if (pending !== undefined) {
@@ -461,11 +484,15 @@ export class ExternalCorkdiffManager {
           "--remote-expr",
           buildCorkdiffConnectionUpdateExpression(connection),
         ]);
-      } catch {
+      } catch (cause) {
         if (
           inspectedSession !== undefined &&
           this.sessions.get(threadId)?.generation !== inspectedSession.generation
         ) {
+          return null;
+        }
+        if (inspectedSession !== undefined && options.preserveManagedSessionOnFailure) {
+          await this.resolveCredentialRefreshFailure(threadId, inspectedSession, cause);
           return null;
         }
         await this.closeClient(className, client);
@@ -485,6 +512,14 @@ export class ExternalCorkdiffManager {
         };
         this.sessions.set(threadId, session);
       } else {
+        if (inspectedSession !== undefined && options.preserveManagedSessionOnFailure) {
+          await this.resolveCredentialRefreshFailure(
+            threadId,
+            inspectedSession,
+            new Error(updateResult.stderr.trim() || "Failed to refresh Corkdiff credentials."),
+          );
+          return null;
+        }
         session = undefined;
       }
     }

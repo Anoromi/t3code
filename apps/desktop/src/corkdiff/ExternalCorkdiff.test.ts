@@ -420,7 +420,7 @@ describe("ExternalCorkdiffManager", () => {
     expect(run).not.toHaveBeenCalledWith("hyprctl", expect.arrayContaining(["closewindow"]));
   });
 
-  it("coalesces concurrent adoption before a failed duplicate can close the viewer", async () => {
+  it("preserves an adopted viewer when a queued connection refresh fails", async () => {
     let resolveRefresh!: (result: { code: number; stdout: string; stderr: string }) => void;
     const refreshResult = new Promise<{ code: number; stdout: string; stderr: string }>(
       (resolve) => {
@@ -437,24 +437,84 @@ describe("ExternalCorkdiffManager", () => {
       .mockReturnValueOnce(refreshResult)
       .mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" })
       .mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" })
-      .mockRejectedValueOnce(new Error("duplicate refresh must not run"));
+      .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" })
+      .mockRejectedValueOnce(new Error("newer refresh failed"))
+      .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" });
     const manager = new ExternalCorkdiffManager(run, {
       XDG_RUNTIME_DIR: "/run/user/1000",
     });
-    const connection = {
+    const firstConnection = {
       serverUrl: "ws://127.0.0.1:3773/ws",
-      token: "fresh-ticket",
+      token: "first-ticket",
       expiresAtMs: FUTURE_TICKET_EXPIRY,
     };
+    const secondConnection = {
+      ...firstConnection,
+      token: "newer-ticket",
+      expiresAtMs: FUTURE_TICKET_EXPIRY + 1_000,
+    };
 
-    const first = manager.focusExisting("thread-1", connection);
+    const first = manager.focusExisting("thread-1", firstConnection);
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
-    const second = manager.focusExisting("thread-1", connection);
+    const second = manager.focusExisting("thread-1", secondConnection);
     resolveRefresh({ code: 0, stdout: "1", stderr: "" });
 
     await expect(first).resolves.toEqual({ workspaceId: 104, reused: true });
+    await expect(second).rejects.toThrow("newer refresh failed");
+    await expect(manager.focusExisting("thread-1")).resolves.toBeNull();
+    expect(run).toHaveBeenCalledTimes(8);
+    expect(run).not.toHaveBeenCalledWith("hyprctl", expect.arrayContaining(["closewindow"]));
+  });
+
+  it("serializes concurrent adoption and applies the newest supplied connection", async () => {
+    let resolveFirstRefresh!: (result: { code: number; stdout: string; stderr: string }) => void;
+    const firstRefreshResult = new Promise<{ code: number; stdout: string; stderr: string }>(
+      (resolve) => {
+        resolveFirstRefresh = resolve;
+      },
+    );
+    const className = createCorkdiffGhosttyClassName("thread-1");
+    const liveClient = JSON.stringify([
+      { address: "0x104b", class: className, workspace: { id: 104 } },
+    ]);
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" })
+      .mockReturnValueOnce(firstRefreshResult)
+      .mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: "1", stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" });
+    const manager = new ExternalCorkdiffManager(run, {
+      XDG_RUNTIME_DIR: "/run/user/1000",
+    });
+    const firstConnection = {
+      serverUrl: "ws://127.0.0.1:3773/ws",
+      token: "first-ticket",
+      expiresAtMs: FUTURE_TICKET_EXPIRY,
+    };
+    const newestConnection = {
+      ...firstConnection,
+      token: "newest-ticket",
+      expiresAtMs: FUTURE_TICKET_EXPIRY + 1_000,
+    };
+
+    const first = manager.focusExisting("thread-1", firstConnection);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    const second = manager.focusExisting("thread-1", newestConnection);
+    resolveFirstRefresh({ code: 0, stdout: "1", stderr: "" });
+
+    await expect(first).resolves.toEqual({ workspaceId: 104, reused: true });
     await expect(second).resolves.toEqual({ workspaceId: 104, reused: true });
-    expect(run).toHaveBeenCalledTimes(4);
+    expect(run).toHaveBeenNthCalledWith(
+      6,
+      "nvim",
+      expect.arrayContaining(["--remote-expr", expect.stringContaining("newest-ticket")]),
+    );
+    expect(run).toHaveBeenCalledTimes(8);
     expect(run).not.toHaveBeenCalledWith("hyprctl", expect.arrayContaining(["closewindow"]));
   });
 
