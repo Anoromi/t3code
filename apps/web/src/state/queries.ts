@@ -36,7 +36,7 @@ export interface ThreadDetailView {
   readonly isDeleted: boolean;
 }
 
-function useDebouncedValue<A>(value: A, delayMs: number): A {
+export function useDebouncedValue<A>(value: A, delayMs: number): A {
   const [debounced, setDebounced] = useState(value);
 
   useEffect(() => {
