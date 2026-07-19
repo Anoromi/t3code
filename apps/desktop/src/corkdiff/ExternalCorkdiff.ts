@@ -72,6 +72,7 @@ interface ExternalCorkdiffConnection {
 }
 
 interface ExternalCorkdiffSession {
+  readonly generation: number;
   readonly className: string;
   readonly nvimServerAddress: string;
   readonly workspaceId: number;
@@ -301,6 +302,7 @@ export const runExternalCorkdiffCredentialRefreshLoop = Effect.fn(
 export class ExternalCorkdiffManager {
   private readonly sessions = new Map<string, ExternalCorkdiffSession>();
   private readonly inFlight = new Map<string, Promise<ExternalCorkdiffOpenResult>>();
+  private nextSessionGeneration = 0;
   private readonly run: RunCommand;
   private readonly runtimeEnv: NodeJS.ProcessEnv;
   private readonly readiness: { readonly attempts: number; readonly delayMs: number };
@@ -324,6 +326,18 @@ export class ExternalCorkdiffManager {
     return Array.isArray(parsed)
       ? findClientForClass(parsed as readonly HyprClient[], className)
       : null;
+  }
+
+  private updateSessionIfCurrent(
+    threadId: string,
+    generation: number,
+    update: (session: ExternalCorkdiffSession) => ExternalCorkdiffSession,
+  ): ExternalCorkdiffSession | null {
+    const current = this.sessions.get(threadId);
+    if (current?.generation !== generation) return null;
+    const next = update(current);
+    this.sessions.set(threadId, next);
+    return next;
   }
 
   private async waitForClient(className: string): Promise<CorkdiffClient> {
@@ -375,14 +389,23 @@ export class ExternalCorkdiffManager {
     if (connection) {
       const nvimServerAddress =
         session?.nvimServerAddress ?? createCorkdiffNvimServerAddress(threadId, this.runtimeEnv);
-      const updateResult = await this.run("nvim", [
-        "--server",
-        nvimServerAddress,
-        "--remote-expr",
-        buildCorkdiffConnectionUpdateExpression(connection),
-      ]);
+      let updateResult: CommandResult;
+      try {
+        updateResult = await this.run("nvim", [
+          "--server",
+          nvimServerAddress,
+          "--remote-expr",
+          buildCorkdiffConnectionUpdateExpression(connection),
+        ]);
+      } catch {
+        await this.closeClient(className, client);
+        this.sessions.delete(threadId);
+        return null;
+      }
       if (updateResult.code === 0) {
+        const generation = session?.generation ?? ++this.nextSessionGeneration;
         session = {
+          generation,
           className,
           nvimServerAddress,
           workspaceId: client.workspaceId,
@@ -427,7 +450,11 @@ export class ExternalCorkdiffManager {
       }
       throw new Error(focusWindowResult.stderr.trim() || "Failed to focus Corkdiff.");
     }
-    this.sessions.set(threadId, { ...session, className, workspaceId: client.workspaceId });
+    this.updateSessionIfCurrent(threadId, session.generation, (current) => ({
+      ...current,
+      className,
+      workspaceId: client.workspaceId,
+    }));
     return { workspaceId: client.workspaceId, reused: true };
   }
 
@@ -463,25 +490,37 @@ export class ExternalCorkdiffManager {
       this.sessions.delete(threadId);
       return "closed";
     }
-    const updateResult = await this.run("nvim", [
-      "--server",
-      session.nvimServerAddress,
-      "--remote-expr",
-      buildCorkdiffConnectionUpdateExpression(connection),
-    ]);
+    let updateResult: CommandResult;
+    try {
+      updateResult = await this.run("nvim", [
+        "--server",
+        session.nvimServerAddress,
+        "--remote-expr",
+        buildCorkdiffConnectionUpdateExpression(connection),
+      ]);
+    } catch (error) {
+      this.updateSessionIfCurrent(threadId, session.generation, (current) => ({
+        ...current,
+        credentialRefreshFailed: true,
+      }));
+      throw error;
+    }
     if (updateResult.code !== 0) {
       if ((await this.findClient(session.className)) === null) {
         this.sessions.delete(threadId);
         return "closed";
       }
-      this.sessions.set(threadId, { ...session, credentialRefreshFailed: true });
+      this.updateSessionIfCurrent(threadId, session.generation, (current) => ({
+        ...current,
+        credentialRefreshFailed: true,
+      }));
       throw new Error(updateResult.stderr.trim() || "Failed to refresh Corkdiff credentials.");
     }
-    this.sessions.set(threadId, {
-      ...session,
+    this.updateSessionIfCurrent(threadId, session.generation, (current) => ({
+      ...current,
       workspaceId: client.workspaceId,
       credentialRefreshFailed: false,
-    });
+    }));
     return "refreshed";
   }
 
@@ -520,6 +559,7 @@ export class ExternalCorkdiffManager {
     }
     const client = await this.waitForClient(className);
     this.sessions.set(input.threadId, {
+      generation: ++this.nextSessionGeneration,
       className,
       nvimServerAddress,
       workspaceId: client.workspaceId,

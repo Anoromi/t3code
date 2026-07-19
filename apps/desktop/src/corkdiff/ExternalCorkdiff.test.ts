@@ -499,11 +499,10 @@ describe("ExternalCorkdiffManager", () => {
       .mockResolvedValueOnce({ code: 0, stdout: "108\n", stderr: "" })
       .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" })
       .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" })
-      .mockResolvedValueOnce({ code: 1, stdout: "", stderr: "nvim rpc unavailable" })
+      .mockRejectedValueOnce(new Error("nvim timed out"))
       .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" })
       .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" })
-      .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" })
-      .mockResolvedValueOnce({ code: 1, stdout: "", stderr: "nvim rpc unavailable" })
+      .mockRejectedValueOnce(new Error("nvim timed out again"))
       .mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" })
       .mockResolvedValueOnce({ code: 0, stdout: "[]", stderr: "" });
     const manager = new ExternalCorkdiffManager(run, {}, { attempts: 1, delayMs: 0 });
@@ -520,7 +519,7 @@ describe("ExternalCorkdiffManager", () => {
         token: "fresh-ticket",
         expiresAtMs: FUTURE_TICKET_EXPIRY,
       }),
-    ).rejects.toThrow("nvim rpc unavailable");
+    ).rejects.toThrow("nvim timed out");
     await expect(manager.focusExisting(input.threadId)).resolves.toBeNull();
     await expect(
       manager.focusExisting(input.threadId, {
@@ -530,6 +529,52 @@ describe("ExternalCorkdiffManager", () => {
       }),
     ).resolves.toBeNull();
     expect(run).toHaveBeenCalledWith("hyprctl", ["dispatch", "closewindow", "address:0x108"]);
+  });
+
+  it("preserves a refresh failure recorded while the managed window is being focused", async () => {
+    let resolveWorkspace!: (result: { code: number; stdout: string; stderr: string }) => void;
+    const workspaceResult = new Promise<{ code: number; stdout: string; stderr: string }>(
+      (resolve) => {
+        resolveWorkspace = resolve;
+      },
+    );
+    const className = createCorkdiffGhosttyClassName("thread-1");
+    const liveClient = JSON.stringify([
+      { address: "0x109", class: className, workspace: { id: 109 } },
+    ]);
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce({ code: 0, stdout: "109\n", stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" })
+      .mockReturnValueOnce(workspaceResult)
+      .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" })
+      .mockResolvedValueOnce({ code: 1, stdout: "", stderr: "nvim rpc unavailable" })
+      .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" });
+    const manager = new ExternalCorkdiffManager(run, {});
+    const input = { cwd: "/tmp/project", threadId: "thread-1" };
+    await manager.launch(input, {
+      serverUrl: "ws://127.0.0.1:3773/ws",
+      token: "old-ticket",
+      expiresAtMs: FUTURE_TICKET_EXPIRY,
+    });
+
+    const focus = manager.focusExisting(input.threadId);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(4));
+    await expect(
+      manager.refreshCredential(input.threadId, {
+        serverUrl: "ws://127.0.0.1:3773/ws",
+        token: "fresh-ticket",
+        expiresAtMs: FUTURE_TICKET_EXPIRY,
+      }),
+    ).rejects.toThrow("nvim rpc unavailable");
+    resolveWorkspace({ code: 0, stdout: "", stderr: "" });
+    await expect(focus).resolves.toEqual({ workspaceId: 109, reused: true });
+
+    await expect(manager.focusExisting(input.threadId)).resolves.toBeNull();
+    expect(run).toHaveBeenCalledTimes(9);
   });
 
   it("stops credential refresh when the managed window was closed", async () => {
