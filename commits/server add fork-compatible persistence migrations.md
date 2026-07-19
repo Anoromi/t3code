@@ -19,3 +19,7 @@ Preserve the fork's existing persistence additions while rebasing onto canonical
 ## Compatibility
 
 Migration 40 does not rewrite historical ledger rows. Legacy role-bearing auth credentials are intentionally invalidated during the upstream scope cutover because their capabilities cannot be inferred safely.
+
+## Reimplementation Sources
+
+This intent reimplements source commit `bd47655631` against canonical upstream migrations 31 and 32. Its focused scenarios are enumerated above and retained in the migration compatibility, contention, and isolated real-database tests.

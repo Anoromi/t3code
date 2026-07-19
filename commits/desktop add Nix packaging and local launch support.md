@@ -22,7 +22,7 @@ The desktop app can be built and installed from the flake, while a Home Manager 
 
 ## Reimplementation Sources
 
-This intent commit folds in `Fix local Electron sandbox startup`, `desktop harden Electron sandbox startup`, `desktop preserve local launch environment`, and the later sandbox/smoke capture fixes. Upstream's current macOS launcher identity and preload implementation remain canonical.
+This intent reimplements source commit `4a344903ed` and folds in sandbox and launch follow-ups `e4fcb5717c`, `23b4c5fc5e`, and `b3fe538052`. Capture commits `5653269749` and `c81f577a4a` supply the final sandbox selection, smoke cleanup/retry, and launch-environment behavior. Upstream's current macOS launcher identity and preload implementation remain canonical.
 
 ## Validation Coverage
 

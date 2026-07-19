@@ -15,3 +15,7 @@ Restore repository-local automation guidance and product context without replaci
 ## Expected Behavior
 
 Agents have the fork-specific safety guidance while upstream workflows and package-manager conventions remain canonical.
+
+## Reimplementation Sources
+
+This intent folds source commits `c1a9e90cb1` and `cc3d5d796e` into the pinned upstream guidance. Capture commit `67a8281348` supplied the missing provenance notes and is represented by this completed source/test ledger rather than application behavior.
