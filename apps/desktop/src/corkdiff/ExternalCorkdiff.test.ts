@@ -558,6 +558,8 @@ describe("ExternalCorkdiffManager", () => {
 
     await expect(newest).resolves.toEqual({ workspaceId: 104, reused: true });
     await expect(older).resolves.toEqual({ workspaceId: 104, reused: true });
+    expect(manager.isConnectionGenerationInstalled("thread-1", newestGeneration)).toBe(true);
+    expect(manager.isConnectionGenerationInstalled("thread-1", olderGeneration)).toBe(false);
     expect(run).toHaveBeenNthCalledWith(
       2,
       "nvim",

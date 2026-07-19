@@ -318,6 +318,7 @@ export class ExternalCorkdiffManager {
   private readonly adoptionChains = new Map<string, Promise<ExternalCorkdiffOpenResult | null>>();
   private readonly openRequestGenerationByThread = new Map<string, number>();
   private readonly credentialRefreshOwnerByThread = new Map<string, number>();
+  private readonly installedConnectionGenerationByThread = new Map<string, number>();
   private nextSessionGeneration = 0;
   private readonly run: RunCommand;
   private readonly runtimeEnv: NodeJS.ProcessEnv;
@@ -352,6 +353,10 @@ export class ExternalCorkdiffManager {
 
   isCredentialRefreshOwner(threadId: string, generation: number): boolean {
     return this.credentialRefreshOwnerByThread.get(threadId) === generation;
+  }
+
+  isConnectionGenerationInstalled(threadId: string, generation: number): boolean {
+    return this.installedConnectionGenerationByThread.get(threadId) === generation;
   }
 
   private async findClients(className: string): Promise<CorkdiffClient[]> {
@@ -455,6 +460,7 @@ export class ExternalCorkdiffManager {
         .then(() =>
           this.focusExistingOnce(threadId, connection, {
             preserveManagedSessionOnFailure: previous !== undefined,
+            ...(openRequestGeneration !== undefined ? { openRequestGeneration } : {}),
           }),
         );
       this.adoptionChains.set(threadId, adoptionPromise);
@@ -490,7 +496,10 @@ export class ExternalCorkdiffManager {
   private async focusExistingOnce(
     threadId: string,
     connection?: ExternalCorkdiffConnection,
-    options: { readonly preserveManagedSessionOnFailure?: boolean } = {},
+    options: {
+      readonly preserveManagedSessionOnFailure?: boolean;
+      readonly openRequestGeneration?: number;
+    } = {},
   ): Promise<ExternalCorkdiffOpenResult | null> {
     const pending = this.inFlight.get(threadId);
     if (pending !== undefined) {
@@ -547,6 +556,9 @@ export class ExternalCorkdiffManager {
           credentialRefreshFailed: false,
         };
         this.sessions.set(threadId, session);
+        if (options.openRequestGeneration !== undefined) {
+          this.installedConnectionGenerationByThread.set(threadId, options.openRequestGeneration);
+        }
       } else {
         if (inspectedSession !== undefined && options.preserveManagedSessionOnFailure) {
           await this.resolveCredentialRefreshFailure(
@@ -796,7 +808,9 @@ export const make = Effect.gen(function* () {
       catch: (cause) => new ExternalCorkdiffCommandError({ operation: "inspect", cause }),
     });
     if (adopted !== null) {
-      yield* scheduleCredentialRefresh(input, connection.expiresAtMs, openRequestGeneration);
+      if (manager.isConnectionGenerationInstalled(input.threadId, openRequestGeneration)) {
+        yield* scheduleCredentialRefresh(input, connection.expiresAtMs, openRequestGeneration);
+      }
       return adopted;
     }
     if (!manager.isOpenRequestCurrent(input.threadId, openRequestGeneration)) {
