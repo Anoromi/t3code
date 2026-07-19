@@ -602,7 +602,7 @@ forkDatabase("040_RepairForkMigrationCompatibility fork database", (it) => {
       assert.equal(projectColumns.has("worktree_group_titles_json"), true);
       assert.equal(threadColumns.has("fork_source_thread_id"), true);
       assert.equal(threadColumns.has("model"), false);
-      assert.deepEqual(latestTurn, [{ latestTurnId: null }]);
+      assert.deepEqual(latestTurn, [{ latestTurnId: "fork-turn" }]);
       assert.deepEqual(modelOptions, [{ optionType: "array" }]);
       assert.deepEqual(postRepairHyprnav, [{ hyprnav: "null" }]);
       assert.equal(repairedIndexes.length, 7);

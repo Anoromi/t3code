@@ -14,10 +14,8 @@ import { ensureProjectionProjectHyprnavColumns } from "./034_ProjectionProjectsH
 import { normalizeProjectionProjectHyprnavRows } from "./035_NormalizeProjectHyprnavScopes.ts";
 import { restoreInheritedProjectHyprnavNulls } from "./036_RestoreInheritedProjectHyprnavNulls.ts";
 import { ensureProviderInstanceIdProjectionColumns } from "./037_RepairProviderInstanceIdProjectionColumns.ts";
-import {
-  hasForkMigrationLedger,
-  repairProjectionThreadLatestTurnIds,
-} from "./038_RepairProjectionThreadLatestTurnIds.ts";
+import { hasForkMigrationLedger } from "./038_RepairProjectionThreadLatestTurnIds.ts";
+import { repairProjectionThreadLatestTurnIds } from "../Repairs/ProjectionThreadLatestTurnIds.ts";
 import { ensureProviderSessionRuntimeIndexes } from "./039_ProviderSessionRuntimeIndexes.ts";
 
 const requiredPairingColumns = [
