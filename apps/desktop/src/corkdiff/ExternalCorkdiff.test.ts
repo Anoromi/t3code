@@ -518,6 +518,58 @@ describe("ExternalCorkdiffManager", () => {
     expect(run).not.toHaveBeenCalledWith("hyprctl", expect.arrayContaining(["closewindow"]));
   });
 
+  it("discards an older connection that resolves after a newer open request", async () => {
+    let resolveNewestRefresh!: (result: { code: number; stdout: string; stderr: string }) => void;
+    const newestRefreshResult = new Promise<{ code: number; stdout: string; stderr: string }>(
+      (resolve) => {
+        resolveNewestRefresh = resolve;
+      },
+    );
+    const className = createCorkdiffGhosttyClassName("thread-1");
+    const liveClient = JSON.stringify([
+      { address: "0x104c", class: className, workspace: { id: 104 } },
+    ]);
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" })
+      .mockReturnValueOnce(newestRefreshResult)
+      .mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" });
+    const manager = new ExternalCorkdiffManager(run, {
+      XDG_RUNTIME_DIR: "/run/user/1000",
+    });
+    const olderGeneration = manager.beginOpenRequest("thread-1");
+    const newestGeneration = manager.beginOpenRequest("thread-1");
+    const newestConnection = {
+      serverUrl: "ws://new-backend:3773/ws",
+      token: "newest-ticket",
+      expiresAtMs: FUTURE_TICKET_EXPIRY,
+    };
+    const olderConnection = {
+      serverUrl: "ws://old-backend:3773/ws",
+      token: "older-ticket",
+      expiresAtMs: FUTURE_TICKET_EXPIRY - 1_000,
+    };
+
+    const newest = manager.focusExisting("thread-1", newestConnection, newestGeneration);
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    const older = manager.focusExisting("thread-1", olderConnection, olderGeneration);
+    resolveNewestRefresh({ code: 0, stdout: "1", stderr: "" });
+
+    await expect(newest).resolves.toEqual({ workspaceId: 104, reused: true });
+    await expect(older).resolves.toEqual({ workspaceId: 104, reused: true });
+    expect(run).toHaveBeenNthCalledWith(
+      2,
+      "nvim",
+      expect.arrayContaining(["--remote-expr", expect.stringContaining("newest-ticket")]),
+    );
+    expect(run).not.toHaveBeenCalledWith(
+      "nvim",
+      expect.arrayContaining(["--remote-expr", expect.stringContaining("older-ticket")]),
+    );
+    expect(run).toHaveBeenCalledTimes(4);
+  });
+
   it("keeps an expired managed Ghostty focusable while credential replacement is pending", async () => {
     const className = createCorkdiffGhosttyClassName("thread-1");
     const liveClient = JSON.stringify([

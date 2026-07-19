@@ -316,6 +316,7 @@ export class ExternalCorkdiffManager {
     Promise<ExternalCorkdiffOpenResult | null>
   >();
   private readonly adoptionChains = new Map<string, Promise<ExternalCorkdiffOpenResult | null>>();
+  private readonly openRequestGenerationByThread = new Map<string, number>();
   private nextSessionGeneration = 0;
   private readonly run: RunCommand;
   private readonly runtimeEnv: NodeJS.ProcessEnv;
@@ -329,6 +330,16 @@ export class ExternalCorkdiffManager {
     this.run = run;
     this.runtimeEnv = runtimeEnv;
     this.readiness = readiness;
+  }
+
+  beginOpenRequest(threadId: string): number {
+    const generation = (this.openRequestGenerationByThread.get(threadId) ?? 0) + 1;
+    this.openRequestGenerationByThread.set(threadId, generation);
+    return generation;
+  }
+
+  isOpenRequestCurrent(threadId: string, generation: number): boolean {
+    return this.openRequestGenerationByThread.get(threadId) === generation;
   }
 
   private async findClients(className: string): Promise<CorkdiffClient[]> {
@@ -417,8 +428,15 @@ export class ExternalCorkdiffManager {
   async focusExisting(
     threadId: string,
     connection?: ExternalCorkdiffConnection,
+    openRequestGeneration?: number,
   ): Promise<ExternalCorkdiffOpenResult | null> {
     if (connection) {
+      if (
+        openRequestGeneration !== undefined &&
+        !this.isOpenRequestCurrent(threadId, openRequestGeneration)
+      ) {
+        return this.focusExisting(threadId);
+      }
       const previous = this.adoptionChains.get(threadId);
       const adoptionPromise = (previous ?? Promise.resolve(null))
         .catch(() => null)
@@ -435,6 +453,12 @@ export class ExternalCorkdiffManager {
           this.adoptionChains.delete(threadId);
         }
       }
+    }
+
+    const pendingAdoption = this.adoptionChains.get(threadId);
+    if (pendingAdoption !== undefined) {
+      const adopted = await pendingAdoption.catch(() => null);
+      if (adopted !== null) return adopted;
     }
 
     const pendingInspection = this.inspectionInFlight.get(threadId);
@@ -752,14 +776,23 @@ export const make = Effect.gen(function* () {
     });
     if (existing !== null) return existing;
 
+    const openRequestGeneration = manager.beginOpenRequest(input.threadId);
     const connection = yield* resolveConnection();
     const adopted = yield* Effect.tryPromise({
-      try: () => manager.focusExisting(input.threadId, connection),
+      try: () => manager.focusExisting(input.threadId, connection, openRequestGeneration),
       catch: (cause) => new ExternalCorkdiffCommandError({ operation: "inspect", cause }),
     });
     if (adopted !== null) {
-      yield* scheduleCredentialRefresh(input, connection.expiresAtMs);
+      if (manager.isOpenRequestCurrent(input.threadId, openRequestGeneration)) {
+        yield* scheduleCredentialRefresh(input, connection.expiresAtMs);
+      }
       return adopted;
+    }
+    if (!manager.isOpenRequestCurrent(input.threadId, openRequestGeneration)) {
+      return yield* new ExternalCorkdiffCommandError({
+        operation: "connection",
+        cause: new Error("External Corkdiff open request was superseded."),
+      });
     }
 
     const result = yield* Effect.tryPromise({
