@@ -489,6 +489,49 @@ describe("ExternalCorkdiffManager", () => {
     expect(run).toHaveBeenCalledTimes(4);
   });
 
+  it("replaces a managed Ghostty after its live Neovim endpoint rejects refresh", async () => {
+    const className = createCorkdiffGhosttyClassName("thread-1");
+    const liveClient = JSON.stringify([
+      { address: "0x108", class: className, workspace: { id: 108 } },
+    ]);
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce({ code: 0, stdout: "108\n", stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" })
+      .mockResolvedValueOnce({ code: 1, stdout: "", stderr: "nvim rpc unavailable" })
+      .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: liveClient, stderr: "" })
+      .mockResolvedValueOnce({ code: 1, stdout: "", stderr: "nvim rpc unavailable" })
+      .mockResolvedValueOnce({ code: 0, stdout: "", stderr: "" })
+      .mockResolvedValueOnce({ code: 0, stdout: "[]", stderr: "" });
+    const manager = new ExternalCorkdiffManager(run, {}, { attempts: 1, delayMs: 0 });
+    const input = { cwd: "/tmp/project", threadId: "thread-1" };
+    await manager.launch(input, {
+      serverUrl: "ws://127.0.0.1:3773/ws",
+      token: "old-ticket",
+      expiresAtMs: FUTURE_TICKET_EXPIRY,
+    });
+
+    await expect(
+      manager.refreshCredential(input.threadId, {
+        serverUrl: "ws://127.0.0.1:3773/ws",
+        token: "fresh-ticket",
+        expiresAtMs: FUTURE_TICKET_EXPIRY,
+      }),
+    ).rejects.toThrow("nvim rpc unavailable");
+    await expect(manager.focusExisting(input.threadId)).resolves.toBeNull();
+    await expect(
+      manager.focusExisting(input.threadId, {
+        serverUrl: "ws://127.0.0.1:3773/ws",
+        token: "newest-ticket",
+        expiresAtMs: FUTURE_TICKET_EXPIRY,
+      }),
+    ).resolves.toBeNull();
+    expect(run).toHaveBeenCalledWith("hyprctl", ["dispatch", "closewindow", "address:0x108"]);
+  });
+
   it("stops credential refresh when the managed window was closed", async () => {
     const className = createCorkdiffGhosttyClassName("thread-1");
     const run = vi

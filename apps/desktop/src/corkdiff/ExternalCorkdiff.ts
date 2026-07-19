@@ -75,6 +75,7 @@ interface ExternalCorkdiffSession {
   readonly className: string;
   readonly nvimServerAddress: string;
   readonly workspaceId: number;
+  readonly credentialRefreshFailed: boolean;
 }
 
 export type ExternalCorkdiffCredentialRefreshResult = "refreshed" | "closed";
@@ -385,12 +386,14 @@ export class ExternalCorkdiffManager {
           className,
           nvimServerAddress,
           workspaceId: client.workspaceId,
+          credentialRefreshFailed: false,
         };
         this.sessions.set(threadId, session);
       } else {
         session = undefined;
       }
     }
+    if (session?.credentialRefreshFailed === true && !connection) return null;
     if (session === undefined) {
       if (!connection) return null;
       await this.closeClient(className, client);
@@ -471,11 +474,13 @@ export class ExternalCorkdiffManager {
         this.sessions.delete(threadId);
         return "closed";
       }
+      this.sessions.set(threadId, { ...session, credentialRefreshFailed: true });
       throw new Error(updateResult.stderr.trim() || "Failed to refresh Corkdiff credentials.");
     }
     this.sessions.set(threadId, {
       ...session,
       workspaceId: client.workspaceId,
+      credentialRefreshFailed: false,
     });
     return "refreshed";
   }
@@ -518,6 +523,7 @@ export class ExternalCorkdiffManager {
       className,
       nvimServerAddress,
       workspaceId: client.workspaceId,
+      credentialRefreshFailed: false,
     });
     return { workspaceId: client.workspaceId, reused: false };
   }
