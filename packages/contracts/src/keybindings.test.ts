@@ -59,6 +59,12 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedCommandPalette.command, "commandPalette.toggle");
 
+    const parsedProjectActions = yield* decode(KeybindingRule, {
+      key: "mod+p",
+      command: "projectActions.toggle",
+    });
+    assert.strictEqual(parsedProjectActions.command, "projectActions.toggle");
+
     const parsedNavigationMenu = yield* decode(KeybindingRule, {
       key: "mod+e",
       command: "navigation.commandMenu",

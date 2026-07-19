@@ -14,6 +14,7 @@ import {
   modelPickerJumpCommandForIndex,
   modelPickerJumpIndexFromCommand,
   isOpenFavoriteEditorShortcut,
+  isProjectActionsShortcut,
   isTerminalClearShortcut,
   isTerminalCloseShortcut,
   isTerminalNewShortcut,
@@ -116,6 +117,11 @@ const DEFAULT_BINDINGS = compile([
   {
     shortcut: modShortcut("k"),
     command: "commandPalette.toggle",
+    whenAst: whenNot(whenIdentifier("terminalFocus")),
+  },
+  {
+    shortcut: modShortcut("p"),
+    command: "projectActions.toggle",
     whenAst: whenNot(whenIdentifier("terminalFocus")),
   },
   {
@@ -333,6 +339,10 @@ describe("shortcutLabelForCommand", () => {
       "⌘K",
     );
     assert.strictEqual(
+      shortcutLabelForCommand(DEFAULT_BINDINGS, "projectActions.toggle", "MacIntel"),
+      "⌘P",
+    );
+    assert.strictEqual(
       shortcutLabelForCommand(DEFAULT_BINDINGS, "navigation.commandMenu", "MacIntel"),
       "⌘E",
     );
@@ -400,6 +410,23 @@ describe("shortcutLabelForCommand", () => {
         context: { terminalFocus: true },
       }),
       "Ctrl+D",
+    );
+  });
+});
+
+describe("isProjectActionsShortcut", () => {
+  it("matches Mod+P outside terminal focus", () => {
+    assert.isTrue(
+      isProjectActionsShortcut(event({ key: "p", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+    );
+    assert.isFalse(
+      isProjectActionsShortcut(event({ key: "p", ctrlKey: true }), DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
     );
   });
 });

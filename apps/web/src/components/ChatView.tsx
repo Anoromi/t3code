@@ -113,8 +113,7 @@ import {
 } from "../types";
 import { useTheme } from "../hooks/useTheme";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
-import { isCommandPaletteOpen } from "../commandPaletteContext";
-import { isNavigationCommandMenuOpen } from "../navigationCommandMenu";
+import { isAnyCommandSurfaceOpen, isCommandSurfaceOpen } from "../commandSurface";
 import {
   buildTemporaryWorktreeBranchName,
   deriveLocalBranchNameFromRemoteRef,
@@ -140,6 +139,12 @@ import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 import { RightPanelTabs } from "./RightPanelTabs";
 import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 import { BranchToolbar } from "./BranchToolbar";
+import { ProjectActionsPanel } from "./ProjectActionsPanel";
+import {
+  resolveOpenProjectActionsShortcutDisposition,
+  type GitActionRequest,
+  type GitActionRequestKind,
+} from "./ProjectActionsPanel.logic";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
@@ -2284,6 +2289,14 @@ function ChatViewContent(props: ChatViewProps) {
   );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
+  const [projectActionsOpen, setProjectActionsOpen] = useState(false);
+  const [requestedGitAction, setRequestedGitAction] = useState<GitActionRequest | null>(null);
+  const requestGitAction = useCallback((action: GitActionRequestKind) => {
+    setRequestedGitAction({ requestId: randomHex(12), action });
+  }, []);
+  const handleRequestedGitAction = useCallback((requestId: string) => {
+    setRequestedGitAction((current) => (current?.requestId === requestId ? null : current));
+  }, []);
   // Prefer an instance-id match so a custom Codex instance (e.g.
   // `codex_personal`) surfaces its own status/message in the banner rather
   // than the default Codex's. Falls back to first-match-by-kind when no
@@ -3910,10 +3923,29 @@ function ChatViewContent(props: ChatViewProps) {
 
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
-      if (!activeThreadId || isCommandPaletteOpen() || isNavigationCommandMenuOpen()) {
+      if (!activeThreadId) {
         return;
       }
       const terminalFocusOwner = getTerminalFocusOwner();
+      if (isCommandSurfaceOpen("project-actions")) {
+        const command = resolveShortcutCommand(event, keybindings, {
+          context: {
+            terminalFocus: false,
+            terminalOpen: Boolean(terminalUiState.terminalOpen),
+            modelPickerOpen: false,
+          },
+        });
+        const disposition = resolveOpenProjectActionsShortcutDisposition(command);
+        if (disposition !== "ignore") {
+          event.preventDefault();
+          event.stopPropagation();
+          if (disposition === "close") {
+            setProjectActionsOpen(false);
+          }
+        }
+        return;
+      }
+      if (isAnyCommandSurfaceOpen()) return;
       if (event.defaultPrevented && terminalFocusOwner === null) {
         return;
       }
@@ -3939,6 +3971,14 @@ function ChatViewContent(props: ChatViewProps) {
         context: shortcutContext,
       });
       if (!command) return;
+
+      if (command === "projectActions.toggle") {
+        if (!activeProject) return;
+        event.preventDefault();
+        event.stopPropagation();
+        setProjectActionsOpen(true);
+        return;
+      }
 
       if (command === "terminal.toggle") {
         event.preventDefault();
@@ -5504,6 +5544,8 @@ function ChatViewContent(props: ChatViewProps) {
             onAddProjectScript={saveProjectScript}
             onUpdateProjectScript={updateProjectScript}
             onDeleteProjectScript={deleteProjectScript}
+            requestedGitAction={requestedGitAction}
+            onRequestedGitActionHandled={handleRequestedGitAction}
           />
         </header>
 
@@ -5875,6 +5917,21 @@ function ChatViewContent(props: ChatViewProps) {
           onClose={closeExpandedImage}
         />
       )}
+      {activeProject ? (
+        <ProjectActionsPanel
+          availableEditors={
+            activeThread.environmentId === primaryEnvironmentId ? availableEditors : []
+          }
+          environmentId={activeThread.environmentId}
+          gitCwd={gitCwd}
+          keybindings={keybindings}
+          onOpenChange={setProjectActionsOpen}
+          onRequestGitAction={requestGitAction}
+          onRunProjectScript={runProjectScript}
+          open={projectActionsOpen}
+          scripts={activeProject.scripts}
+        />
+      ) : null}
     </div>
   );
 }

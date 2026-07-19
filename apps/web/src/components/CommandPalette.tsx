@@ -113,7 +113,7 @@ import { ProjectFavicon } from "./ProjectFavicon";
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { resolveShortcutCommand } from "../keybindings";
-import { isNavigationCommandMenuOpen } from "../navigationCommandMenu";
+import { isAnyCommandSurfaceOpen } from "../commandSurface";
 import {
   Command,
   CommandDialog,
@@ -394,7 +394,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.defaultPrevented) return;
-      if (isNavigationCommandMenuOpen()) return;
+      if (isAnyCommandSurfaceOpen("command-palette")) return;
       const command = resolveShortcutCommand(event, keybindings, {
         context: {
           terminalFocus: isTerminalFocused(),
@@ -1661,6 +1661,7 @@ function OpenCommandPaletteDialog(props: {
       aria-label="Command palette"
       className="overflow-hidden p-0"
       data-command-palette="true"
+      data-command-surface="command-palette"
       data-testid="command-palette"
       finalFocus={() => {
         composerHandleRef?.current?.focusAtEnd();
