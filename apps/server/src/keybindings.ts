@@ -190,7 +190,9 @@ function replaceTargetFromUpsertInput(input: ServerUpsertKeybindingInput): Keybi
     : { key: input.replace.key, command: input.replace.command, when: input.replace.when };
 }
 
-function keybindingRuleFromRemoveInput(input: ServerRemoveKeybindingInput): KeybindingRule {
+function keybindingRuleFromRemoveInput(
+  input: Pick<KeybindingRule, "key" | "command" | "when">,
+): KeybindingRule {
   return input.when === undefined
     ? { key: input.key, command: input.command }
     : { key: input.key, command: input.command, when: input.when };
@@ -727,6 +729,9 @@ const make = Effect.gen(function* () {
           const replaceTarget = replaceTargetFromUpsertInput(input);
           const nextConfig = [
             ...customConfig.filter((entry) => {
+              if (input.replaceAllForCommand === true) {
+                return entry.command !== rule.command;
+              }
               if (replaceTarget) {
                 return (
                   !isSameKeybindingRule(entry, replaceTarget) && !isSameKeybindingRule(entry, rule)
@@ -765,8 +770,12 @@ const make = Effect.gen(function* () {
       upsertSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const customConfig = yield* loadWritableCustomKeybindingsConfig();
-          const target = keybindingRuleFromRemoveInput(input);
-          const nextConfig = customConfig.filter((entry) => !isSameKeybindingRule(entry, target));
+          const nextConfig =
+            "all" in input
+              ? customConfig.filter((entry) => entry.command !== input.command)
+              : customConfig.filter(
+                  (entry) => !isSameKeybindingRule(entry, keybindingRuleFromRemoveInput(input)),
+                );
           yield* writeConfigAtomically(nextConfig);
           const nextResolved = mergeWithDefaultKeybindings(
             compileResolvedKeybindingsConfig(nextConfig),

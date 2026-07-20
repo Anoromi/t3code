@@ -39,6 +39,7 @@ import {
 } from "@t3tools/shared/model";
 import { CHAT_LIST_ANCHOR_OFFSET } from "@t3tools/shared/chatList";
 import { projectScriptCwd, projectScriptRuntimeEnv } from "@t3tools/shared/projectScripts";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { truncate } from "@t3tools/shared/String";
 import { nextTerminalId, resolveTerminalSessionLabel } from "@t3tools/shared/terminalLabels";
 import { Debouncer } from "@tanstack/react-pacer";
@@ -153,7 +154,10 @@ import { ChevronDownIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
 import { cn, randomHex } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
-import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
+import {
+  persistProjectScriptsWithKeybindingRollback,
+  projectScriptKeybindingMutation,
+} from "~/lib/projectScriptKeybindings";
 import { type NewProjectScriptInput } from "./ProjectScriptsControl";
 import {
   commandForProjectScript,
@@ -197,11 +201,7 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
-import {
-  primaryServerAvailableEditorsAtom,
-  primaryServerKeybindingsAtom,
-  serverEnvironment,
-} from "../state/server";
+import { primaryServerAvailableEditorsAtom, serverEnvironment } from "../state/server";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
@@ -1112,6 +1112,9 @@ function ChatViewContent(props: ChatViewProps) {
   const routeThreadKey = useMemo(() => scopedThreadKey(routeThreadRef), [routeThreadRef]);
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const upsertKeybinding = useAtomCommand(serverEnvironment.upsertKeybinding, {
+    reportFailure: false,
+  });
+  const removeKeybinding = useAtomCommand(serverEnvironment.removeKeybinding, {
     reportFailure: false,
   });
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
@@ -2296,7 +2299,8 @@ function ChatViewContent(props: ChatViewProps) {
           input: { cwd: gitStatusCwd },
         }),
   );
-  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const environmentServerConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  const keybindings = environmentServerConfig?.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS;
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
   const [projectActionsOpen, setProjectActionsOpen] = useState(false);
   const [requestedGitAction, setRequestedGitAction] = useState<GitActionRequest | null>(null);
@@ -2848,37 +2852,40 @@ function ChatViewContent(props: ChatViewProps) {
       keybinding?: string | null;
       keybindingCommand: KeybindingCommand;
     }): Promise<AtomCommandResult<void, unknown>> => {
-      const updateResult = mapAtomCommandResult(
-        await updateProject({
-          environmentId,
-          input: {
-            projectId: input.projectId,
-            scripts: input.nextScripts,
-          },
-        }),
-        () => undefined,
-      );
-      if (updateResult._tag === "Failure") {
-        return updateResult;
-      }
-
-      const keybindingRule = decodeProjectScriptKeybindingRule({
+      const keybindingMutation = projectScriptKeybindingMutation({
+        keybindings,
         keybinding: input.keybinding,
         command: input.keybindingCommand,
       });
 
-      if (isElectron && keybindingRule) {
-        return mapAtomCommandResult(
-          await upsertKeybinding({
+      const updateScripts = (scripts: ReadonlyArray<ProjectScript>) =>
+        updateProject({
+          environmentId,
+          input: { projectId: input.projectId, scripts },
+        }).then((result) => mapAtomCommandResult(result, () => undefined));
+      const mutateKeybinding = () => {
+        if (!isElectron || keybindingMutation.type === "none") {
+          return Promise.resolve(AsyncResult.success(undefined));
+        }
+        if (keybindingMutation.type === "upsert") {
+          return upsertKeybinding({
             environmentId,
-            input: keybindingRule,
-          }),
-          () => undefined,
-        );
-      }
-      return updateResult;
+            input: keybindingMutation.input,
+          }).then((result) => mapAtomCommandResult(result, () => undefined));
+        }
+        return removeKeybinding({
+          environmentId,
+          input: keybindingMutation.input,
+        }).then((result) => mapAtomCommandResult(result, () => undefined));
+      };
+
+      return persistProjectScriptsWithKeybindingRollback({
+        updateScripts: () => updateScripts(input.nextScripts),
+        mutateKeybinding,
+        rollbackScripts: () => updateScripts(input.previousScripts),
+      });
     },
-    [environmentId, updateProject, upsertKeybinding],
+    [environmentId, keybindings, removeKeybinding, updateProject, upsertKeybinding],
   );
   const saveProjectScript = useCallback(
     async (input: NewProjectScriptInput): Promise<AtomCommandResult<void, unknown>> => {
