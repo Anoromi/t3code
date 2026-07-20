@@ -1,5 +1,6 @@
 import {
   type DesktopHyprnavSyncInput,
+  EnvironmentId,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
   ProjectId,
   ThreadId,
@@ -737,20 +738,23 @@ describe("hyprnavRuntime", () => {
     }
   });
 
-  it("targets only matching primary-local active threads and resolves inheritance", () => {
+  it("targets threads using the runtime primary environment UUID, not the desktop bootstrap id", () => {
+    const primaryEnvironmentId = EnvironmentId.make("55d399e3-b31f-4111-b7dd-09ff93d9bb77");
     const project = {
-      environmentId: PRIMARY_LOCAL_ENVIRONMENT_ID,
+      environmentId: primaryEnvironmentId,
       id: ProjectId.make("project-1"),
       workspaceRoot: "/repo",
     };
     const thread = {
-      environmentId: PRIMARY_LOCAL_ENVIRONMENT_ID,
+      environmentId: primaryEnvironmentId,
       id: ThreadId.make("thread-1"),
       projectId: ProjectId.make("project-1"),
       title: "Thread",
       worktreePath: "/repo/worktree",
     };
-    expect(resolveActiveHyprnavSyncTarget({ project, thread } as never)).toEqual({
+    expect(
+      resolveActiveHyprnavSyncTarget({ primaryEnvironmentId, project, thread } as never),
+    ).toEqual({
       projectRoot: "/repo",
       worktreePath: "/repo/worktree",
       threadId: ThreadId.make("thread-1"),
@@ -758,9 +762,13 @@ describe("hyprnavRuntime", () => {
     });
     expect(
       resolveActiveHyprnavSyncTarget({
+        primaryEnvironmentId,
         project,
-        thread: { ...thread, environmentId: "remote" },
+        thread: { ...thread, environmentId: PRIMARY_LOCAL_ENVIRONMENT_ID },
       } as never),
+    ).toBeNull();
+    expect(
+      resolveActiveHyprnavSyncTarget({ primaryEnvironmentId: null, project, thread } as never),
     ).toBeNull();
     const defaults = { bindings: [] };
     expect(resolveEffectiveHyprnavSettings(null, defaults)).toBe(defaults);

@@ -5,6 +5,7 @@ import type {
   DesktopHyprnavSyncInput,
   DesktopHyprnavSyncResult,
   EditorId,
+  EnvironmentId,
   ProjectHyprnavOverride,
   ProjectHyprnavScope,
   ProjectHyprnavSettings,
@@ -297,10 +298,16 @@ export function resolveEffectiveHyprnavSettings(
 }
 
 export function resolveActiveHyprnavSyncTarget(input: {
+  readonly primaryEnvironmentId: EnvironmentId | null;
   readonly thread: EnvironmentThreadShell | null;
   readonly project: EnvironmentProject | null;
 }): ActiveHyprnavSyncTarget | null {
-  if (input.thread?.environmentId !== PRIMARY_LOCAL_ENVIRONMENT_ID) return null;
+  if (
+    input.primaryEnvironmentId === null ||
+    input.thread?.environmentId !== input.primaryEnvironmentId
+  ) {
+    return null;
+  }
   if (
     input.project?.environmentId !== input.thread.environmentId ||
     input.project.id !== input.thread.projectId

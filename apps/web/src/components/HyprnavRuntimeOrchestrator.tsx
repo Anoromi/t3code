@@ -21,6 +21,7 @@ import {
   resolveActiveHyprnavSyncTarget,
   resolveEffectiveHyprnavSettings,
 } from "../hyprnavRuntime";
+import { usePrimaryEnvironmentId } from "../state/environments";
 import { useProject, useThreadShell } from "../state/entities";
 import { primaryServerAvailableEditorsAtom } from "../state/server";
 import { toastManager } from "./ui/toast";
@@ -28,6 +29,7 @@ import { toastManager } from "./ui/toast";
 const HYPRNAV_BACKGROUND_RETRY_DELAY_MS = 5_000;
 
 export function HyprnavRuntimeOrchestrator({ threadRef }: { readonly threadRef: ScopedThreadRef }) {
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const thread = useThreadShell(threadRef);
   const project = useProject(
     thread ? scopeProjectRef(thread.environmentId, thread.projectId) : null,
@@ -39,8 +41,8 @@ export function HyprnavRuntimeOrchestrator({ threadRef }: { readonly threadRef: 
     [defaults, project?.hyprnav],
   );
   const target = useMemo(
-    () => resolveActiveHyprnavSyncTarget({ project, thread }),
-    [project, thread],
+    () => resolveActiveHyprnavSyncTarget({ primaryEnvironmentId, project, thread }),
+    [primaryEnvironmentId, project, thread],
   );
   const requestKey = createActiveHyprnavRequestKey({
     target,
