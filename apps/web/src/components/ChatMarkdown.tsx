@@ -736,7 +736,7 @@ function UncachedShikiCodeBlock({
   );
 }
 
-interface MarkdownFileLinkProps {
+export interface MarkdownFileLinkProps {
   href: string;
   targetPath: string;
   iconPath: string;
@@ -1004,7 +1004,7 @@ function MarkdownExternalLinkContent({
   );
 }
 
-const MarkdownFileLink = memo(function MarkdownFileLink({
+export const MarkdownFileLink = memo(function MarkdownFileLink({
   href,
   targetPath,
   iconPath,
@@ -1150,22 +1150,23 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       try {
         const clicked = await api.contextMenu.show(
           [
-            { id: "open", label: "Open in editor" },
             ...(onOpenInBrowser
               ? ([{ id: "open-in-browser", label: "Open in integrated browser" }] as const)
-              : []),
+              : threadRef && workspaceRelativePath
+                ? ([{ id: "open-in-preview", label: "Open in file preview" }] as const)
+                : []),
             { id: "copy-relative", label: "Copy relative path" },
             { id: "copy-full", label: "Copy full path" },
           ] as const,
           { x: event.clientX, y: event.clientY },
         );
 
-        if (clicked === "open") {
-          handleOpenInEditor();
-          return;
-        }
         if (clicked === "open-in-browser") {
           handleOpenInBrowser();
+          return;
+        }
+        if (clicked === "open-in-preview") {
+          handleOpenInFilePreview();
           return;
         }
         if (clicked === "copy-relative") {
@@ -1182,7 +1183,16 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
         );
       }
     },
-    [displayPath, handleCopy, handleOpenInBrowser, handleOpenInEditor, onOpenInBrowser, targetPath],
+    [
+      displayPath,
+      handleCopy,
+      handleOpenInBrowser,
+      handleOpenInFilePreview,
+      onOpenInBrowser,
+      targetPath,
+      threadRef,
+      workspaceRelativePath,
+    ],
   );
 
   return (
@@ -1196,11 +1206,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
             onClick={(event) => {
               event.preventDefault();
               event.stopPropagation();
-              if (onOpenInBrowser) {
-                handleOpenInBrowser();
-                return;
-              }
-              handleOpenInFilePreview();
+              handleOpenInEditor();
             }}
             onContextMenu={handleContextMenu}
           >
