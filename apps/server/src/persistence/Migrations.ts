@@ -9,8 +9,13 @@
  */
 
 import * as Migrator from "effect/unstable/sql/Migrator";
+import * as Cause from "effect/Cause";
+import type * as Duration from "effect/Duration";
 import * as Layer from "effect/Layer";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlError from "effect/unstable/sql/SqlError";
 
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
@@ -46,6 +51,17 @@ import Migration0030 from "./Migrations/030_ProjectionThreadShellArchiveIndexes.
 import Migration0031 from "./Migrations/031_AuthAuthorizationScopes.ts";
 import Migration0032 from "./Migrations/032_AuthPairingProofKeyThumbprint.ts";
 import Migration0033 from "./Migrations/033_ProjectionThreadsSettled.ts";
+import Migration0034 from "./Migrations/034_ProjectionThreadsForkOrigin.ts";
+import Migration0035 from "./Migrations/035_ProjectionProjectsHyprnavSettings.ts";
+import Migration0036 from "./Migrations/036_NormalizeProjectHyprnavScopes.ts";
+import Migration0037 from "./Migrations/037_RestoreInheritedProjectHyprnavNulls.ts";
+import Migration0038 from "./Migrations/038_RepairProviderInstanceIdProjectionColumns.ts";
+import Migration0039 from "./Migrations/039_RepairProjectionThreadLatestTurnIds.ts";
+import Migration0040 from "./Migrations/040_ProviderSessionRuntimeIndexes.ts";
+import Migration0041, {
+  prepareForkMigrationPrerequisites,
+} from "./Migrations/041_RepairForkMigrationCompatibility.ts";
+import { hasForkMigrationLedger } from "./Migrations/039_RepairProjectionThreadLatestTurnIds.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -91,6 +107,14 @@ export const migrationEntries = [
   [31, "AuthAuthorizationScopes", Migration0031],
   [32, "AuthPairingProofKeyThumbprint", Migration0032],
   [33, "ProjectionThreadsSettled", Migration0033],
+  [34, "ProjectionThreadsForkOrigin", Migration0034],
+  [35, "ProjectionProjectsHyprnavSettings", Migration0035],
+  [36, "NormalizeProjectHyprnavScopes", Migration0036],
+  [37, "RestoreInheritedProjectHyprnavNulls", Migration0037],
+  [38, "RepairProviderInstanceIdProjectionColumns", Migration0038],
+  [39, "RepairProjectionThreadLatestTurnIds", Migration0039],
+  [40, "ProviderSessionRuntimeIndexes", Migration0040],
+  [41, "RepairForkMigrationCompatibility", Migration0041],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>
@@ -108,9 +132,86 @@ export const makeMigrationLoader = (throughId?: number) =>
  */
 const run = Migrator.make({});
 
+const prepareForkCompatibility = Effect.fn("prepareForkCompatibility")(function* (
+  sql: SqlClient.SqlClient,
+) {
+  yield* sql`
+    UPDATE effect_sql_migrations
+    SET created_at = created_at
+    WHERE migration_id = (SELECT MIN(migration_id) FROM effect_sql_migrations)
+  `;
+  const compatibilityMigration = yield* sql<{ readonly exists: number }>`
+    SELECT EXISTS (
+      SELECT 1
+      FROM effect_sql_migrations
+      WHERE migration_id = 41
+    ) AS "exists"
+  `;
+  if (compatibilityMigration[0]?.exists !== 1 && (yield* hasForkMigrationLedger(sql))) {
+    yield* prepareForkMigrationPrerequisites(sql);
+  }
+});
+
+const prepareForkCompatibilityLocked = (sql: SqlClient.SqlClient) =>
+  Effect.acquireUseRelease(
+    sql`BEGIN IMMEDIATE`.unprepared,
+    () => prepareForkCompatibility(sql),
+    (_, exit) =>
+      (Exit.isSuccess(exit) ? sql`COMMIT`.unprepared : sql`ROLLBACK`.unprepared).pipe(Effect.orDie),
+  );
+
 export interface RunMigrationsOptions {
   readonly toMigrationInclusive?: number | undefined;
 }
+
+const SQLITE_BUSY_SNAPSHOT = 517;
+const MAX_SNAPSHOT_BUSY_RETRIES = 4;
+
+const isSqliteBusySnapshot = (error: unknown): boolean => {
+  if (SqlError.isSqlError(error)) {
+    return isSqliteBusySnapshot(error.reason.cause);
+  }
+  if (error instanceof Migrator.MigrationError) {
+    return isSqliteBusySnapshot(error.cause);
+  }
+  if (typeof error !== "object" || error === null) return false;
+
+  const sqliteError = error as {
+    readonly code?: unknown;
+    readonly errcode?: unknown;
+    readonly errno?: unknown;
+  };
+  return (
+    sqliteError.code === "SQLITE_BUSY_SNAPSHOT" ||
+    sqliteError.errcode === SQLITE_BUSY_SNAPSHOT ||
+    sqliteError.errno === SQLITE_BUSY_SNAPSHOT
+  );
+};
+
+const causeContainsSqliteBusySnapshot = (cause: Cause.Cause<unknown>): boolean =>
+  cause.reasons.some((reason) => {
+    if (Cause.isFailReason(reason)) return isSqliteBusySnapshot(reason.error);
+    if (Cause.isDieReason(reason)) return isSqliteBusySnapshot(reason.defect);
+    return false;
+  });
+
+export const retryOnSqliteBusySnapshot = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  retriesRemaining = MAX_SNAPSHOT_BUSY_RETRIES,
+  retryDelay: Duration.Input = "25 millis",
+): Effect.Effect<A, E, R> =>
+  effect.pipe(
+    Effect.catchCause((cause) => {
+      if (retriesRemaining === 0 || !causeContainsSqliteBusySnapshot(cause)) {
+        return Effect.failCause(cause);
+      }
+      return Effect.logWarning("Retrying migrations after concurrent SQLite snapshot update").pipe(
+        Effect.annotateLogs({ retriesRemaining }),
+        Effect.andThen(Effect.sleep(retryDelay)),
+        Effect.andThen(retryOnSqliteBusySnapshot(effect, retriesRemaining - 1, retryDelay)),
+      );
+    }),
+  );
 
 /**
  * Run all pending migrations.
@@ -122,9 +223,45 @@ export interface RunMigrationsOptions {
  *
  * @returns Effect containing array of executed migrations
  */
-export const runMigrations = Effect.fn("runMigrations")(function* ({
+const runMigrationsAttempt = Effect.fn("runMigrationsAttempt")(function* ({
   toMigrationInclusive,
 }: RunMigrationsOptions = {}) {
+  yield* Effect.log(
+    toMigrationInclusive === undefined
+      ? "Running all migrations..."
+      : `Running migrations 1 through ${toMigrationInclusive}...`,
+  );
+  const sql = yield* SqlClient.SqlClient;
+  const migrationLedger = yield* sql<{ readonly exists: number }>`
+    SELECT EXISTS (
+      SELECT 1
+      FROM sqlite_master
+      WHERE type = 'table' AND name = 'effect_sql_migrations'
+    ) AS "exists"
+  `;
+  if (migrationLedger[0]?.exists === 1) {
+    const latestMigration = yield* sql<{ readonly migrationId: number }>`
+      SELECT COALESCE(MAX(migration_id), 0) AS "migrationId"
+      FROM effect_sql_migrations
+    `;
+    const advancesLedger =
+      toMigrationInclusive === undefined ||
+      (latestMigration[0]?.migrationId ?? 0) < toMigrationInclusive;
+    const compatibilityMigration = yield* sql<{ readonly exists: number }>`
+      SELECT EXISTS (
+        SELECT 1
+        FROM effect_sql_migrations
+        WHERE migration_id = 41
+      ) AS "exists"
+    `;
+    if (
+      advancesLedger &&
+      compatibilityMigration[0]?.exists !== 1 &&
+      (yield* hasForkMigrationLedger(sql))
+    ) {
+      yield* prepareForkCompatibilityLocked(sql);
+    }
+  }
   const executedMigrations = yield* run({ loader: makeMigrationLoader(toMigrationInclusive) });
   const migrations = executedMigrations.map(([id, name]) => `${id}_${name}`);
   yield* migrations.length === 0
@@ -132,6 +269,10 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
     : Effect.log("Migrations ran successfully").pipe(Effect.annotateLogs({ migrations }));
   return executedMigrations;
 });
+
+export const runMigrations = Effect.fn("runMigrations")((options: RunMigrationsOptions = {}) =>
+  retryOnSqliteBusySnapshot(runMigrationsAttempt(options)),
+);
 
 /**
  * Layer that runs migrations when the layer is built.
