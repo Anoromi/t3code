@@ -1,14 +1,32 @@
 import { useAtomValue } from "@effect/atom-react";
+import type { ScopedProjectRef, ScopedThreadRef } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 
+import { isCommandPaletteOpen } from "../commandPaletteBus";
+import { useComposerDraftStore } from "../composerDraftStore";
 import { isElectron } from "../env";
 import { getLocalStorageItem } from "../hooks/useLocalStorage";
-import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
-import { cn, isMacPlatform } from "../lib/utils";
-import { primaryServerKeybindingsAtom } from "../state/server";
+import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useClientSettings } from "../hooks/useSettings";
+import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import { isTerminalFocused } from "../lib/terminalFocus";
+import { selectProjectGroupingSettings } from "../logicalProject";
+import { cn, isMacPlatform } from "../lib/utils";
+import { isNavigationCommandMenuOpen } from "../navigationCommandMenu";
+import { useProjects, useThreadShells } from "../state/entities";
+import { primaryServerKeybindingsAtom } from "../state/server";
+import { buildThreadRouteParams } from "../threadRoutes";
+import { NavigationCommandMenu } from "./NavigationCommandMenu";
+import { resolveDraftProjectKeys } from "./NavigationCommandMenu.logic";
 import ThreadSidebar from "./Sidebar";
 import ThreadSidebarV2 from "./SidebarV2";
 import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
@@ -52,7 +70,7 @@ function SidebarControl() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return;
+      if (event.defaultPrevented || isNavigationCommandMenuOpen()) return;
       if (
         event.target instanceof HTMLElement &&
         event.target.closest("[data-keybinding-capture]")
@@ -95,6 +113,76 @@ function SidebarControl() {
         </TooltipPopup>
       </Tooltip>
     </div>
+  );
+}
+
+export function NavigationCommandMenuControl() {
+  const [open, setOpen] = useState(false);
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const projects = useProjects();
+  const threads = useThreadShells();
+  const navigate = useNavigate();
+  const handleNewThread = useNewThreadHandler();
+  const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const logicalProjectDraftThreadKeyByLogicalProjectKey = useComposerDraftStore(
+    (state) => state.logicalProjectDraftThreadKeyByLogicalProjectKey,
+  );
+  const draftProjectKeys = useMemo(
+    () =>
+      resolveDraftProjectKeys({
+        projects,
+        draftLogicalProjectKeys: new Set(
+          Object.keys(logicalProjectDraftThreadKeyByLogicalProjectKey),
+        ),
+        projectGroupingSettings,
+      }),
+    [logicalProjectDraftThreadKeyByLogicalProjectKey, projectGroupingSettings, projects],
+  );
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || isCommandPaletteOpen()) return;
+      if (
+        resolveShortcutCommand(event, keybindings, {
+          context: { terminalFocus: isTerminalFocused() },
+        }) !== "navigation.commandMenu"
+      ) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      setOpen((current) => !current);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [keybindings]);
+
+  const selectThread = useCallback(
+    async (ref: ScopedThreadRef) => {
+      await navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(ref),
+      });
+    },
+    [navigate],
+  );
+  const selectProject = useCallback(
+    async (ref: ScopedProjectRef) => {
+      await handleNewThread(ref);
+    },
+    [handleNewThread],
+  );
+
+  return (
+    <NavigationCommandMenu
+      open={open}
+      onOpenChange={setOpen}
+      projects={projects}
+      threads={threads}
+      draftProjectKeys={draftProjectKeys}
+      onSelectThread={selectThread}
+      onSelectProject={selectProject}
+    />
   );
 }
 
@@ -182,6 +270,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       </Sidebar>
       {children}
       <SidebarControl />
+      <NavigationCommandMenuControl />
     </SidebarProvider>
   );
 }

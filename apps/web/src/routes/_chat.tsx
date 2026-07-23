@@ -6,6 +6,7 @@ import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { useClientSettings } from "../hooks/useSettings";
 import { openCommandPalette } from "../commandPaletteBus";
 import { useProjects } from "../state/entities";
+import { isNavigationCommandMenuOpen } from "../navigationCommandMenu";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import {
@@ -55,7 +56,7 @@ function ChatRouteGlobalShortcuts() {
         },
       });
 
-      if (isCommandPaletteOpen()) {
+      if (isCommandPaletteOpen() || isNavigationCommandMenuOpen()) {
         return;
       }
 

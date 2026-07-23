@@ -52,6 +52,16 @@ describe("ClientSettings sidebar v2", () => {
   });
 });
 
+describe("ClientSettings Hyprnav defaults", () => {
+  it("hydrates project defaults and grouped state for legacy settings", () => {
+    const decoded = decodeClientSettings({});
+    expect(decoded.defaultProjectHyprnavSettings.bindings.map((binding) => binding.slot)).toEqual([
+      1, 2, 8,
+    ]);
+    expect(decoded.groupedProjectHyprnavStateByLogicalProjectKey).toEqual({});
+  });
+});
+
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults to an empty record so legacy configs without the key still decode", () => {
     expect(DEFAULT_SERVER_SETTINGS.providerInstances).toEqual({});

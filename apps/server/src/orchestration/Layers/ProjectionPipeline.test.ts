@@ -2753,15 +2753,28 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
           instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5",
         },
+        hyprnav: {
+          bindings: [
+            {
+              id: "project-terminal",
+              slot: 6,
+              scope: "project",
+              workspace: { mode: "managed" },
+              action: "worktree-terminal",
+            },
+          ],
+        },
       });
 
       const projectRows = yield* sql<{
         readonly scriptsJson: string;
         readonly defaultModelSelection: string;
+        readonly hyprnav: string;
       }>`
         SELECT
           scripts_json AS "scriptsJson",
-          default_model_selection_json AS "defaultModelSelection"
+          default_model_selection_json AS "defaultModelSelection",
+          hyprnav_json AS "hyprnav"
         FROM projection_projects
         WHERE project_id = 'project-scripts'
       `;
@@ -2770,6 +2783,8 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
           scriptsJson:
             '[{"id":"script-1","name":"Build","command":"bun run build","icon":"build","runOnWorktreeCreate":false}]',
           defaultModelSelection: '{"instanceId":"codex","model":"gpt-5"}',
+          hyprnav:
+            '{"bindings":[{"id":"project-terminal","slot":6,"scope":"project","workspace":{"mode":"managed"},"action":"worktree-terminal"}]}',
         },
       ]);
     }),

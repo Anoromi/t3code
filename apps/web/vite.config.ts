@@ -2,6 +2,7 @@ import tailwindcss from "@tailwindcss/vite";
 import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import babel from "@rolldown/plugin-babel";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
+import { playwright } from "vite-plus/test/browser-playwright";
 import { defineProject, type TestProjectInlineConfiguration } from "vite-plus/test/config";
 import "vite-plus/test/config";
 import { defineConfig } from "vite-plus";
@@ -24,6 +25,8 @@ const configuredRelayTracingDataset = repoEnv.VITE_RELAY_OTLP_TRACES_DATASET?.tr
 const configuredRelayTracingToken = repoEnv.VITE_RELAY_OTLP_TRACES_TOKEN?.trim() || "";
 const configuredHostedAppChannel = process.env.VITE_HOSTED_APP_CHANNEL?.trim() || "";
 const configuredAppVersion = process.env.APP_VERSION?.trim() || pkg.version;
+const configuredBrowserExecutablePath =
+  process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH?.trim() || undefined;
 const configuredHostedAppUrl = (() => {
   const explicitHostedAppUrl = process.env.VITE_HOSTED_APP_URL?.trim();
   if (explicitHostedAppUrl) {
@@ -62,6 +65,31 @@ const unitTestProject = {
     // run, those async tests can exceed Vitest's default 5s budget.
     hookTimeout: 15_000,
     testTimeout: 15_000,
+  },
+} satisfies TestProjectInlineConfiguration;
+
+const browserTestProject = {
+  extends: true,
+  server: {
+    strictPort: false,
+  },
+  test: {
+    name: "browser",
+    include: ["src/**/*.browser.{ts,tsx}"],
+    browser: {
+      enabled: true,
+      provider: playwright(
+        configuredBrowserExecutablePath
+          ? { launchOptions: { executablePath: configuredBrowserExecutablePath } }
+          : undefined,
+      ) as never,
+      instances: [{ browser: "chromium" }],
+      headless: true,
+      api: { strictPort: false },
+    },
+    hookTimeout: 30_000,
+    testTimeout: 30_000,
+    fileParallelism: false,
   },
 } satisfies TestProjectInlineConfiguration;
 
@@ -114,6 +142,8 @@ export default defineConfig(() => {
         "effect/Array",
         "effect/Order",
         "react-dom/client",
+        "vite-plus/test",
+        "vite-plus/test/browser",
       ],
     },
     define: {
@@ -178,7 +208,7 @@ export default defineConfig(() => {
       sourcemap: buildSourcemap,
     },
     test: {
-      projects: [defineProject(unitTestProject)],
+      projects: [defineProject(unitTestProject), defineProject(browserTestProject)],
     },
   };
 });
