@@ -1189,9 +1189,9 @@ export function ProviderSettingsPanel() {
       >[0]["textGenerationModelSelection"];
     },
   ) => {
-    updateSettings(
+    updateSettings((currentSettings) =>
       buildProviderInstanceUpdatePatch({
-        settings,
+        settings: currentSettings,
         instanceId: row.instanceId,
         instance: next,
         driver: row.driver,
@@ -1202,11 +1202,14 @@ export function ProviderSettingsPanel() {
   };
 
   const deleteProviderInstance = (id: ProviderInstanceId) => {
-    updateSettings({
-      providerInstances: withoutProviderInstanceKey(settings.providerInstances, id),
-      providerModelPreferences: withoutProviderInstanceKey(settings.providerModelPreferences, id),
-      favorites: withoutProviderInstanceFavorites(settings.favorites ?? [], id),
-    });
+    updateSettings((currentSettings) => ({
+      providerInstances: withoutProviderInstanceKey(currentSettings.providerInstances, id),
+      providerModelPreferences: withoutProviderInstanceKey(
+        currentSettings.providerModelPreferences,
+        id,
+      ),
+      favorites: withoutProviderInstanceFavorites(currentSettings.favorites ?? [], id),
+    }));
   };
 
   const updateProviderModelPreferences = (
@@ -1218,18 +1221,20 @@ export function ProviderSettingsPanel() {
   ) => {
     const hiddenModels = [...new Set(next.hiddenModels.filter((slug) => slug.trim().length > 0))];
     const modelOrder = [...new Set(next.modelOrder.filter((slug) => slug.trim().length > 0))];
-    const rest = withoutProviderInstanceKey(settings.providerModelPreferences, instanceId);
-    updateSettings({
-      providerModelPreferences:
-        hiddenModels.length === 0 && modelOrder.length === 0
-          ? rest
-          : {
-              ...rest,
-              [instanceId]: {
-                hiddenModels,
-                modelOrder,
+    updateSettings((currentSettings) => {
+      const rest = withoutProviderInstanceKey(currentSettings.providerModelPreferences, instanceId);
+      return {
+        providerModelPreferences:
+          hiddenModels.length === 0 && modelOrder.length === 0
+            ? rest
+            : {
+                ...rest,
+                [instanceId]: {
+                  hiddenModels,
+                  modelOrder,
+                },
               },
-            },
+      };
     });
   };
 
@@ -1245,12 +1250,12 @@ export function ProviderSettingsPanel() {
         }),
       ),
     ];
-    updateSettings({
+    updateSettings((currentSettings) => ({
       favorites: [
-        ...withoutProviderInstanceFavorites(settings.favorites ?? [], instanceId),
+        ...withoutProviderInstanceFavorites(currentSettings.favorites ?? [], instanceId),
         ...favoriteModels.map((model) => ({ provider: instanceId, model })),
       ],
-    });
+    }));
   };
 
   const resetDefaultInstance = (driverKind: ProviderDriverKind) => {
@@ -1262,18 +1267,24 @@ export function ProviderSettingsPanel() {
     const defaultInstanceId = defaultInstanceIdForDriver(driverKind);
     const defaultLegacyProvider = defaultLegacyProviders[driverKind];
     if (defaultLegacyProvider === undefined) return;
-    updateSettings({
+    updateSettings((currentSettings) => ({
       providers: {
-        ...settings.providers,
+        ...currentSettings.providers,
         [driverKind]: defaultLegacyProvider,
       } as typeof settings.providers,
-      providerInstances: withoutProviderInstanceKey(settings.providerInstances, defaultInstanceId),
-      providerModelPreferences: withoutProviderInstanceKey(
-        settings.providerModelPreferences,
+      providerInstances: withoutProviderInstanceKey(
+        currentSettings.providerInstances,
         defaultInstanceId,
       ),
-      favorites: withoutProviderInstanceFavorites(settings.favorites ?? [], defaultInstanceId),
-    });
+      providerModelPreferences: withoutProviderInstanceKey(
+        currentSettings.providerModelPreferences,
+        defaultInstanceId,
+      ),
+      favorites: withoutProviderInstanceFavorites(
+        currentSettings.favorites ?? [],
+        defaultInstanceId,
+      ),
+    }));
   };
 
   return (

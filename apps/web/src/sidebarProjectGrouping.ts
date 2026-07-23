@@ -94,6 +94,14 @@ function collectProjectWinnersByPhysicalKey(input: {
   return winnersByPhysicalKey;
 }
 
+export function deduplicateProjectsByPhysicalKey(input: {
+  projects: ReadonlyArray<Project>;
+  settings: ProjectGroupingSettings;
+  primaryEnvironmentId: EnvironmentId | null;
+}): Project[] {
+  return [...collectProjectWinnersByPhysicalKey(input).values()].map(({ project }) => project);
+}
+
 export function buildPhysicalToLogicalProjectKeyMap(input: {
   projects: ReadonlyArray<Project>;
   settings: ProjectGroupingSettings;
