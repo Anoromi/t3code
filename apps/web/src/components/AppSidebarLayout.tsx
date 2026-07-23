@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from "react";
 
-import { isCommandPaletteOpen } from "../commandPaletteBus";
+import { isAnyCommandSurfaceOpen } from "../commandSurface";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { isElectron } from "../env";
 import { getLocalStorageItem } from "../hooks/useLocalStorage";
@@ -21,7 +21,6 @@ import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings"
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { selectProjectGroupingSettings } from "../logicalProject";
 import { cn, isMacPlatform } from "../lib/utils";
-import { isNavigationCommandMenuOpen } from "../navigationCommandMenu";
 import { useProjects, useThreadShells } from "../state/entities";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { buildThreadRouteParams } from "../threadRoutes";
@@ -70,7 +69,7 @@ function SidebarControl() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || isNavigationCommandMenuOpen()) return;
+      if (event.defaultPrevented || isAnyCommandSurfaceOpen()) return;
       if (
         event.target instanceof HTMLElement &&
         event.target.closest("[data-keybinding-capture]")
@@ -141,7 +140,7 @@ export function NavigationCommandMenuControl() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || isCommandPaletteOpen()) return;
+      if (event.defaultPrevented || isAnyCommandSurfaceOpen("navigation")) return;
       if (
         resolveShortcutCommand(event, keybindings, {
           context: { terminalFocus: isTerminalFocused() },

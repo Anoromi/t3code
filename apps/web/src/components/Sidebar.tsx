@@ -12,7 +12,7 @@ import {
   TerminalIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import { isNavigationCommandMenuOpen } from "../navigationCommandMenu";
+import { isAnyCommandSurfaceOpen } from "../commandSurface";
 import {
   ChangeRequestStatusIcon,
   prStatusIndicator,
@@ -3480,7 +3480,7 @@ export default function Sidebar() {
 
   useEffect(() => {
     const onWindowKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (isNavigationCommandMenuOpen()) return;
+      if (isAnyCommandSurfaceOpen()) return;
       const shortcutContext = getCurrentSidebarShortcutContext();
 
       if (event.defaultPrevented || event.repeat) {

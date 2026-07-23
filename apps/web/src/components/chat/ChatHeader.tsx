@@ -8,6 +8,7 @@ import {
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
+import type { GitActionRequest } from "../ProjectActionsPanel.logic";
 import { type DraftId } from "~/composerDraftStore";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, {
@@ -40,6 +41,8 @@ interface ChatHeaderProps {
     input: NewProjectScriptInput,
   ) => Promise<ProjectScriptActionResult>;
   onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
+  requestedGitAction?: GitActionRequest | null;
+  onRequestedGitActionHandled?: (requestId: string) => void;
 }
 
 export function shouldShowOpenInPicker(input: {
@@ -72,6 +75,8 @@ export const ChatHeader = memo(function ChatHeader({
   onAddProjectScript,
   onUpdateProjectScript,
   onDeleteProjectScript,
+  requestedGitAction,
+  onRequestedGitActionHandled,
 }: ChatHeaderProps) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const showOpenInPicker = shouldShowOpenInPicker({
@@ -147,6 +152,10 @@ export const ChatHeader = memo(function ChatHeader({
             gitCwd={gitCwd}
             activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
             {...(draftId ? { draftId } : {})}
+            {...(requestedGitAction !== undefined ? { requestedAction: requestedGitAction } : {})}
+            {...(onRequestedGitActionHandled
+              ? { onRequestedActionHandled: onRequestedGitActionHandled }
+              : {})}
           />
         )}
       </div>
