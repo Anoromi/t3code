@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
 
+import { ThreadId } from "./baseSchemas.ts";
 import { ExternalLauncherError, LaunchEditorInput } from "./editor.ts";
 import {
   AuthAccessStreamError,
@@ -219,6 +220,9 @@ export const WS_METHODS = {
   serverGetProcessResourceHistory: "server.getProcessResourceHistory",
   serverSignalProcess: "server.signalProcess",
 
+  // Desktop control methods
+  desktopRequestCorkdiffAppFocus: "desktop.requestCorkdiffAppFocus",
+
   // Cloud environment methods
   cloudGetRelayClientStatus: "cloud.getRelayClientStatus",
   cloudInstallRelayClient: "cloud.installRelayClient",
@@ -238,6 +242,20 @@ export const WS_METHODS = {
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
 } as const;
+
+export class DesktopCorkdiffFocusError extends Schema.TaggedErrorClass<DesktopCorkdiffFocusError>()(
+  "DesktopCorkdiffFocusError",
+  { message: Schema.String },
+) {}
+
+export const WsDesktopRequestCorkdiffAppFocusRpc = Rpc.make(
+  WS_METHODS.desktopRequestCorkdiffAppFocus,
+  {
+    payload: Schema.Struct({ threadId: ThreadId }),
+    success: Schema.Struct({ accepted: Schema.Literal(true) }),
+    error: Schema.Union([DesktopCorkdiffFocusError, EnvironmentAuthorizationError]),
+  },
+);
 
 export const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
   payload: ServerUpsertKeybindingInput,
@@ -700,6 +718,7 @@ export const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess,
 
 export const WsRpcGroup = RpcGroup.make(
   WsServerProbeRpc,
+  WsDesktopRequestCorkdiffAppFocusRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,

@@ -39,6 +39,7 @@ import * as DesktopAssets from "./app/DesktopAssets.ts";
 import * as DesktopBackendConfiguration from "./backend/DesktopBackendConfiguration.ts";
 import * as DesktopBackendPool from "./backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "./backend/DesktopLocalEnvironmentAuth.ts";
+import * as ExternalCorkdiff from "./corkdiff/ExternalCorkdiff.ts";
 import * as DesktopNetworkInterfaces from "./backend/DesktopNetworkInterfaces.ts";
 import * as DesktopEnvironment from "./app/DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./app/DesktopLifecycle.ts";
@@ -174,6 +175,11 @@ const desktopLocalEnvironmentAuthLayer = DesktopLocalEnvironmentAuth.layer.pipe(
   Layer.provideMerge(desktopBackendLayer),
 );
 
+const externalCorkdiffLayer = ExternalCorkdiff.layer.pipe(
+  Layer.provideMerge(desktopLocalEnvironmentAuthLayer),
+  Layer.provideMerge(desktopBackendLayer),
+);
+
 const desktopApplicationLayer = Layer.mergeAll(
   DesktopLifecycle.layer,
   DesktopApplicationMenu.layer,
@@ -183,6 +189,7 @@ const desktopApplicationLayer = Layer.mergeAll(
   Layer.provideMerge(DesktopUpdates.layer),
   Layer.provideMerge(desktopWslBackendLayer),
   Layer.provideMerge(desktopLocalEnvironmentAuthLayer),
+  Layer.provideMerge(externalCorkdiffLayer),
 );
 
 const desktopClerkLayer = DesktopClerk.layer.pipe(
