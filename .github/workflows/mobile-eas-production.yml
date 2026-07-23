@@ -92,6 +92,31 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: eas env:pull production --non-interactive
 
+      - name: Configure fork App Store submission
+        if: >-
+          steps.expo-token.outputs.present == 'true' &&
+          inputs.mode == 'build' &&
+          inputs.platform != 'android'
+        working-directory: apps/mobile
+        env:
+          MOBILE_IOS_ASC_APP_ID: ${{ vars.MOBILE_IOS_ASC_APP_ID }}
+        run: |
+          node --input-type=module - "$MOBILE_IOS_ASC_APP_ID" <<'NODE'
+          import { readFileSync, writeFileSync } from "node:fs";
+
+          const appStoreConnectId = process.argv[2]?.trim();
+          if (!appStoreConnectId || !/^\d+$/.test(appStoreConnectId)) {
+            throw new Error(
+              "MOBILE_IOS_ASC_APP_ID must contain the fork App Store Connect numeric Apple ID.",
+            );
+          }
+
+          const path = "eas.json";
+          const config = JSON.parse(readFileSync(path, "utf8"));
+          config.submit.production.ios.ascAppId = appStoreConnectId;
+          writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
+          NODE
+
       - name: Build and submit
         if: steps.expo-token.outputs.present == 'true' && inputs.mode == 'build'
         working-directory: apps/mobile
