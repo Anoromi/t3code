@@ -297,6 +297,8 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
 
       assert.equal(defaultsByCommand.get("thread.previous"), "mod+shift+[");
       assert.equal(defaultsByCommand.get("thread.next"), "mod+shift+]");
+      assert.equal(defaultsByCommand.get("chat.composer.focus"), "mod+s");
+      assert.equal(defaultsByCommand.get("thread.interrupt"), "mod+shift+c");
       assert.equal(defaultsByCommand.get("thread.jump.1"), "mod+1");
       assert.equal(defaultsByCommand.get("thread.jump.9"), "mod+9");
       assert.equal(defaultsByCommand.get("modelPicker.toggle"), "mod+shift+m");
@@ -309,6 +311,29 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       assert.equal(defaultsByCommand.get("projectActions.toggle"), "mod+p");
       assert.equal(defaultsByCommand.get("navigation.commandMenu"), "mod+e");
     }),
+  );
+
+  it.effect("preserves customized chat-scoped shortcuts", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [
+        { key: "mod+alt+s", command: "chat.composer.focus", when: "!terminalFocus" },
+        { key: "mod+alt+c", command: "thread.interrupt", when: "!terminalFocus" },
+      ]);
+
+      const keybindings = yield* Keybindings.Keybindings;
+      yield* keybindings.syncDefaultKeybindingsOnStartup;
+
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.isTrue(
+        persisted.some(
+          (rule) => rule.command === "chat.composer.focus" && rule.key === "mod+alt+s",
+        ),
+      );
+      assert.isTrue(
+        persisted.some((rule) => rule.command === "thread.interrupt" && rule.key === "mod+alt+c"),
+      );
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
   it.effect("uses defaults in runtime when config is malformed without overriding file", () =>
