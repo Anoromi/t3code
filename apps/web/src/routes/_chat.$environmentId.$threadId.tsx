@@ -3,6 +3,7 @@ import { useEffect } from "react";
 
 import ChatView from "../components/ChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
+import { HyprnavRuntimeOrchestrator } from "../components/HyprnavRuntimeOrchestrator";
 import { finalizePromotedDraftThreadByRef, useComposerDraftStore } from "../composerDraftStore";
 import { resolveThreadRouteRef } from "../threadRoutes";
 import { SidebarInset } from "~/components/ui/sidebar";
@@ -63,6 +64,7 @@ function ChatThreadRouteView() {
 
   return (
     <SidebarInset className="h-svh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground md:h-dvh">
+      <HyprnavRuntimeOrchestrator threadRef={threadRef} />
       <ChatView
         environmentId={threadRef.environmentId}
         threadId={threadRef.threadId}
