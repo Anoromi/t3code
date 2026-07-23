@@ -14,8 +14,8 @@ import { ensureProjectionProjectHyprnavColumns } from "./035_ProjectionProjectsH
 import { normalizeProjectionProjectHyprnavRows } from "./036_NormalizeProjectHyprnavScopes.ts";
 import { restoreInheritedProjectHyprnavNulls } from "./037_RestoreInheritedProjectHyprnavNulls.ts";
 import { ensureProviderInstanceIdProjectionColumns } from "./038_RepairProviderInstanceIdProjectionColumns.ts";
-import { repairProjectionThreadLatestTurnIds } from "./039_RepairProjectionThreadLatestTurnIds.ts";
 import { ensureProviderSessionRuntimeIndexes } from "./040_ProviderSessionRuntimeIndexes.ts";
+import { repairProjectionThreadLatestTurnIds } from "../Repairs/ProjectionThreadLatestTurnIds.ts";
 
 const freshDatabase = it.layer(SqliteClient.layerMemory());
 const forkDatabase = it.layer(SqliteClient.layerMemory());
@@ -667,7 +667,7 @@ forkDatabase("041_RepairForkMigrationCompatibility fork database", (it) => {
       assert.equal(projectColumns.has("worktree_group_titles_json"), true);
       assert.equal(threadColumns.has("fork_source_thread_id"), true);
       assert.equal(threadColumns.has("model"), false);
-      assert.deepEqual(latestTurn, [{ latestTurnId: null }]);
+      assert.deepEqual(latestTurn, [{ latestTurnId: "fork-turn" }]);
       assert.deepEqual(modelOptions, [{ optionType: "array" }]);
       assert.deepEqual(postRepairHyprnav, [{ hyprnav: "null" }]);
       assert.equal(repairedIndexes.length, 7);
