@@ -203,7 +203,9 @@ const make = Effect.fn("desktop.environment.make")(function* (
     appUserModelId: Option.getOrElse(config.appUserModelIdOverride, () =>
       isDevelopment ? "com.t3tools.t3code.dev" : "com.t3tools.t3code",
     ),
-    linuxDesktopEntryName: isDevelopment ? "t3code-dev.desktop" : "t3code.desktop",
+    linuxDesktopEntryName: Option.getOrElse(config.linuxDesktopEntryNameOverride, () =>
+      isDevelopment ? "t3code-dev.desktop" : "t3code.desktop",
+    ),
     linuxWmClass: isDevelopment ? "t3code-dev" : "t3code",
     userDataDirName,
     legacyUserDataDirName,

@@ -125,6 +125,19 @@ describe("DesktopEnvironment", () => {
     }),
   );
 
+  it.effect("uses a configured Linux desktop entry name override", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment(
+        { platform: "linux" },
+        {
+          T3CODE_DESKTOP_LINUX_DESKTOP_ENTRY_NAME: " t3-code-alpha.desktop ",
+        },
+      );
+
+      assert.equal(environment.linuxDesktopEntryName, "t3-code-alpha.desktop");
+    }),
+  );
+
   it.effect("resolves picker defaults without nullish sentinels", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment();
