@@ -236,7 +236,13 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const foregroundResubscriptions = Option.match(wakeups, {
     onNone: () => Stream.never,
     onSome: (service) =>
-      service.changes.pipe(Stream.filter((reason) => reason === "application-active")),
+      service.changes.pipe(
+        Stream.filter((reason) => reason === "application-active"),
+        Stream.mapEffect(() =>
+          SubscriptionRef.get(state).pipe(Effect.map((current) => current.status !== "deleted")),
+        ),
+        Stream.filter((shouldResubscribe) => shouldResubscribe),
+      ),
   });
 
   yield* setSynchronizing;
@@ -275,7 +281,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         }
 
         const sequence = yield* SubscriptionRef.get(lastSequence);
-        const canResume = Option.isSome(current.data);
+        const canResume = Option.isSome(current.data) || current.status === "deleted";
         if (!supportsCompletionMarker && canResume) {
           yield* SubscriptionRef.update(state, (value) => ({
             ...value,
